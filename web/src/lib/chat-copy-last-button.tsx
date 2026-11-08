@@ -22,20 +22,21 @@ export function CopyLastButton({
       title="Copy last assistant response as raw markdown"
       aria-label="Copy last assistant response"
       className={cn(
-        // In the flow below the image controls with a 44px tap target, so
-        // it never covers the last terminal rows on a phone.
-        "z-10 self-end mt-2 min-h-11 min-w-11 px-2 py-1 text-xs",
+        // Lives in the floating chat toolbar (top-right), never in the
+        // layout flow, so the terminal keeps its full height when the phone
+        // keyboard opens.
+        "h-9 min-w-9 px-2 text-xs inline-flex items-center justify-center",
         "normal-case tracking-normal font-normal",
         "rounded border border-current/30",
-        "bg-black/20",
-        "opacity-70 hover:opacity-100 hover:border-current/60",
+        "bg-black/60",
+        "opacity-80 hover:opacity-100 hover:border-current/60",
         "transition-opacity duration-150",
       )}
       style={{ color }}
     >
       <span className="inline-flex items-center gap-1.5">
         <Copy className="h-3 w-3 shrink-0" />
-        <span className="hidden min-[400px]:inline tracking-wide">
+        <span className="hidden sm:inline tracking-wide">
           {copied ? "copied" : "copy last response"}
         </span>
       </span>
