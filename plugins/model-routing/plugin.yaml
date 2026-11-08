@@ -1,0 +1,6 @@
+name: model-routing
+version: 0.1.0
+description: "Limit-aware model routing across Claude Max, ChatGPT and SuperGrok subscriptions. Step 1: read-only usage readers, pace scoring and a status view (/routing and a dashboard tab). Advisory only."
+author: "Hermius Maximus for @alexderz"
+provides_tools: []
+provides_hooks: []
