@@ -19,7 +19,10 @@ logger = logging.getLogger(__name__)
 
 # Authorization servers that advertise ``authorization_response_iss_parameter_supported`` and then
 # omit ``iss`` from the redirect (#111135). Exact issuer match, nothing else is relaxed.
-_ISS_OMITTING_ISSUERS = frozenset({"https://api.figma.com"})
+# Issuers whose redirect reaches Hermes without the RFC 9207 ``iss`` they advertise. Plaid and Cloudflare
+# send ``iss`` on the redirect, but the remote-desktop relay path can lose it before the SDK check (seen on
+# Saturn, 2026-11-08). ``state`` is still verified, and a present-but-different ``iss`` still fails.
+_ISS_OMITTING_ISSUERS = frozenset({"https://api.figma.com", "https://api.dashboard.plaid.com", "https://mcp.cloudflare.com"})
 
 # Authorization-server metadata documents the SDK tries in its 401 branch (RFC 8414 / OIDC discovery).
 _ASM_DISCOVERY_PATHS = ("/.well-known/oauth-authorization-server", "/.well-known/openid-configuration")
