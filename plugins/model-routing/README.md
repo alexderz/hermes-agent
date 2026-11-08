@@ -1,24 +1,30 @@
-# model-routing (Hermes plugin)
+# model-routing (fork-only bundled plugin)
 
-Limit-aware model routing for Alex's subscriptions (Claude Max 20x, ChatGPT Pro Lite, SuperGrok Heavy, with OpenRouter as the pay-per-use tier). Linear: DER-675 (Hermes routing), under DER-630 (limit-aware provider/model routing). Design: `decisions/2026-11-08-routing-design-proposal.md` in the vault `alexderz/vault-hermes-improvement`.
+Limit-aware model routing for Alex's subscriptions: Claude Max 20x, ChatGPT Pro Lite and SuperGrok Heavy, with OpenRouter as the pay-per-use tier.
 
-## Version 0.1 (step 1): readers and status, advisory only
+- **Where it lives:** only in the fork `alexderz/hermes-agent`, on branch `alex/model-routing`. That branch is merged into the deployed branch `alex/v0.22.0-mobile-fixes`.
+- **Linear:** DER-675.
+- **Design:** `decisions/2026-11-08-routing-design-proposal.md` in the vault `alexderz/vault-hermes-improvement`.
 
-- `hermes model-routing collect` reads usage once and writes `<HERMES_HOME>/plugin-data/model-routing/state.json` (0600), plus a line in `history.jsonl`. Every read is a read-only quota GET, so no tokens are spent.
-  - Claude, ChatGPT/Codex and OpenRouter: Hermes's own `agent.account_usage` fetchers, the same path as `hermes usage`.
-  - SuperGrok: `cli-chat-proxy.grok.com/v1/billing?format=credits` with Hermes's `xai-oauth` login from the credential pool. The pool refreshes the token under Hermes's lock, so the Grok CLI's 12-hour token problem does not apply.
-- `hermes model-routing status [--json]`, `/routing` in any session, and a dashboard tab called **Usage** show one card per subscription: the big used percent and `P: ±N%` (headroom against the weekly pace line; minus means over pace), most over pace first, plus the would-be pick.
-- Pace, latch and on-demand rules are in `pace.py` (pure functions, unit-tested).
-- Nothing changes which model runs yet. Steps 2 to 5 (limit-error handling, cooldown file, per-turn route hook, on-demand tier) follow the design.
+## Version 0.1: readers, meter and status (advisory only)
 
-## Install (on Saturn, as `hermes`)
+- `hermes model-routing collect` reads usage once. It writes `<HERMES_HOME>/plugin-data/model-routing/state.json` (mode 0600) and adds a line to `history.jsonl`.
+  - Every read is a read-only quota GET, so it never spends tokens.
+  - Claude, ChatGPT/Codex and OpenRouter use Hermes's `agent.account_usage` fetchers.
+  - SuperGrok uses `cli-chat-proxy.grok.com/v1/billing` with Hermes's `xai-oauth` pool login, which Hermes refreshes under its own lock.
+- A systemd user timer runs the collector every 15 minutes. house-infra owns that timer (`hosts/saturn/hermes.py`).
+- Where to see the readings:
+  - **Web dashboard:** a one-line meter under the chat (the `chat:bottom` slot) and in the sidebar footer (`header-right`), plus a full **Usage** tab.
+  - **Desktop app:** a status-bar meter with a detail popover (`desktop/plugin.js`).
+  - `/routing` in any session, or `hermes model-routing status`.
+- The meter shows `Claude 16% P+7`: the percent of the weekly quota used, then the headroom against the weekly pace line. Minus means over pace. The dot colour always comes with this text.
+- `POST /api/plugins/model-routing/refresh` reads every provider immediately. It runs at most once a minute.
+- Nothing changes which model a session uses yet.
 
-    ln -sfn ~/src/hermes-model-routing ~/.hermes/plugins/model-routing
-    hermes plugins enable model-routing
-    cp deploy/hermes-model-routing-collect.* ~/.config/systemd/user/
-    systemctl --user daemon-reload && systemctl --user enable --now hermes-model-routing-collect.timer
-    systemctl --user restart hermes-dashboard   # only to mount the dashboard tab's API the first time
+## Enable
+
+The plugin is bundled, but Hermes plugins are opt-in, so run `hermes plugins enable model-routing`. On Saturn, house-infra does this.
 
 ## Tests
 
-    python3 -I -m unittest discover -s tests
+    cd plugins/model-routing && python3 -I -m unittest discover -s tests
