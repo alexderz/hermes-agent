@@ -1,0 +1,11 @@
+{
+  "name": "model-routing",
+  "label": "Usage",
+  "description": "Subscription usage against weekly pace, and the routing pick.",
+  "icon": "Activity",
+  "version": "0.1.0",
+  "tab": { "path": "/usage-routing", "position": "end" },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}
