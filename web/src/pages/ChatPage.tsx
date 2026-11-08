@@ -30,6 +30,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router";
 
+import { ChatImageControls } from "@/components/ChatImageControls";
 import { ChatSidebar } from "@/components/ChatSidebar";
 import { ChatSessionList } from "@/components/ChatSessionList";
 import { usePageHeader } from "@/contexts/usePageHeader";
@@ -77,8 +78,11 @@ import {
   parseResumeControlMessage,
   shouldFollowPtyOutput,
 } from "@/lib/pty-scroll";
-import { installTerminalTouchScroll } from "@/lib/terminal-touch-scroll";
-import { uploadChatImage } from "@/lib/chatImagePaste";
+import {
+  createChatImageAttachment,
+  readClipboardImages,
+  uploadChatImage,
+} from "@/lib/chatImagePaste";
 import { attachChatImageDropListeners } from "@/lib/chat-image-drop";
 import { maybeReloadForLoopbackWsAuthFailure } from "@/lib/dashboard-auth-reload";
 import {
@@ -114,6 +118,7 @@ import {
   terminalLineHeightForWidth,
   terminalTierWidthPx,
 } from "@/lib/terminal-appearance";
+import { attachTerminalTouchScroll } from "@/lib/terminal-touch-scroll";
 import { PluginSlot } from "@/plugins";
 import { useTheme } from "@/themes";
 import { useProfileScope } from "@/contexts/useProfileScope";
@@ -186,6 +191,43 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
   // server could not start it at all (close 1011; the reason is in the terminal).
   const [endedReason, setEndedReason] = useState<"exited" | "start-failed">("exited");
   const navigate = useNavigate();
+  const [imageBusy, setImageBusy] = useState(false);
+  const imageBusyRef = useRef(false);
+  const imageAttachRef = useRef<((files: File[]) => Promise<void>) | null>(null);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const handleAttachImages = async (files: File[]) => {
+    try {
+      if (imageBusyRef.current) throw new Error("An image attachment is already in progress.");
+      if (!imageAttachRef.current) throw new Error("Chat is not connected — reconnect before attaching an image.");
+      setImageError(null);
+      await imageAttachRef.current(files);
+    } catch (err) {
+      setImageError(errorMessage(err));
+    }
+  };
+  const handlePasteImage = async () => {
+    if (imageBusyRef.current) return;
+    if (ptyStateRef.current !== "open") {
+      setImageError("Chat is not connected — reconnect before attaching an image.");
+      return;
+    }
+    const attach = imageAttachRef.current;
+    imageBusyRef.current = true;
+    setImageBusy(true);
+    setImageError(null);
+    try {
+      const files = await readClipboardImages(navigator.clipboard);
+      if (!attach || imageAttachRef.current !== attach) {
+        throw new Error("Chat connection changed while reading clipboard — try again.");
+      }
+      await attach(files);
+    } catch (err) {
+      setImageError(errorMessage(err));
+    } finally {
+      imageBusyRef.current = false;
+      setImageBusy(false);
+    }
+  };
   const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
   const copyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -601,49 +643,32 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
     const isMac =
       typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
 
-    // ── Image paste / drop ───────────────────────────────────────────────
-    // The Chat tab is an xterm mirror of a TUI inside the gateway. Server-side
-    // clipboard.paste / xclip never see the browser clipboard, so image paste
-    // must upload browser bytes to HERMES_HOME/images, then drive `/image`
-    // over the PTY (same burst-then-Return timing as handleCopyLast).
+    // Browser images use the TUI's path-paste attachment handler. Never send
+    // /image + Return into an unknown draft: that can submit the draft itself.
     let imageUploadDisposed = false;
-    const pasteDelay = () =>
-      new Promise<void>((resolve) => window.setTimeout(resolve, 40));
     const reportImageUploadError = (err: unknown) => {
-      const message = err instanceof Error ? err.message : String(err);
-      console.warn("[dashboard chat] image upload failed:", message);
-      setBanner(`Image upload failed: ${message}`);
+      if (!imageUploadDisposed) setImageError(errorMessage(err));
     };
-    const driveImageAttach = async (paths: string[]) => {
-      for (const path of paths) {
-        if (imageUploadDisposed) return;
-        const ws = wsRef.current;
-        if (!ws || ws.readyState !== WebSocket.OPEN) {
-          setBanner(
-            "Image uploaded, but chat is not connected — try again.",
-          );
-          return;
+    const imageAttachment = createChatImageAttachment({
+      socket: () => wsRef.current,
+      active: () => isActiveRef.current && ptyStateRef.current === "open",
+      upload: file => uploadChatImage(file, scopedProfile),
+      busy: value => {
+        if (!imageUploadDisposed) {
+          imageBusyRef.current = value;
+          setImageBusy(value);
         }
-        ws.send(`/image ${path}`);
-        await new Promise<void>((resolve) => window.setTimeout(resolve, 100));
-        const s = wsRef.current;
-        if (!s || s.readyState !== WebSocket.OPEN) return;
-        s.send("\r");
-        await pasteDelay();
-      }
-      term.focus();
-    };
+      },
+    });
+    imageAttachRef.current = files => imageAttachment.attach(files);
     const uploadAndAttachImages = (files: File[]) => {
       if (!files.length) return;
-      void (async () => {
-        const paths: string[] = [];
-        for (const file of files) {
-          const uploaded = await uploadChatImage(file, scopedProfile);
-          if (imageUploadDisposed) return;
-          paths.push(uploaded.path);
-        }
-        await driveImageAttach(paths);
-      })().catch(reportImageUploadError);
+      if (imageBusyRef.current) {
+        reportImageUploadError(new Error("An image attachment is already in progress."));
+        return;
+      }
+      setImageError(null);
+      void imageAttachment.attach(files).catch(reportImageUploadError);
     };
     const handleBrowserDropCleanup = attachChatImageDropListeners(
       host,
@@ -780,7 +805,6 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
       ev.stopPropagation();
       return false;
     });
-    const cleanupTouchScroll = installTerminalTouchScroll(host, term);
 
     const unicode11 = new Unicode11Addon();
     term.loadAddon(unicode11);
@@ -796,6 +820,10 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
       sendComposedText(data);
     });
     term.open(host);
+    const terminalScreen = host.querySelector<HTMLElement>(".xterm-screen");
+    const touchScrollCleanup = terminalScreen
+      ? attachTerminalTouchScroll(terminalScreen, term)
+      : null;
 
     // IME composition guard (fixes #52111).
     //
@@ -1546,6 +1574,10 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
     return () => {
       unmounting = true;
       imageUploadDisposed = true;
+      imageAttachment.dispose();
+      imageAttachRef.current = null;
+      imageBusyRef.current = false;
+      setImageBusy(false);
       syncMetricsRef.current = null;
       clearEraseSuppressionTimer();
       clearResumeLoadingTimers();
@@ -1554,8 +1586,8 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
       onResizeDisposable?.dispose();
       onScrollDisposable?.dispose();
       mobileInputCleanup?.();
+      touchScrollCleanup?.();
       compositionForwarder.dispose();
-      cleanupTouchScroll();
       handleBrowserDropCleanup();
       if (metricsDebounce) clearTimeout(metricsDebounce);
       window.removeEventListener("resize", scheduleSyncTerminalMetrics);
@@ -1904,6 +1936,18 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
             aria-label="Chat terminal"
             className="hermes-chat-xterm-host min-h-0 min-w-0 flex-1"
           />
+
+          <ChatImageControls
+            connected={isActive && ptyState === "open" && !resumeHydrating}
+            busy={imageBusy}
+            clipboardSupported={typeof navigator !== "undefined" && typeof navigator.clipboard?.read === "function"}
+            onAttach={files => void handleAttachImages(files)}
+            onPaste={() => void handlePasteImage()}
+          />
+          {imageError && <div role="alert" className="flex items-center gap-2 pt-2 text-xs text-warning">
+            <span className="min-w-0 flex-1">Image attachment failed: {imageError}</span>
+            <button type="button" aria-label="Dismiss image attachment error" className="min-h-11 min-w-11" onClick={() => setImageError(null)}><X className="h-4 w-4" aria-hidden="true" /></button>
+          </div>}
 
           {showReconnectOverlay && (
             <div className="absolute inset-x-3 top-3 z-20 flex justify-center sm:inset-x-auto sm:right-3 sm:justify-end">

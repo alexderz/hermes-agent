@@ -105,7 +105,8 @@ const apiMocks = vi.hoisted(() => ({
   buildWsUrl: vi.fn(async () => "ws://localhost/api/pty?channel=chat-1"),
 }));
 
-vi.mock("@/lib/chatImagePaste", () => ({
+vi.mock("@/lib/chatImagePaste", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/chatImagePaste")>()),
   imageFilesFromTransfer: () => [],
   transferMayContainImage: () => false,
   uploadChatImage: vi.fn(),
