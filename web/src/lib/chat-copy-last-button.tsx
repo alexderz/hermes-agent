@@ -22,14 +22,14 @@ export function CopyLastButton({
       title="Copy last assistant response as raw markdown"
       aria-label="Copy last assistant response"
       className={cn(
-        "absolute z-10",
+        // In the flow below the image controls with a 44px tap target, so
+        // it never covers the last terminal rows on a phone.
+        "z-10 self-end mt-2 min-h-11 min-w-11 px-2 py-1 text-xs",
         "normal-case tracking-normal font-normal",
         "rounded border border-current/30",
         "bg-black/20",
         "opacity-70 hover:opacity-100 hover:border-current/60",
         "transition-opacity duration-150",
-        "bottom-2 right-2 px-2 py-1 text-xs sm:bottom-3 sm:right-3 sm:px-2.5 sm:py-1.5",
-        "lg:bottom-4 lg:right-4",
       )}
       style={{ color }}
     >
