@@ -1937,14 +1937,21 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
             className="hermes-chat-xterm-host min-h-0 min-w-0 flex-1"
           />
 
-          <ChatImageControls
-            connected={isActive && ptyState === "open" && !resumeHydrating}
-            busy={imageBusy}
-            clipboardSupported={typeof navigator !== "undefined" && typeof navigator.clipboard?.read === "function"}
-            onAttach={files => void handleAttachImages(files)}
-            onPaste={() => void handlePasteImage()}
-          />
-          {imageError && <div role="alert" className="flex items-center gap-2 pt-2 text-xs text-warning">
+          <div className="absolute right-3 top-3 z-10 flex items-center gap-1 sm:right-4 sm:top-4">
+            <ChatImageControls
+              connected={isActive && ptyState === "open" && !resumeHydrating}
+              busy={imageBusy}
+              clipboardSupported={typeof navigator !== "undefined" && typeof navigator.clipboard?.read === "function"}
+              onAttach={files => void handleAttachImages(files)}
+              onPaste={() => void handlePasteImage()}
+            />
+            <CopyLastButton
+              onClick={handleCopyLast}
+              copied={copyState === "copied"}
+              color={terminalFg}
+            />
+          </div>
+          {imageError && <div role="alert" className="absolute inset-x-3 top-14 z-10 flex items-center gap-2 rounded bg-black/80 px-2 text-xs text-warning">
             <span className="min-w-0 flex-1">Image attachment failed: {imageError}</span>
             <button type="button" aria-label="Dismiss image attachment error" className="min-h-11 min-w-11" onClick={() => setImageError(null)}><X className="h-4 w-4" aria-hidden="true" /></button>
           </div>}
@@ -2028,11 +2035,6 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
             </div>
           )}
 
-          <CopyLastButton
-            onClick={handleCopyLast}
-            copied={copyState === "copied"}
-            color={terminalFg}
-          />
 
           {chatPanelCollapsed && (
             <Button
