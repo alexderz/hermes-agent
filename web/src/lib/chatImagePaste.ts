@@ -92,6 +92,74 @@ export function transferMayContainImage(data: DataTransfer | null): boolean {
   return false;
 }
 
+export async function readClipboardImages(clipboard: Clipboard | undefined): Promise<File[]> {
+  if (typeof clipboard?.read !== "function") {
+    throw new Error("Clipboard images need HTTPS and a supported browser. Use Attach image instead.");
+  }
+  const files: File[] = [];
+  try {
+    const items = await clipboard.read();
+    for (const item of items) {
+      const type = item.types.find(type => type.startsWith("image/"));
+      if (!type) continue;
+      const blob = await item.getType(type);
+      files.push(new File([blob], `clipboard.${IMAGE_MIME_EXT[type] || "png"}`, { type }));
+    }
+  } catch {
+    throw new Error("Clipboard permission denied or unavailable. Allow clipboard access, or use Attach image.");
+  }
+  if (!files.length) throw new Error("No image found in clipboard. Copy an image, or use Attach image.");
+  return files;
+}
+
+interface ImageAttachmentSocket {
+  readyState: number;
+  send(data: string): void;
+}
+
+interface ChatImageAttachmentOptions {
+  socket(): ImageAttachmentSocket | null;
+  active(): boolean;
+  upload(file: File): Promise<{ path: string }>;
+  busy(value: boolean): void;
+}
+
+/** Use the TUI's dropped-path paste handler (the same image.attach RPC as
+ * /image). Sending /image + Return would append to and submit a user's draft;
+ * bracketed paste inserts an image token at the TUI's own cursor instead. */
+export function createChatImageAttachment(options: ChatImageAttachmentOptions) {
+  let busy = false;
+  let disposed = false;
+  return {
+    dispose() { disposed = true; },
+    async attach(files: File[]) {
+      if (!files.length) return;
+      if (files.some(file => !file.type.startsWith("image/"))) {
+        throw new Error("Choose an image file from your photos or files.");
+      }
+      if (busy) throw new Error("An image attachment is already in progress.");
+      const socket = options.socket();
+      if (disposed || !options.active() || !socket || socket.readyState !== 1) {
+        throw new Error("Chat is not connected — reconnect before attaching an image.");
+      }
+      busy = true;
+      options.busy(true);
+      try {
+        for (const file of files) {
+          const { path } = await options.upload(file);
+          if (disposed || !options.active() || options.socket() !== socket || socket.readyState !== 1) {
+            throw new Error("Chat connection changed during upload — select the image again.");
+          }
+          socket.send(`\x1b[200~${path}\x1b[201~`);
+        }
+      } finally {
+        busy = false;
+        options.busy(false);
+      }
+    },
+  };
+}
+
 function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

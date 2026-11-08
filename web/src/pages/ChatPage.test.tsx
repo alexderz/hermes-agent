@@ -279,6 +279,22 @@ afterEach(async () => {
 });
 
 describe("ChatPage", () => {
+  it("rejects non-image picker files without sending prompt input", async () => {
+    const { default: ChatPage } = await import("./ChatPage");
+    await render(<MemoryRouter><ChatPage isActive /></MemoryRouter>);
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    const socket = FakeWebSocket.instances[0];
+    await act(async () => socket.onopen?.());
+    socket.send.mockClear();
+    uploadChatImage.mockClear();
+    const picker = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+    Object.defineProperty(picker, "files", { configurable: true, value: [new File(["text"], "notes.txt", { type: "text/plain" })] });
+    await act(async () => picker.dispatchEvent(new Event("change", { bubbles: true })));
+    expect(container.textContent).toContain("Choose an image file");
+    expect(uploadChatImage).not.toHaveBeenCalled();
+    expect(socket.send).not.toHaveBeenCalled();
+  });
+
   it("sends a PTY keepalive frame every 20 seconds while the socket is open", async () => {
     vi.useFakeTimers();
     try {
@@ -387,6 +403,8 @@ describe("ChatPage", () => {
 
   it("keeps the image-paste route working: image pastes upload instead of pasting text", async () => {
     const host = await renderChat();
+    // Images attach only to an open chat, never into a closed PTY.
+    await act(async () => FakeWebSocket.instances[0].onopen?.());
     const pasteSpy = vi.spyOn(FakeTerminal.prototype, "paste");
     try {
       const paste = new Event("paste", { bubbles: true, cancelable: true });
@@ -438,7 +456,7 @@ describe("ChatPage", () => {
       host!.dispatchEvent(paste);
     });
     await vi.waitFor(() =>
-      expect(container.textContent).toContain("Image upload failed"),
+      expect(container.textContent).toContain("disk full"),
     );
 
     // The socket dies while the tab is hidden: the reconnect is deferred.
