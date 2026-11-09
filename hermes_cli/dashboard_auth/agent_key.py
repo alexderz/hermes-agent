@@ -19,9 +19,13 @@ network surface:
   terminal (``/api/pty``).
 * It cannot be exchanged for credentials that work elsewhere: ``/api/auth/ws-ticket`` refuses an
   agent-key session.
-* The session's identity is ``dashboard.agent_key.user_id`` (default ``agent:local``). Sessions
-  created with the key record it as their auth user, which memory providers see as the runtime
-  user; set it to the operator's id to share their memory peer.
+* The session's identity is ``dashboard.agent_key.user_id`` (default ``agent:local``) under the
+  ``agent-key`` provider. Gateway sessions record ``<provider>:<user_id>`` as their auth user,
+  which memory providers see as the runtime user. ``dashboard.agent_key.act_as`` (for example
+  ``basic:alex``) makes WebSocket sessions opened with the key carry that operator identity
+  instead, so agent-started chats count as the operator. It changes only the recorded identity:
+  the credential stays the agent key with all its limits (the ticket refusal keys off the
+  ``Session``, which stays ``agent-key``).
 """
 from __future__ import annotations
 
@@ -143,6 +147,38 @@ def verify_agent_key(request: Any, token: str) -> Optional[Session]:
     except Exception:
         _log.warning("dashboard agent key verification failed; refusing", exc_info=True)
         return None
+
+
+def session_identity(session: Any) -> dict:
+    """``{user_id, provider}`` to stamp on a gateway connection authenticated by ``session``: the
+    operator named by ``dashboard.agent_key.act_as`` (``<provider>:<user id>``) for an agent-key
+    session when set and well-formed, else the session's own identity."""
+    ident = {"user_id": getattr(session, "user_id", None), "provider": getattr(session, "provider", None)}
+    if ident["provider"] != PROVIDER_NAME:
+        return ident
+    raw = _section().get("act_as")
+    if raw in (None, ""):
+        return ident
+    provider, sep, user_id = str(raw).strip().partition(":")
+    provider, user_id = provider.strip(), user_id.strip()
+    if sep and provider and user_id and provider.lower() not in _RESERVED_ACT_AS_PROVIDERS:
+        return {"user_id": user_id, "provider": provider}
+    _warn_bad_act_as(str(raw))
+    return ident
+
+
+# Identities the gateway treats specially (internal plumbing, display tickets, the key itself).
+_RESERVED_ACT_AS_PROVIDERS = frozenset({PROVIDER_NAME, "server-internal", "bot-desktop"})
+_warned_act_as: set[str] = set()
+
+
+def _warn_bad_act_as(raw: str) -> None:
+    with _lock:
+        if raw in _warned_act_as:
+            return
+        _warned_act_as.add(raw)
+    _log.warning("dashboard.agent_key.act_as %r ignored: expected '<provider>:<user id>' with a "
+                 "non-reserved provider; agent-key sessions keep their own identity", raw)
 
 
 def _reset_cache_for_tests() -> None:
