@@ -35,7 +35,7 @@ A project with no owner (or whose owner session is gone) simply shows its sessio
 
 ## Out of scope
 
-- Model routing (DER-675), Titan, Home Assistant (settled by Alex).
+- Model routing (DER-675), the GPU host, Home Assistant (settled by Alex).
 - The SDLC's shape and the branch/deploy flow (settled; `rules.md` rule 19).
 - Per-project memory, instructions or model settings. Project context already comes from files in the project folder (Environment fact 3).
 - The desktop Electron app, beyond keeping the shared backend contract compatible.
