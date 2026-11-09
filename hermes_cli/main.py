@@ -1368,6 +1368,47 @@ def _resolve_session_by_name_or_id(name_or_id: str) -> Optional[str]:
     return None
 
 
+def _cli_launch_cwd() -> Optional[str]:
+    """cwd to stamp on a CLI-created session row: the process cwd (``--in DIR`` already chdir'd there),
+    or None on non-local terminal backends. Mirrors ``run_agent._launch_cwd_for_session`` for the CLI
+    family without importing the agent module on the startup path."""
+    if (os.environ.get("TERMINAL_ENV") or "local").strip().lower() not in ("", "local"):
+        return None
+    try:
+        return os.getcwd()
+    except OSError:  # cwd was unlinked out from under us
+        return None
+
+
+def _stamp_resumed_session_cwd(session_id: str) -> None:
+    """``--in DIR`` pins a resumed session there: record DIR when the row has no cwd yet.
+
+    A resumed session never runs the agent's lazy row create (which stamps cwd), so a row minted without
+    one (older ``--create-if-missing``, imports, scripts) stayed cwd-less forever and never grouped under
+    its project. Only fills NULL, only for CLI-family rows (the same set the agent's lazy create stamps);
+    an existing cwd and any git fields are left alone."""
+    cwd = _cli_launch_cwd()
+    if not (session_id and cwd):
+        return
+    from agent.session_source import CLI_FAMILY_SOURCES
+
+    # Read-only first: most resumes already have a cwd, so no writer is opened for them.
+    with _session_db() as ro:
+        session = ro.get_session(session_id) or {}
+        if not session or session.get("cwd") or session.get("source") not in CLI_FAMILY_SOURCES:
+            return
+    try:
+        from hermes_state_registry import acquire
+
+        db = acquire()
+        try:
+            db.fill_session_cwd_if_missing(session_id, cwd)
+        finally:
+            db.close()
+    except Exception:
+        logger.debug("Could not stamp cwd on resumed session %s", session_id, exc_info=True)
+
+
 def _create_titled_session(title: str) -> Optional[str]:
     """Create a fresh titled session (``chat -c <title> --create-if-missing``).
 
@@ -1384,10 +1425,11 @@ def _create_titled_session(title: str) -> Optional[str]:
         from hermes_state_registry import acquire
 
         new_session_id = mint_session_id()
-        # The CLI acquires the registry handle for this same path moments later; share it
-        # instead of minting a second writer for one INSERT (close() releases the refcount).
+        # Registry handle for one INSERT; close() releases the refcount (the CLI acquires its own later).
         db = acquire()
-        db.create_session(new_session_id, source="cli")
+        # Record the launch cwd: the CLI treats this row as resumed, so the agent's own lazy create
+        # (which stamps cwd) never runs and the session would never group under its project.
+        db.create_session(new_session_id, source="cli", cwd=_cli_launch_cwd())
         db.set_session_title(new_session_id, title)
         return new_session_id
     except Exception:
@@ -1561,6 +1603,8 @@ def _resolve_chat_session_args(args, use_tui: bool) -> None:
     if resume_val:
         # On miss keep the original so _init_agent reports "Session not found" with it.
         args.resume = _resolve_session_by_name_or_id(resume_val) or resume_val
+        if getattr(args, "in_dir", None):
+            _stamp_resumed_session_cwd(args.resume)
 
     # cd back into a resumed session's recorded cwd (opt out: --no-restore-cwd;
     # --worktree owns its own dir). A missing dir warns and stays put.
