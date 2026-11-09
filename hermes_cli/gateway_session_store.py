@@ -561,7 +561,13 @@ def create_titled_session(title):
     params = _creation_policy({})
     params["cwd"] = _launch_cwd()
     params["source"] = "cli"  # main's titled row is `cli` (hermes_cli.main._create_titled_session)
-    params["row_cwd"] = ""
+    # Fork (alex/cli-session-cwd): stamp the launch cwd like a plain CLI create, so a
+    # --create-if-missing session groups under its project instead of staying cwd-less.
+    local = (os.getenv("TERMINAL_ENV") or "local").strip().lower() in ("", "local")
+    try:
+        params["row_cwd"] = os.getcwd() if local else ""
+    except OSError:  # cwd was unlinked out from under us
+        params["row_cwd"] = ""
     try:
         store = session_store()
         params.update(store.client_env())
