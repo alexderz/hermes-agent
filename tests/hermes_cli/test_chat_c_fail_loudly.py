@@ -86,6 +86,126 @@ class TestCreateTitledSession:
             db.close()
 
 
+class TestTitledSessionRecordsCwd:
+    """A titled session made by ``--create-if-missing`` (or resumed with ``--in``) records its cwd, so it
+    groups under the project whose folder contains it."""
+
+    def test_created_session_records_launch_cwd(self, isolated_home, tmp_path, monkeypatch):
+        work = tmp_path / "project"
+        work.mkdir()
+        monkeypatch.chdir(work)
+        monkeypatch.delenv("TERMINAL_ENV", raising=False)
+        sid = _create_titled_session("Project — Orchestrator")
+        from hermes_state import SessionDB
+
+        db = SessionDB()
+        try:
+            assert db.get_session(sid)["cwd"] == str(work)
+        finally:
+            db.close()
+
+    def test_remote_backend_records_no_cwd(self, isolated_home, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("TERMINAL_ENV", "ssh")
+        sid = _create_titled_session("Remote")
+        from hermes_state import SessionDB
+
+        db = SessionDB()
+        try:
+            assert not db.get_session(sid).get("cwd")
+        finally:
+            db.close()
+
+    def test_fill_keeps_git_fields_and_skips_non_cli(self, isolated_home, tmp_path, monkeypatch):
+        from hermes_cli.main import _stamp_resumed_session_cwd
+        from hermes_state import SessionDB
+
+        db = SessionDB()
+        try:
+            db.create_session("s_git", source="cli", git_repo_root="/repo")
+            db.create_session("s_tg", source="telegram")
+        finally:
+            db.close()
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("TERMINAL_ENV", raising=False)
+        _stamp_resumed_session_cwd("s_git")
+        _stamp_resumed_session_cwd("s_tg")
+        db = SessionDB()
+        try:
+            row = db.get_session("s_git")
+            assert row["cwd"] == str(tmp_path) and row["git_repo_root"] == "/repo"
+            assert not db.get_session("s_tg").get("cwd")
+        finally:
+            db.close()
+
+    def test_remote_backend_does_not_stamp_resume(self, isolated_home, tmp_path, monkeypatch):
+        from hermes_cli.main import _stamp_resumed_session_cwd
+        from hermes_state import SessionDB
+
+        db = SessionDB()
+        try:
+            db.create_session("s_r", source="cli")
+        finally:
+            db.close()
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("TERMINAL_ENV", "docker")
+        _stamp_resumed_session_cwd("s_r")
+        db = SessionDB()
+        try:
+            assert not db.get_session("s_r").get("cwd")
+        finally:
+            db.close()
+
+    def test_resolve_args_stamps_only_with_in(self, isolated_home, tmp_path, monkeypatch):
+        import argparse
+
+        from hermes_cli import main as hm
+        from hermes_state import SessionDB
+
+        db = SessionDB()
+        try:
+            db.create_session("s_a", source="cli")
+            db.create_session("s_b", source="cli")
+        finally:
+            db.close()
+        work = tmp_path / "w"
+        work.mkdir()
+        monkeypatch.delenv("TERMINAL_ENV", raising=False)
+        monkeypatch.delenv("TERMINAL_CWD", raising=False)
+        monkeypatch.chdir(tmp_path)
+        hm._resolve_chat_session_args(argparse.Namespace(in_dir=str(work), resume="s_a", continue_last=None), False)
+        hm._resolve_chat_session_args(argparse.Namespace(in_dir=None, resume="s_b", continue_last=None), False)
+        db = SessionDB()
+        try:
+            assert db.get_session("s_a")["cwd"] == str(work)
+            assert not db.get_session("s_b").get("cwd")
+        finally:
+            db.close()
+
+    def test_resume_with_in_fills_missing_cwd_only(self, isolated_home, tmp_path, monkeypatch):
+        from hermes_cli.main import _stamp_resumed_session_cwd
+        from hermes_state import SessionDB
+
+        db = SessionDB()
+        try:
+            db.create_session("s_null", source="cli")
+            db.create_session("s_set", source="cli", cwd="/elsewhere")
+        finally:
+            db.close()
+        work = tmp_path / "proj"
+        work.mkdir()
+        monkeypatch.chdir(work)
+        monkeypatch.delenv("TERMINAL_ENV", raising=False)
+        _stamp_resumed_session_cwd("s_null")
+        _stamp_resumed_session_cwd("s_set")
+        db = SessionDB()
+        try:
+            assert db.get_session("s_null")["cwd"] == str(work)
+            assert db.get_session("s_set")["cwd"] == "/elsewhere"
+        finally:
+            db.close()
+
+
 class TestChatCFailLoudlyOnStderr:
     """Behavior-level: run the real cmd_chat path and inspect channels."""
 

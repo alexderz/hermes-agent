@@ -607,6 +607,19 @@ class SessionSessionsMixin:
         except Exception:
             return False
 
+    def fill_session_cwd_if_missing(self, session_id: str, cwd: str) -> bool:
+        """Set ``cwd`` only when the row has none, in one guarded statement (never clobbers a concurrent
+        writer's cwd, never touches git fields). True when a row was updated."""
+        if not session_id or not cwd:
+            return False
+
+        def _do(conn):
+            cur = conn.execute(
+                "UPDATE sessions SET cwd = ?, git_metadata_generation = COALESCE(git_metadata_generation, 0) + 1 "
+                "WHERE id = ? AND COALESCE(cwd, '') = ''", (cwd, session_id))
+            return cur.rowcount > 0
+        return bool(self._execute_write(_do))
+
     def update_session_cwd(
         self, session_id: str, cwd: str, git_branch: Optional[str] = None,
         git_repo_root: Optional[str] = None, replace_git_meta: bool = False,
