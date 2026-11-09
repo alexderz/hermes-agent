@@ -336,7 +336,7 @@ def _ws_auth_reason(ws: WebSocket) -> tuple[Optional[str], str]:
 
             try:
                 session = _verify_access_token(
-                    _ws_request_view(ws), access_token=token, audit=False)
+                    _ws_request_view(ws), access_token=token, audit=False, allow_agent_key=True)
             except ProviderError as exc:
                 # All providers unreachable (IDP outage) — reject without
                 # crashing the upgrade; the REST bearer leg answers 503, and
