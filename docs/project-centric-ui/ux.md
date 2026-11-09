@@ -9,7 +9,7 @@ Human gate: operator accepts, or writes `UX verification not required`.
 - Comparables: [`comparables.md`](comparables.md) (architect)
 - Stories: [`stories/`](stories/)
 - Date: `2026-11-08`
-- Agent review (requirements only): round 1 changes needed, fixed in round 2; re-review pending
+- Agent review (requirements only): agreed `2026-11-08` (round 3; `reviews/ux-review-r1..r3.md`)
 - Operator: pending
 
 This design assumes the brief's recommended answers to Alex's open questions, and the HLD's decision where it departs from them:
