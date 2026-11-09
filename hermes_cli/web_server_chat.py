@@ -318,8 +318,14 @@ def _ws_auth_reason(ws: WebSocket, *, allow_internal: bool = False,
             try:
                 # On the gateway's Webapp a browser login's tokens work only as its cookies, which
                 # sign-out ends; only a token this listener gave a native app's sign-in works alone.
-                session = (_verify_access_token(view, access_token=token, audit=False)
-                           if webapp_sign_in.access_token_works_alone(view, token) else None)
+                if webapp_sign_in.access_token_works_alone(view, token):
+                    session = _verify_access_token(
+                        view, access_token=token, audit=False, allow_agent_key=True)
+                else:
+                    # Fork (alex/dashboard-agent-key): the local agent key is not a sign-in token.
+                    from hermes_cli.dashboard_auth.agent_key import verify_agent_key
+
+                    session = verify_agent_key(view, token)
             except ProviderError as exc:
                 # All providers unreachable (IDP outage) — reject without
                 # crashing the upgrade; the REST bearer leg answers 503, and
