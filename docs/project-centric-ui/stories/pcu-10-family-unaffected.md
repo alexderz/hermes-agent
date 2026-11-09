@@ -13,5 +13,5 @@
   - [ ] The dashboard still opens on Sessions.
   - [ ] Chat and Sessions look and work as before.
   - [ ] On a profile with no projects, the Projects page shows: "No projects yet. Projects group chats that work in the same folder. All your chats are on the Sessions page." The line links to Sessions.
-  - [ ] No new screen text uses an id, a file path or an error code.
+  - [ ] No empty, missing, not-found or error message on the Projects pages uses an id, a file path or an error code. (The project page's primary folder line is information for Alex, not a message.)
 - **Out of scope** — onboarding or tips about projects.
