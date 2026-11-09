@@ -1,0 +1,173 @@
+{
+  "sha": "3f8137dd347e0b9e8b1afddf5e43535b7dad1f4c",
+  "fidelity": "real dashboard backend subprocess, auth gate on (password provider), temporary HERMES_HOME, 127.0.0.1 only, fake local model",
+  "checks": [
+    {
+      "name": "gate on: bare /api/ws refused",
+      "pass": true,
+      "detail": "http 403"
+    },
+    {
+      "name": "kickoff authenticated via minted token + ws-ticket subprotocol",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "kickoff session.create",
+      "pass": true,
+      "detail": {
+        "session_id": "e4761ffa",
+        "stored_session_id": "20261108_212006_983b2a",
+        "message_count": 0,
+        "messages": [],
+        "info": {
+          "model": "probe",
+          "tools": {},
+          "skills": {},
+          "cwd": "<repo>",
+          "branch": "integrate/project-centric-ui",
+          "project": null,
+          "lazy": true,
+          "desktop_contract": 8,
+          "profile_name": "default"
+        }
+      }
+    },
+    {
+      "name": "kickoff prompt.submit accepted",
+      "pass": true,
+      "detail": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+          "status": "streaming",
+          "user_row_id": 1
+        }
+      }
+    },
+    {
+      "name": "phone session.resume reuses the live session and sees it running",
+      "pass": true,
+      "detail": {
+        "session_id": "e4761ffa",
+        "running": true,
+        "status": "working"
+      }
+    },
+    {
+      "name": "phone session.steer accepted while kickoff turn runs",
+      "pass": true,
+      "detail": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "result": {
+          "status": "queued",
+          "text": "STEER_MARKER_7"
+        }
+      }
+    },
+    {
+      "name": "phone queued prompt.submit accepted (no 4090)",
+      "pass": true,
+      "detail": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "result": {
+          "status": "queued"
+        }
+      }
+    },
+    {
+      "name": "steer text reached the model inside the running turn",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "turn 1 completed; kickoff saw message.complete",
+      "pass": true,
+      "detail": 16.956255674362183
+    },
+    {
+      "name": "phone also saw turn 1 stream (same live session)",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "queued prompt ran as the next turn",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "phone session.interrupt accepted",
+      "pass": true,
+      "detail": {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "result": {
+          "status": "interrupted"
+        }
+      }
+    },
+    {
+      "name": "interrupted turn ended (message.complete) well before its natural length",
+      "pass": true,
+      "detail": 0.5016226768493652
+    },
+    {
+      "name": "detached running turn keeps calling the model past the orphan grace",
+      "pass": true,
+      "detail": {
+        "before": 27,
+        "after": 32
+      }
+    },
+    {
+      "name": "detached turn finished its steps (final step reached)",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "kickoff socket dropped when the backend died",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "after restart, session.resume schedules auto-continue for a fresh killed turn",
+      "pass": true,
+      "detail": {
+        "auto_continue": {
+          "attempt": 1,
+          "interrupted_at": 1794194438.2224743
+        },
+        "running": false,
+        "status": "idle"
+      }
+    },
+    {
+      "name": "continuation turn reached the model with the recovery note and the original prompt",
+      "pass": true,
+      "detail": null
+    }
+  ],
+  "rss_kb": [
+    {
+      "t": "turn1-early",
+      "kb": 251268
+    },
+    {
+      "t": "after-turn2",
+      "kb": 259204
+    },
+    {
+      "t": "after-detached",
+      "kb": 260296
+    },
+    {
+      "t": "after-restart",
+      "kb": 250940
+    }
+  ],
+  "model_requests": 40,
+  "passed": 18,
+  "total": 18
+}
