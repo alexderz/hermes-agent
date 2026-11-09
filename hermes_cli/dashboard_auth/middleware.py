@@ -122,6 +122,12 @@ def _verify_access_token(
     """Run ``verify_session`` across the provider stack; Session or ``None``. ``audit=False`` is
     the native-app bearer path (no cookie, no server-side refresh — the desktop rotates via
     ``/auth/native/refresh``); 503-on-outage semantics come from :func:`scan_session_providers`."""
+    # Local agent key (direct loopback only, never via the proxy): see dashboard_auth/agent_key.py.
+    from hermes_cli.dashboard_auth.agent_key import verify_agent_key
+
+    if (agent := verify_agent_key(request, access_token)) is not None:
+        return agent
+
     def _audit_unreachable(provider):
         if audit:
             audit_log(AuditEvent.SESSION_VERIFY_FAILURE, provider=provider.name,
