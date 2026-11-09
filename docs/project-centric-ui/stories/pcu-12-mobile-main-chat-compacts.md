@@ -16,4 +16,4 @@
 
 ## Optional
 
-- Notes: depends on Q1. If Alex wants no guard, this story is dropped.
+- Notes: depends on Q1. If Alex wants no guard, this story is dropped. While the main chat is running a turn in the dashboard process (Q4), the server refuses to compact it; the draft asks the app to say so in words (for example "The main chat is working. Try again when it finishes.") rather than show a raw error. The earlier "only when not busy elsewhere" clause is dropped (refine round 3).
