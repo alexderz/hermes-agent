@@ -11,7 +11,8 @@
 - **So that** I am back in the project's long-lived chat with as little friction as possible
 - **Done when**
   - [ ] On a project with a main chat, **Open main chat** goes to `/chat?resume=<owner_session_id>`, and the terminal shows that chat's history.
-  - [ ] From any dashboard page, reaching a main chat takes at most two clicks or taps: **Projects**, then **Open main chat**.
+  - [ ] On a laptop, reaching a main chat from any dashboard page takes two clicks: **Projects**, then **Open main chat**.
+  - [ ] On a phone, it takes three taps: the menu, **Projects**, **Open main chat**. From a home-screen bookmark to the Projects list, it takes one tap.
   - [ ] Browser Back from Chat returns to the Projects list.
   - [ ] On a project with no main chat, or a missing one, the button reads **Open project** and opens the project page. It never opens an empty or wrong chat.
 - **Out of scope** — a project breadcrumb inside the Chat page; compacting on `/new` in the dashboard (Q1).
