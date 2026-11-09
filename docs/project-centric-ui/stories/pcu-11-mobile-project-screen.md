@@ -15,6 +15,7 @@
   - [ ] The draft asks for a **Main chat** card on top, read from `owner_session_id` in `projects.list`, opening the chat like a bot's canonical chat (`BotsScreen.kt`). Its running state is shown with a label, not colour alone.
   - [ ] The draft asks for the project's chats below, newest first, and a **New chat** action.
   - [ ] The draft says that a missing field or a missing chat simply hides the Main chat card, with no error.
+  - [ ] The draft includes the "working elsewhere" ask from `pcu-17`.
   - [ ] The draft links the server change and says which server versions send the field.
   - [ ] The draft carries no AI-authorship trailer, per the app's contributing rules.
 - **Out of scope** — writing app code; posting the issue.

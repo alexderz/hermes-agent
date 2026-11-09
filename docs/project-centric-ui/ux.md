@@ -9,13 +9,14 @@ Human gate: operator accepts, or writes `UX verification not required`.
 - Comparables: [`comparables.md`](comparables.md) (architect)
 - Stories: [`stories/`](stories/)
 - Date: `2026-11-08`
-- Agent review (requirements only): agreed `2026-11-08` (round 3; `reviews/ux-review-r1..r3.md`)
+- Agent review (requirements only): agreed `2026-11-08` (round 5, including the steer-from-phone additions; `reviews/ux-review-r1..r5.md`)
 - Operator: pending
 
 This design assumes the brief's recommended answers to Alex's open questions, and the HLD's decision where it departs from them:
 - **Q1.** No server or terminal-UI `/new` guard. The Hermes Mobile issue asks the app to compact the main chat on `/new`, the same way it treats Bot Chat.
 - **Q2.** The five "<Project> — Orchestrator" chats and "Model Master" are the main chats.
 - **Q3.** The HLD chose a bundled dashboard plugin tab instead of the brief's core page. It sits directly after **Sessions** in the navigation (`after:sessions`), which is the same place a core page would take, so Alex sees no difference in the navigation.
+- **Q4.** Owner-chat turns started by Alex's scripts run inside the dashboard process. The kickoff becomes a `hermes` command of the Projects plugin (HLD part 6) that sends the turn through the dashboard's chat socket, instead of a separate command-line run. Switching the kickoff unit to that command is Alex's tooling. The phone and the dashboard chat then join the same live turn. Hermes Mobile issue 1 also gets a "working elsewhere" ask for the case where a command-line run still holds the chat. (Brief Intent 5, refined in `brief-refine.md` round 3; HLD part 6.)
 
 "Open questions" at the end lists every place where a different answer changes what the user sees.
 
@@ -98,9 +99,51 @@ The page shows the project's name, an empty-state line ("No chats in this projec
 - *Home* (chats with no project folder) opens a page with its chats, newest first. It has no Main chat card and no **New chat here** button. In their place is one line: "These chats have no project folder. To start one, use New chat on the Chat page." with a link to Chat.
 - *Auto-found folders* (folders Hermes grouped on its own) open a page like a project's, without a Main chat card. **New chat here** starts in that folder.
 
+**J6. Alex steers a working main chat from his phone.**
+This works on today's Hermes Mobile build once the kickoff runs through the dashboard (Q4); no app change is needed.
+1. A scripted kickoff has started a long turn in "Hermes Improvement — Orchestrator". Alex opens that chat on Hermes Mobile, from History or from the project screen once it exists.
+2. The chat shows the transcript so far and the agent's reply streaming in, with the app's usual working indicator. It does not show a refusal or a "New conversation" offer.
+3. He types a message. The app's **While the agent is working** setting decides what happens, as in any busy chat:
+   - **Correct current turn** (the app's default);
+   - **Queue next turn**;
+   - **Guide at next safe point**;
+   - **Hard interrupt, then send**.
+
+   `/queue` and `/btw` work as usual.
+4. He taps the app's stop control. The turn stops, and the chat is idle and ready for his next message.
+5. When the turn ends on its own, the kickoff command finishes and the chat simply goes idle on the phone.
+
+**J7. Alex steers the same working main chat from the dashboard.**
+This holds for main chats in the dashboard's own profile, which covers all six of Alex's. For another profile's working main chat, see F9.
+1. On the laptop or phone browser, Alex taps **Open main chat** on the project card.
+2. Chat opens the session and joins the same live turn the phone sees: the reply keeps streaming in the terminal.
+3. He uses the terminal UI's own controls: `/queue <text>` queues the next turn, `/steer <text>` guides at the next tool call, and the interrupt key stops the turn. **Plain typing interrupts by default:** a plain message sent while the turn works stops that turn and sends the message, because the terminal UI's busy-input setting defaults to interrupt. To keep the turn running, Alex uses `/queue` or `/steer`. This differs from the phone, whose default corrects the running turn (U11).
+4. The phone and the dashboard show the same turn at the same time; a stop from either ends it for both.
+
+There is no new dashboard screen. The Projects pages still show no running state (U7), so Alex learns the main chat is working when he opens it.
+
+**F10. The main chat is held by a command-line run anyway.**
+This happens when Alex, or an old script, starts a command-line run on the main chat (`hermes chat -q` or the interactive command line). That process holds the chat until it finishes, which can be hours.
+- *Today, on Hermes Mobile:* the chat looks idle. When Alex sends, the message moves to a recovery card: "This chat is open in another window. Start a new conversation with this message?", with **Discard** and **New conversation**. He cannot queue, steer or stop, and "New conversation" would leave the main chat behind.
+- *Today, on the dashboard:* the chat opens and shows the transcript up to the last saved message, but sending is refused with the same "open in another window" message.
+- *What issue 1 asks of Hermes Mobile:*
+  - in the chat, a "Working in another window" state, as History already shows for chats active elsewhere, in words, not colour alone;
+  - on a refused send, keep the message and offer **Send when it finishes** first, then **Discard**, with **New conversation** last;
+  - **Send when it finishes** sends the message once the other run lets the chat go.
+
+  It does not ask for queueing into, steering or stopping the other run: on today's server only a turn in the dashboard process can be steered.
+- *The fix for Alex's own use* is that owner-chat kickoffs run through the dashboard (Q4), so F10 should only happen for ad-hoc command-line use.
+
+**F11. A main-chat turn is cut off.**
+A turn running in the dashboard process dies if the dashboard restarts, and the kickoff command exits with a failure if its connection drops. It does not reconnect, and the failure shows in the kickoff unit's status.
+- *Planned restarts wait.* A deploy does not restart the dashboard while a main-chat turn is running. The operator waits for it to finish, or asks Alex whether to stop it (HLD "Restarts and owner turns", rule 1). Restarts stay announced.
+- *Long turn* (started more than 15 minutes ago, the usual case for a kickoff): after an unplanned restart or a dropped kickoff, the phone and the dashboard show the chat idle, with the transcript up to the last saved message. Alex re-runs the kickoff with a "continue" prompt.
+- *Short turn* (started less than 15 minutes ago): the turn may resume on its own, with a recovery note, the next time the phone, the dashboard or a kickoff re-run reopens the chat. This happens at most twice. So Alex may find the chat working again rather than idle.
+
 **F9. Opening a chat that belongs to another profile.**
 The project tree merges all profiles, so a project's main chat or one of its rows can belong to a profile other than the one the dashboard is using. Chat resumes in the current profile.
 - The row, or the Main chat card, shows that profile's name as a small text label.
+- *A working main chat in another profile:* the dashboard's chat for another profile does not join the dashboard's own live turn. Under F9 (a), opening one while it works is refused like F10 ("open in another window"); Alex can still steer it from the phone if the phone is connected to that profile. Spec settles this with the HLD's Profiles open item (U9). None of Alex's six main chats is in another profile.
 - Opening it must land in that chat with its history, never in an empty or different chat. This depends on the HLD's "Profiles" open item; Spec settles the link.
 - Spec picks one of two behaviours (U9):
   - **(a) Switch and open.** The dashboard switches to the chat's profile, then opens the chat. **The switch persists.** Until Alex switches back, the dashboard manages that profile: new chats from Chat, config, keys, skills and model all apply to it. The dashboard's profile banner shows this whenever the chosen profile is not the dashboard's own.
@@ -126,6 +169,8 @@ The project tree merges all profiles, so a project's main chat or one of its row
 | [`pcu-13-mobile-history-home-group`](stories/pcu-13-mobile-history-home-group.md) | History stops showing a "hermes" group (drafted issue 2) |
 | [`pcu-14-mobile-new-chat-primary-folder`](stories/pcu-14-mobile-new-chat-primary-folder.md) | New project chats on Hermes Mobile start in the primary folder (drafted issue 2) |
 | [`pcu-15-other-profile-chat`](stories/pcu-15-other-profile-chat.md) | Opening a project chat that belongs to another profile lands in that chat |
+| [`pcu-16-steer-working-main-chat`](stories/pcu-16-steer-working-main-chat.md) | Alex opens a working main chat on the phone or dashboard and can queue, steer or stop it |
+| [`pcu-17-mobile-working-elsewhere`](stories/pcu-17-mobile-working-elsewhere.md) | Hermes Mobile says a chat is working elsewhere and offers to send when it finishes (issue 1) |
 
 ## High-level UX
 
@@ -181,6 +226,8 @@ This is what the drafted issues ask for. We write no app code; the maintainer de
 - **Main chat behaviour.** Typing `/new` in a project's main chat compacts it and shows one line: "This is <project>'s main chat — compacting instead. For a separate chat, use New chat on the project." This reuses the app's Bot Chat path, keyed on the chat's id instead of its title.
 - **No main chat, or an unpatched server.** The Main chat card is absent and the rest works (F1, F4).
 - **History.** Chats whose working folder is the home directory are grouped as **Home**, not "hermes" (drafted issue 2).
+- **A working main chat (works today, no app change).** Because owner-chat turns run in the dashboard process (Q4), opening one shows the live reply and the usual working indicator. The existing busy-send setting (Correct, Queue, Guide, Hard interrupt), `/queue`, `/btw` and the stop control act on the running turn (J6).
+- **Working elsewhere (issue 1 ask).** When a command-line run holds a chat, the chat says "Working in another window", in words. A refused send keeps the message and offers **Send when it finishes**, then **Discard**, then **New conversation** (F10). Today's card offers only **Discard** and **New conversation**.
 
 ## Comparables (look and flow)
 
@@ -204,6 +251,9 @@ The full write-up is the architect's [`comparables.md`](comparables.md). For loo
 - No **Live** (running) badge on the dashboard's Projects pages in slice 1. The project tree the page reads carries no running state (open question U7).
 - No message counts on dashboard rows or the Main chat card; the tree gives counts per project, not per chat beyond its few preview rows.
 - No `/chat?cwd=` link in slice 1; **New chat here** uses the Chat page's remembered folder (J3, step 4; HLD open item).
+- No new dashboard screen or control for working chats; the embedded terminal UI's `/queue`, `/steer` and interrupt are the controls (J7).
+- No queueing into, steering or stopping a turn held by a separate command-line process, and no "take over" button. On today's server that needs a core change that the later upstream version replaces (brief, refine round 3).
+- No early move to the later upstream version (v0.23.0) for this.
 - No mockups in this document. They come at Spec, with variants.
 - No Hermes Mobile code, and no issues posted. Drafts are for Alex.
 
@@ -233,6 +283,11 @@ Places where a different answer from Alex changes what the user sees:
 7. **U4, "Other chats" section.** Should auto-found folders and Home show on the Projects list, or only Alex's declared projects? Hiding them is cleaner but makes those chats reachable only from Sessions.
 8. **U5, a missing main chat.** Should the dashboard still try to open the chat it points to, which works if the chat is only archived, rather than showing the "isn't here" line? That needs the HLD to confirm whether an archived chat can be resumed.
 9. **U6, phone list length.** How many chats show before **Show more** (for the Spec mockups).
-10. **U7, Live badge.** Slice 1 shows no running state on the Projects pages. If Alex wants it, the HLD must add a read of the sessions list (which carries `is_active`), and the cards, Main chat card and rows gain the **Live** badge (colour plus the word).
+10. **U7, Live badge.** Slice 1 shows no running state on the Projects pages, so a working main chat (J7) looks the same as an idle one until opened. If Alex wants it, the HLD must add a read of the sessions list (which carries `is_active`), and the cards, Main chat card and rows gain the **Live** badge (colour plus the word).
+    - **U11, typing in a working dashboard chat.** Should Alex set the terminal UI's busy-input setting (`display.busy_input_mode`) to queue or steer, so that plain typing in a working main chat no longer stops it (J7)? This is his config choice and needs no code. The design keeps the default (interrupt) and points to `/queue` and `/steer`.
 11. **U8, New chat here side effect.** If Alex minds that **New chat here** also changes the Chat page's remembered folder (J3, step 4), the HLD's `/chat?cwd=` deep link removes it, at the cost of one small core edit.
-12. **U9, chats in another profile.** Spec picks F9 (a), which switches the dashboard's profile (and the switch persists), or F9 (b), which explains and opens nothing. This depends on the HLD's Profiles open item.
+12. **U9, chats in another profile.** Spec picks F9 (a), which switches the dashboard's profile (and the switch persists), or F9 (b), which explains and opens nothing. This depends on the HLD's Profiles open item. Either way, a working main chat in another profile cannot be steered from the dashboard in slice 1 (F9); Spec decides what the tap says.
+13. **Q4, how the main chat becomes steerable.**
+    - If Alex prefers moving to the later upstream version first (option C), J6 and J7 wait for that move.
+    - If he wants the app change only (option D), J6 and J7 do not happen on today's server. F10 becomes the normal case for scripted owner turns: "Working in another window" plus **Send when it finishes**, with no steering.
+14. **U10, wording of the working-elsewhere state.** Is it "Working in another window" (matching the app's current "open in another window"), or "Busy in a terminal run"? The first is plainer for family members; the second is more exact for Alex.
