@@ -118,15 +118,18 @@ def _auto_sso_response(request: Request) -> Response | None:
 
 
 def _verify_access_token(
-    request: Request, *, access_token: str, provider_hint: str | None = None, audit: bool = True):
+    request: Request, *, access_token: str, provider_hint: str | None = None, audit: bool = True,
+    allow_agent_key: bool = False):
     """Run ``verify_session`` across the provider stack; Session or ``None``. ``audit=False`` is
     the native-app bearer path (no cookie, no server-side refresh — the desktop rotates via
     ``/auth/native/refresh``); 503-on-outage semantics come from :func:`scan_session_providers`."""
-    # Local agent key (direct loopback only, never via the proxy): see dashboard_auth/agent_key.py.
-    from hermes_cli.dashboard_auth.agent_key import verify_agent_key
+    # Local agent key: bearer / WS-token legs only (never a cookie), direct loopback only, never
+    # via the proxy. See dashboard_auth/agent_key.py.
+    if allow_agent_key:
+        from hermes_cli.dashboard_auth.agent_key import verify_agent_key
 
-    if (agent := verify_agent_key(request, access_token)) is not None:
-        return agent
+        if (agent := verify_agent_key(request, access_token)) is not None:
+            return agent
 
     def _audit_unreachable(provider):
         if audit:
@@ -179,7 +182,8 @@ async def gated_auth_middleware(
     bearer = _extract_bearer(request)
     if bearer:
         try:
-            bearer_session = _verify_access_token(request, access_token=bearer, audit=False)
+            bearer_session = _verify_access_token(
+                request, access_token=bearer, audit=False, allow_agent_key=True)
         except ProviderError as e:
             return unreachable_response(str(e))
         if bearer_session is not None:
