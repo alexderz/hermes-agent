@@ -41,7 +41,7 @@ project that tapping the project opens, the way a Bot opens its Bot Chat.
   pseudo-project, rename protection, the PWA (all "Deferred after slice 1").
 - Per-project memory, instructions or model settings (context already comes from folder files).
 - Writing Hermes Mobile code; the desktop Electron app beyond keeping the backend contract
-  compatible; upgrading the fork to v0.23.0; model routing (DER-675), Titan, Home Assistant.
+  compatible; upgrading the fork to v0.23.0; model routing (DER-675), the GPU host, Home Assistant.
 
 ### Users / operators
 
