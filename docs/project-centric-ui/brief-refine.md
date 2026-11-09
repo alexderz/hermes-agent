@@ -1,5 +1,39 @@
 # Refine: project-centric Hermes UI (DER-686)
 
+## Round 3 (2026-11-08)
+
+Only the delta from Alex's 21:00 addition is checked: Intent 5, A6–A7, facts 17–29, the five steering options, the Q1 note, Q4 and Q5. Alex's words: owner sessions "must be reachable and steerable from the phone while they work. Either run them inside the dashboard/gateway that the app talks to, or let the app queue or interject into a session that another process holds."
+
+| Item | Verdict | Reason |
+|---|---|---|
+| Intent 5 (open, queue, steer, stop from the phone while a turn runs) | **Keep** | This is Alex's requirement. "Stop" comes free with option A. |
+| A6 (owner turns come from a kickoff unit running `hermes chat -q --oneshot`) | **Keep** | It locates the problem in Alex's tooling, not in Hermes. |
+| A7 ("steerable" = the app's existing queue/guide/correct/interrupt) | **Keep** | No new control. |
+| Option A (kickoff submits through the dashboard's `/api/ws`; the phone attaches to the same live turn) | **Keep, simplify** | This is Alex's first suggested route, with no Hermes change. The script only connects, sends `session.resume` plus `prompt.submit`, waits for completion and exits. Drop "handle reconnects": if the socket drops, the turn may be reaped and the kickoff is re-run. Add reconnects only if that happens in practice. The script is Alex's tooling, outside the fork branch. |
+| Option D (one "working elsewhere / retry when done" sentence in issue draft 1) | **Keep** | One sentence. Under A, it only matters for ad-hoc CLI use. |
+| Option B (cross-process mailbox patch) | **Kill** | It is a core turn-path patch that v0.23.0 replaces (facts 28–29), and it gives queueing only. The brief already advises skipping it; drop it from the options shown to Alex. |
+| Option E (start owner work by hand only) | **Kill as an option** | It is the status quo with automation removed, and option A already covers hand use. |
+| Option C / Q5 (move the v0.23.0 rebase earlier; first a v0.23.0 spike) | **Simplify** | The recommendation "not yet" keeps Alex's settled order. Drop the v0.23.0 spike from this run and put it in work item 3 (fork upkeep), where it decides whether option A's script retires. This run needs nothing from v0.23.0, since option A meets the requirement on v0.22.0. Q5 then becomes a note, not a question. |
+| Q1 note: the app compacts an owner chat "only when not busy elsewhere" | **Simplify** | The app cannot see a turn running elsewhere (fact 27), so it cannot implement that condition. Under option A the owner turn runs in the dashboard process, where `session.compress` already refuses while the session is busy (`_manual_compress_turn` raises `CompressionBusy`, `tui_gateway/session_compression.py:242-249`). Drop the clause. |
+| Q1 note: fix `session.compress` ignoring a foreign process's lease (fact 22) | **Move out** | It is a genuine bug, but Alex didn't ask for this fix and option A removes the owner-chat case. File it as its own fork bug, not part of DER-686. |
+
+Fact checks (code, read-only):
+- 18: lease identity is (pid, live session id) (`hermes_cli/active_sessions.py:136-148`). Verified.
+- 19: the one-shot claims the lease before its turn (`hermes_cli/cli_single_query.py:522`). Verified.
+- 20: `prompt.submit` checks the lease before the busy/queue path and returns 4090 (`tui_gateway/methods_prompt.py:774-778`); `session.create` and `session.resume` claim nothing (`session_lifecycle.py:121-125`). Verified.
+- **Option A's key premise:** a phone `session.resume` on a session already live in the dashboard process reattaches to the same live session alongside the existing client (`_claim_or_reuse_live` → `_resume_reuse_live`, `tui_gateway/methods_session.py:657-662, 868-891`). It does not mint a second live id that would trip the (pid, live id) check. So the phone's queue, guide and interrupt act on the running turn. Verified in code, not run live.
+- Hermes Mobile connects to `/api/ws` (`data/remote/ServerEndpoint.kt:38`, app), the same route as `hermes_cli/web_routers/chat_ws.py:701`. Verified.
+- 22: `session.compress` has an in-process busy guard and a DB lock against concurrent compactions, but no check for a turn in another process (`tui_gateway/methods_session.py:2136-2160`). Substance verified; "no ownership check" is accurate.
+- 25, 26: `BusySendMode` has the four modes, and the 4090 recovery text is as quoted (`res/values/strings.xml:2143`, app). Verified.
+- 29: v0.23.0 has `tui_gateway/owner_forward.py` and `_slot_refusal` sending ledger refusals to the owner's queue (`methods_prompt.py:720-730` @v0.23.0). Verified. "Queue only, no steer" and the co-viewer path were not checked; with Q5 moved out, nothing here depends on them.
+- 17, 27 (live session row, app busy detection): not re-checked; they don't change the recommendation.
+
+Net change to the brief: Intent 5 is met by option A plus one sentence in issue draft 1, with no Hermes code. Options B and E, the Q5 spike, the Q1 "busy elsewhere" clause and the compress fix leave this run. These cut the gatherer's additions, not Alex's requirements, and no new open point appears. The Plan step can apply them directly.
+
+Refine: pass
+
+---
+
 ## Round 2 (2026-11-08)
 
 Re-checked only what changed against the round-1 delta and Alex's words.
