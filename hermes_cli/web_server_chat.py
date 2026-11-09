@@ -333,16 +333,22 @@ def _ws_auth_reason(ws: WebSocket, *, allow_internal: bool = False,
                 _reject(f"session token verify unavailable: {exc}")
                 return "token_unavailable", "token"
             if session is not None:
-                _stamp_identity({
-                    "user_id": getattr(session, "user_id", None),
-                    "provider": getattr(session, "provider", None),
-                })
+                from hermes_cli.dashboard_auth.agent_key import session_identity
+
+                # Agent-key sessions may act as the operator (dashboard.agent_key.act_as), so turns
+                # they start share the operator's identity (memory peer, foreign-login checks).
+                identity = session_identity(session)
+                _stamp_identity(identity)
+                acting = {}
+                if identity.get("provider") != getattr(session, "provider", None):
+                    acting = {"acting_as": f"{identity.get('provider')}:{identity.get('user_id')}"}
                 audit_log(
                     AuditEvent.TOKEN_AUTH_SUCCESS,
                     provider=getattr(session, "provider", None),
                     user_id=getattr(session, "user_id", None),
                     ip=(ws.client.host if ws.client else ""),
                     path=ws.url.path,
+                    **acting,
                 )
                 return None, "token"
             audit_log(
