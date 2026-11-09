@@ -13,7 +13,7 @@
   - [ ] At a 360-pixel-wide viewport, neither screen scrolls sideways. Titles shorten with an ellipsis and keep the time visible.
   - [ ] **Open main chat**, the Main chat **Open** button and **New chat here** are full-width buttons. Every tappable target is at least 44 by 44 pixels.
   - [ ] **New chat here** is an in-page button, not a floating one.
-  - [ ] **Projects** is reachable from the dashboard's narrow-screen navigation drawer.
+  - [ ] **Projects** is reachable from the dashboard's narrow-screen menu, and a main chat is three taps away from any page (menu, **Projects**, **Open main chat**).
   - [ ] Opening a chat and pressing the phone's Back returns to the screen it came from.
-  - [ ] A bookmark to `/projects` opens the Projects list directly after sign-in.
+  - [ ] A home-screen bookmark to the Projects list opens it directly after sign-in, one tap from **Open main chat**.
 - **Out of scope** — installable web app (manifest, service worker, offline).
