@@ -1,0 +1,144 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>:root{--foreground:#e6edf3;--muted-foreground:#9aa7b4;--accent:#5eead4;--border:#2d3b45;--card:#111c22}body{background:#0b1418;color:var(--foreground);font-family:system-ui,sans-serif;margin:16px}</style><style>
+  .w { width: 760px; line-height: 1.45; font-size: 14px; }
+  h2 { font-size: 17px; margin: 0 0 4px; }
+  h3 { font-size: 14px; margin: 18px 0 6px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted-foreground); }
+  .note { color: var(--muted-foreground); font-size: 12.5px; }
+  .row { display: flex; gap: 14px; align-items: flex-start; }
+  .frame { border: 1px solid var(--border); border-radius: 10px; background: var(--card); overflow: hidden; }
+  .bar { font-size: 11px; color: var(--muted-foreground); padding: 4px 8px; border-bottom: 1px solid var(--border); }
+  .laptop { width: 470px; display: flex; }
+  .nav { width: 108px; border-right: 1px solid var(--border); padding: 8px 0; font-size: 12px; }
+  .nav div { padding: 3px 10px; color: var(--muted-foreground); }
+  .nav .on { color: var(--foreground); font-weight: 600; border-left: 3px solid #0e9f8f; padding-left: 7px; }
+  .nav .new { color: #0e9f8f; font-size: 10px; }
+  .main { flex: 1; padding: 8px 10px; }
+  .card { border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; margin-bottom: 6px; font-size: 12px; }
+  .card b { font-size: 12.5px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; }
+  .muted { color: var(--muted-foreground); font-size: 11px; }
+  .btn { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 6px; background: #0e9f8f; color: #fff; margin-top: 3px; }
+  .btn2 { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--border); margin-top: 3px; }
+  .tag { font-size: 10px; padding: 1px 6px; border-radius: 4px; border: 1px solid; margin-left: 4px; }
+  .ok { color: #0e9f8f; border-color: #0e9f8f; }
+  .warn { color: #c2410c; border-color: #c2410c; }
+  .none { color: var(--muted-foreground); border-color: var(--border); }
+  .mainchat { border: 2px solid #0e9f8f; border-radius: 8px; padding: 7px 9px; margin: 6px 0; font-size: 12px; }
+  .chatrow { font-size: 11.5px; padding: 3px 0; border-bottom: 1px dashed var(--border); display: flex; justify-content: space-between; }
+  .phone { width: 200px; border-radius: 18px; }
+  .phone .main { padding: 8px; }
+  .full { display: block; text-align: center; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  td, th { border-top: 1px solid var(--border); padding: 5px 6px; vertical-align: top; text-align: left; }
+  th { font-weight: 600; width: 150px; }
+  .q { border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; margin-bottom: 8px; }
+  .q b.id { color: #7c3aed; }
+  .choices { margin-top: 6px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .choices span { cursor: pointer; font-size: 12px; padding: 3px 10px; border-radius: 6px; border: 1px solid var(--border); }
+  .choices span.rec { background: #0e9f8f; color: #fff; border-color: #0e9f8f; }
+  a { color: var(--accent); }
+</style>
+<div class="w">
+  <h2>Project UI (DER-686): what you're approving</h2>
+  <div class="note">The first slice, as the Plan and UX describe it. These sketches are drawn from <code>ux.md</code> to show you the idea; they are not the Spec mockups (those come next, 2–3 real variants). Example data.</div>
+
+  <h3>1 · Web dashboard on a laptop: new "Projects" tab, right after Sessions</h3>
+  <div class="row">
+    <div class="frame laptop">
+      <div class="nav">
+        <div>Chat</div><div>Sessions</div><div class="on">Projects <span class="new">NEW</span></div><div>Usage</div><div>Config</div>
+      </div>
+      <div class="main">
+        <div class="muted" style="margin-bottom:5px">Projects · most recently active first</div>
+        <div class="card"><span class="dot" style="background:#0e9f8f"></span><b>Hermes Improvement</b><span class="tag ok">Main chat</span><br>
+          <span class="muted">Main chat: Hermes Improvement — Orchestrator · 23 chats · active 4 min ago</span><br><span class="btn">Open main chat</span></div>
+        <div class="card"><span class="dot" style="background:#7c3aed"></span><b>Model Testing</b><span class="tag ok">Main chat</span><br>
+          <span class="muted">Main chat: Model Master · 11 chats · active 2 h ago</span><br><span class="btn">Open main chat</span></div>
+        <div class="card"><span class="dot" style="background:#d97706"></span><b>Budgeting</b><span class="tag warn">Main chat missing</span><br>
+          <span class="muted">Its main chat was archived or deleted · 5 chats</span><br><span class="btn2">Open project</span></div>
+        <div class="muted" style="margin-top:6px">Other chats: <u>Home</u> (chats with no project) · auto-found folders</div>
+      </div>
+    </div>
+    <div class="note" style="width:270px">
+      <b>Card button</b> → opens that project's main chat (the normal dashboard chat, resumed).<br><br>
+      <b>Card body</b> → opens the project page (below).<br><br>
+      Status is always a word ("Main chat", "No main chat", "Main chat missing"); colour only backs it up.<br><br>
+      Editing projects stays in Hermes Mobile for now.
+    </div>
+  </div>
+
+  <h3>2 · Project page (laptop) and the same page in a phone browser</h3>
+  <div class="row">
+    <div class="frame" style="width:300px">
+      <div class="main">
+        <div class="muted">← Projects</div>
+        <b><span class="dot" style="background:#0e9f8f"></span>Hermes Improvement</b> <span class="muted">· projects/hermes-improvement</span>
+        <div class="mainchat"><span class="tag ok" style="margin:0 0 3px">Main chat</span><br><b>Hermes Improvement — Orchestrator</b><br><span class="muted">active 4 min ago</span><br><span class="btn">Open</span></div>
+        <span class="btn2">+ New chat here</span>
+        <div class="muted" style="margin:7px 0 2px">Chats, newest first</div>
+        <div class="chatrow"><span>Hermes Improvement — Project UI</span><span class="muted">now</span></div>
+        <div class="chatrow"><span>MCP login fix</span><span class="muted">6 h</span></div>
+        <div class="chatrow"><span>Usage meter footer</span><span class="muted">7 h</span></div>
+        <div class="muted" style="margin-top:4px">Show more</div>
+      </div>
+    </div>
+    <div class="frame phone">
+      <div class="bar">phone browser</div>
+      <div class="main">
+        <b style="font-size:12px">Hermes Improvement</b>
+        <div class="mainchat"><span class="tag ok" style="margin:0">Main chat</span><br><b>…— Orchestrator</b><br><span class="btn full">Open</span></div>
+        <span class="btn2 full">+ New chat here</span>
+        <div class="chatrow"><span>Project UI</span><span class="muted">now</span></div>
+        <div class="chatrow"><span>MCP login fix</span><span class="muted">6 h</span></div>
+      </div>
+    </div>
+    <div class="note" style="width:150px">
+      Phone: one column, full-width buttons, no floating button. Three taps from anywhere, or one tap from a home-screen bookmark.<br><br>
+      <b>New chat here</b> starts a fresh chat in the project folder (side effect: Chat's folder picker stays on that folder).
+    </div>
+  </div>
+
+  <h3>3 · Hermes Mobile: what the drafted issue asks the app maintainer for</h3>
+  <div class="row">
+    <div class="frame phone">
+      <div class="bar">Hermes Mobile (proposed)</div>
+      <div class="main">
+        <div style="display:flex;justify-content:space-between"><b style="font-size:12px">Hermes Improvement</b><span class="muted">✎ Edit</span></div>
+        <div class="mainchat"><span class="tag ok" style="margin:0">Main chat</span> <span class="tag ok">Working</span><br><b>…— Orchestrator</b><br><span class="muted">tap opens it like Bot Chat</span></div>
+        <div class="chatrow"><span>Project UI</span><span class="muted">now</span></div>
+        <div class="chatrow"><span>MCP login fix</span><span class="muted">6 h</span></div>
+        <div style="text-align:right;margin-top:6px"><span class="btn">+ New chat</span></div>
+      </div>
+    </div>
+    <div class="note" style="width:540px">
+      We write no app code. You review and post two issues:<br>
+      <b>Issue 1:</b> tapping a project opens this screen (settings move behind Edit). The main chat is on top; <code>/new</code> in it compacts the chat like Bot Chat does; if a run elsewhere holds the chat, show "Working in another window" and offer <b>Send when it finishes</b> instead of only "New conversation".<br>
+      <b>Issue 2:</b> the stray "hermes" group in History becomes "Home"; new project chats start in the project's <i>primary</i> folder, not its first one.<br><br>
+      <b>Works today with no app change:</b> once owner chats run through the dashboard ("Owner-chat runs" below), opening a working main chat on the phone joins the live turn, so you can queue, steer or stop it. That's the fix for the SESSION_NOT_OWNED error you hit. The Trial proved this with a stand-in client (18/18 checks), not yet with the real app.
+    </div>
+  </div>
+
+  <h3>4 · What gets built behind it</h3>
+  <table>
+    <tr><th>Main-chat field</th><td>One optional field per project (<code>owner_session_id</code>), returned by the calls the phone app already makes. A small Hermes patch on the fork, offered upstream through an issue draft you post.</td></tr>
+    <tr><th>Projects tab</th><td>A plugin inside the fork, so no changes to core dashboard code and no web rebuild. It only reads the existing project list.</td></tr>
+    <tr><th>Seeding</th><td>Set once: the five "— Orchestrator" chats plus Model Master become the main chats. An undo file is written first.</td></tr>
+    <tr><th>Owner-chat runs</th><td>A new <code>hermes</code> command (in the same plugin) runs owner-chat turns through the dashboard instead of <code>chat -q --oneshot</code>. Cost: a dashboard restart kills a running owner turn, so planned restarts wait for it or ask you.</td></tr>
+    <tr><th>Deploy</th><td>One announced dashboard restart (cuts the phone off briefly).</td></tr>
+    <tr><th>Not in this slice</th><td>A server-side <code>/new</code> guard, a "make main chat" button, a main chat for Home, the installable web app (PWA), our own build of the app, the move to v0.23.0, a "Live" badge on the Projects pages.</td></tr>
+  </table>
+
+  <h3>Decisions</h3>
+  <div class="q"><b class="id">PUI-Q1</b> Accept this Plan and UX for the first slice? Next is Spec: detailed design, 2–3 mockup variants, a security review, then your OK on the detailed design.
+    <div class="choices"><span class="rec" data-x="PUI-Q1: accept the Plan and UX.">Accept (recommended)</span><span data-x="PUI-Q1: not yet. I have changes:">Changes first</span></div></div>
+  <div class="q"><b class="id">PUI-Q2</b> <code>/new</code> in a main chat: compact it only in Hermes Mobile (like Bot Chat), with no server or dashboard guard for now?
+    <div class="choices"><span class="rec" data-x="PUI-Q2: yes, app only for now.">App only (recommended)</span><span data-x="PUI-Q2: guard the dashboard too.">Also guard the dashboard</span></div></div>
+  <div class="q"><b class="id">PUI-Q3</b> Move owner-chat runs to the new dashboard command now, so you can steer them from the phone on v0.22.0?
+    <div class="choices"><span class="rec" data-x="PUI-Q3: yes, move owner-chat runs now.">Move now (recommended)</span><span data-x="PUI-Q3: wait for the v0.23.0 rebase.">Wait for v0.23.0</span></div></div>
+
+  <div class="note">Full documents (fork branch <code>integrate/project-centric-ui</code>):
+    <a href="https://github.com/alexderz/hermes-agent/blob/integrate/project-centric-ui/docs/project-centric-ui/ux.md">UX</a> ·
+    <a href="https://github.com/alexderz/hermes-agent/blob/integrate/project-centric-ui/docs/project-centric-ui/hld.md">high-level design</a> ·
+    <a href="https://github.com/alexderz/hermes-agent/tree/integrate/project-centric-ui/docs/project-centric-ui/stories">17 stories</a> ·
+    <a href="https://github.com/alexderz/hermes-agent/blob/integrate/project-centric-ui/docs/project-centric-ui/poc/poc.md">Trial</a> ·
+    <a href="https://github.com/alexderz/hermes-agent/blob/integrate/project-centric-ui/docs/project-centric-ui/brief.md">brief</a></div>
+</div>
