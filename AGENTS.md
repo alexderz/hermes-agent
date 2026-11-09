@@ -167,3 +167,10 @@ Every former god file is a **facade** (public entry points + the names other pac
 
 Long-form background: `website/docs/developer-guide/`. Workflow rules (PR/issue/review/salvage
 process) live in the `hermes-agent-dev` skill, not here.
+
+<!-- fork-only (alexderz): never offer upstream -->
+## Tracker
+Linear — load .agents/tracker/SKILL.md (tracker-sdlc v2).
+
+## Execution
+Parallelism: serial
