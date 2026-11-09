@@ -113,6 +113,32 @@ def test_config_overrides_file_and_identity(tmp_path, monkeypatch):
     assert ak.verify_agent_key(_req(), value).user_id == "basic:alex"
 
 
+@pytest.mark.parametrize("act_as,expected", [
+    ("basic:alex", {"user_id": "alex", "provider": "basic"}),
+    ("", {"user_id": "agent:local", "provider": "agent-key"}),
+    ("nocolon", {"user_id": "agent:local", "provider": "agent-key"}),
+    ("basic:", {"user_id": "agent:local", "provider": "agent-key"}),
+    ("agent-key:x", {"user_id": "agent:local", "provider": "agent-key"}),
+    ("Agent-Key:x", {"user_id": "agent:local", "provider": "agent-key"}),
+    ("server-internal:server-internal", {"user_id": "agent:local", "provider": "agent-key"}),
+    ("bot-desktop:x", {"user_id": "agent:local", "provider": "agent-key"}),
+    (":alex", {"user_id": "agent:local", "provider": "agent-key"}),
+    ("basic:alex:extra", {"user_id": "alex:extra", "provider": "basic"}),
+])
+def test_session_identity_act_as(key, monkeypatch, act_as, expected):
+    _, value = key
+    monkeypatch.setattr(ak, "_section", lambda: {"act_as": act_as})
+    s = ak.verify_agent_key(_req(), value)
+    assert s.provider == "agent-key"  # the credential never changes
+    assert ak.session_identity(s) == expected
+
+
+def test_session_identity_ignores_other_providers(monkeypatch):
+    monkeypatch.setattr(ak, "_section", lambda: {"act_as": "basic:alex"})
+    other = SimpleNamespace(user_id="bob", provider="nous")
+    assert ak.session_identity(other) == {"user_id": "bob", "provider": "nous"}
+
+
 def test_default_path_under_hermes_home(monkeypatch, tmp_path):
     monkeypatch.setattr(ak, "_section", lambda: {})
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
@@ -174,7 +200,34 @@ def test_e2e_key_in_cookie_is_not_a_login(gated):
     assert local.get("/api/auth/me").status_code == 401
 
 
-def test_e2e_agent_key_cannot_mint_ws_ticket(gated):
+@pytest.mark.parametrize("act_as", ["", "basic:alex"])
+def test_e2e_agent_key_cannot_mint_ws_ticket(gated, monkeypatch, act_as):
     value, local, _ = gated
+    monkeypatch.setattr(ak, "_section", lambda: {"act_as": act_as})
     r = local.post("/api/auth/ws-ticket", headers={"Authorization": f"Bearer {value}"})
     assert r.status_code == 403
+
+
+def test_ws_token_leg_stamps_act_as_and_audits_agent_key(gated, monkeypatch):
+    from hermes_cli import web_server_chat
+    from hermes_cli.dashboard_auth import audit as audit_mod
+
+    value, _, _ = gated
+    monkeypatch.setattr(ak, "_section", lambda: {"act_as": "basic:alex"})
+    events = []
+    monkeypatch.setattr(audit_mod, "audit_log", lambda ev, **f: events.append((ev, f)))
+
+    class _QP(dict):
+        def get(self, k, default=""):
+            return super().get(k, default)
+
+    ws = SimpleNamespace(query_params=_QP(token=value), headers={},
+                         client=SimpleNamespace(host="127.0.0.1"), url=SimpleNamespace(path="/api/ws"))
+    assert web_server_chat._ws_auth_reason(ws) == (None, "token")
+    assert ws._hermes_auth_identity == {"user_id": "alex", "provider": "basic"}
+    ok = [f for ev, f in events if ev == audit_mod.AuditEvent.TOKEN_AUTH_SUCCESS]
+    assert ok and ok[-1]["provider"] == "agent-key" and ok[-1]["acting_as"] == "basic:alex"
+    # Through the proxy the same key is refused on the WS leg too.
+    ws_proxied = SimpleNamespace(query_params=_QP(token=value), headers={"x-forwarded-for": "1.2.3.4"},
+                                 client=SimpleNamespace(host="127.0.0.1"), url=SimpleNamespace(path="/api/ws"))
+    assert web_server_chat._ws_auth_reason(ws_proxied)[0] is not None
