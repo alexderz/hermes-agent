@@ -218,3 +218,55 @@ Every host Alex named stays in the chunk. Build and trial them in this order, so
 6. Add the host order above (tui_gateway and CLI, then gateway, then the drafts) as the build order.
 
 Refine: back to Gather — find the hosting process through `active_sessions.json` `pid` instead of per-session intercom entries; wake live-nowhere sessions from the sender with the dispatcher rule (drop dashboard detection and A9's outbox waiting; with no dashboard, return the error); SM-Q16 → (a); correct the non-existent `ctx.session_surface()` and add the open point on how the gateway endpoint identifies itself; strip superseded and contradicting text from brief.md (Reflect paragraph 1, "Reuse the dispatcher's rule instead of inject_message", "inject_message … Not used", the `session_message` synchronous constraint, A8's atomic claim, the poller-era and `SESSION_NOT_OWNED` checks, the poller and send-time sections, the SM-Q12 table); shrink the upstream and miyu4u sections; record the host build order: tui_gateway and CLI, then gateway, then drafts.
+
+## Round 5
+
+Checked the stripped brief (436 lines, working tree against `8c6dd13539`) against my round-4 delta, the settled decisions, and the facts the plan needs.
+
+### Did each round-4 item land?
+
+| Round-4 delta item | Landed? | Where in brief.md |
+|---|---|---|
+| 1. Find the hosting process through the `active_sessions.json` lease `pid`, and keep intercom's one entry per process | Yes | Design, send path steps 1–4; A8; Superseded decisions |
+| 2. Wake a session that is live nowhere from the sender with the dispatcher rule; drop dashboard detection and A9's waiting; with no dashboard, return the error | Yes | Design; "Waking a session that is live nowhere"; Verify later, "Live nowhere" |
+| 3. SM-Q16 → (a): automatic replies skip `ask` messages | Yes | Design, Replies; SM-Q16; Verify later, Replies |
+| 4. Correct `ctx.session_surface()`, and add the open point on how the gateway endpoint marks itself | Yes | "Which process hosts a session"; Open |
+| 5. Strip the superseded and contradicting text; shrink the upstream and miyu4u sections | Yes | None of the round-4 contradictions remain ("never cancels", "`inject_message` … not used", the `session_message` constraint, the atomic claim, poller-era checks, `SESSION_NOT_OWNED`, the SM-Q12 table). Each replaced decision has one dated line under "Superseded decisions". Upstream and miyu4u are about 15 lines. |
+| 6. Build order: `tui_gateway` and CLI, then gateway, then drafts | Yes | "Build order (hosts)" |
+
+### Does the stripped brief still hold what the plan needs?
+
+- **Settled decisions:** all present.
+  - Alex's three new decisions are decisions 1, 3, 9 and 11, with his quotes.
+  - Decisions 2 and 4–8 are there as written.
+  - So are SM-Q13 (decision 10) and the upstream rule (decision 12).
+  - "No caps, holds, approval gates, retries or give-up timers" is in Out of scope and in the "No caps" check.
+- **Verified facts the plan rests on, all kept:**
+  - the intercom internals and caps;
+  - the per-host table: interrupt, steer and queue today, plus what injection does now;
+  - the lease writers and keys;
+  - the dispatcher rule and its timeouts;
+  - the threading;
+  - reply capture, and why matching scans every new row;
+  - the steer framing;
+  - the reaper loss cases;
+  - phone rendering;
+  - the tool list after a restart;
+  - the addressing helpers;
+  - the "ended" facts behind SM-Q9;
+  - the gateway silence and bot-loop facts;
+  - `allow_gateway_injection`.
+
+  Dropping the `session.steer` `queued`/compression ambiguity and the `turn_isolation` note is fine: reply matching by id makes the first moot, and the second is off by default and does not change where `post_llm_call` runs relative to the record.
+- **Nothing new crept in.**
+  - The only new fact is the gateway signal. It is **verified**: `PluginManager.has_gateway_message_injector` (`hermes_cli/plugins.py:1241-1243`), set through `publish_gateway_message_host` (`:1639`) by the gateway runner's `_install_plugin_message_injector()` at start (`gateway/run_startup.py:1654`).
+  - "Endpoint names still accepted" and "same-session refusal" were already in the round-4 mapping I kept.
+  - A11 (a synchronous receipt) is intercom's existing behaviour.
+
+### Notes for the planner (not a delta)
+
+- **When the gateway signal is set.** The gateway publishes its message host after its adapters start (`run_startup.py:1654`). Intercom's `inbox.start()` runs earlier, at plugin load. So the endpoint cannot stamp "gateway" in its registry entry at start. It has to check `has_gateway_message_injector` later: when serving `list`, or when it refreshes its entry. A dashboard process can also host a messaging gateway, so one pid can serve both roles.
+- **A gateway-source target while the gateway is down.** Its route is still in `gateway_routing`, but "not known to a running gateway" would make it "live nowhere", and the dashboard would wake it outside its chat. The reply would then never reach the topic. The rule that fits the brief is: a target whose source is a messaging platform, with no running gateway, returns the error (the same as "no dashboard"). This needs no question for Alex; the planner states it and adds a check.
+- **Routing order.** Look for a lease under the stored session id first. Only then ask the gateway store (`lookup_by_session_id`), then fall back to "live nowhere". A gateway turn's lease is keyed by the gateway session key, not the stored id, so it never matches the first step. That is correct, because the gateway path handles it.
+
+Refine: pass
