@@ -88,7 +88,7 @@ Paths without a prefix are relative to the Hermes repository root. Intercom path
 
 ## Constraints
 
-- Hermes changes go only on fork branches. They are fast-forwarded into `alex/v0.22.0-mobile-fixes` and deployed with `git pull --ff-only` in the install. The plugin enable goes through house-infra `hosts/<dashboard-host>/hermes.py`. No live edits (vault rule 19). How intercom reaches the install is SM-Q14, asked elsewhere.
+- Hermes changes go only on fork branches. They are fast-forwarded into `alex/v0.22.0-mobile-fixes` and deployed with `git pull --ff-only` in the install. The plugin enable goes through house-infra `hosts/<dashboard-host>/hermes.py`. No live edits (vault rule 19). Intercom reaches the install by `git subtree` vendoring into `plugins/intercom` (SM-Q14, answered 2026-11-10).
 - The dispatch steer/queue fix and the queue-aware reapers (`1516a52669`, `8d4597bf8e`, `1ec78a0dcc`, `c843eea710`) are on this branch, through merge `3d4d482eb9`.
 - One announced dashboard restart at deploy; list busy sessions first. Every resumed session pays one prompt-cache miss when the `intercom` tool is added to its tool list (see "Tool list of a resumed session").
 - Prompt caching is sacred (root `AGENTS.md`). Messages arrive as new user rows; past context and live system prompts are never rewritten.
@@ -97,7 +97,7 @@ Paths without a prefix are relative to the Hermes repository root. Intercom path
 - Work outside a turn carries the profile context: the reply thread started by `post_llm_call`, and intercom's socket threads (`tools/thread_context.py:36`, `propagate_context_to_thread`).
 - **The waking path is synchronous.** Waking a session that is live nowhere runs the dispatcher rule from the sender. Its worst case is about 420 s: resume, steer and submit at 60 s each, plus a 240 s start wait. That exceeds the 300 s limit `model_tools._run_async` puts on an `is_async` handler (`model_tools.py:94-135`). So the tool handler is synchronous and runs its own short event loop. This is a timeout, not a cap on sending.
 - The Trial uses a temporary `HERMES_HOME`, its own dashboard on another port, and a fake model. It also runs a classic CLI, an Ink TUI and a gateway with a test adapter, because the live install has no gateway sessions.
-- Question IDs: SM-Q7 to SM-Q16 (SM-Q14 is asked elsewhere). New questions start at SM-Q17.
+- Question IDs: SM-Q7 to SM-Q16 (SM-Q14 answered elsewhere). SM-Q17 is plan acceptance; new questions start at SM-Q18.
 
 ## Design (what the plan builds on)
 
@@ -365,7 +365,7 @@ Clone at `ae90a2a` (2026-09-04). The code is 1,380 lines with its tests (`__init
 
 **SM-Q13** — *Answered (scope addition):* gateway sessions and the default profile's `Bot Chat` are in; bots in other profiles are out (decision 10).
 
-**SM-Q14** — *Asked elsewhere* (the "Session Messaging" session): the deploy method, recommended as vendoring `alexderz/hermes-intercom` into Alex's Hermes fork as `plugins/intercom` with `git subtree`.
+**SM-Q14** — *Answered 2026-11-10* (Alex, via the "Session Messaging" session: "your plan is good"): the deploy method, vendoring `alexderz/hermes-intercom` into Alex's Hermes fork as `plugins/intercom` with `git subtree`.
 
 ---
 
