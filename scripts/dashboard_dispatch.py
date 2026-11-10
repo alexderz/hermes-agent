@@ -47,7 +47,7 @@ def _key_path(explicit: str | None) -> Path:
         from hermes_cli.dashboard_auth.agent_key import key_path
 
         return key_path()
-    except Exception:
+    except Exception:  # health: allow BLE001 -- any failure in the dashboard's own key-path resolution falls back to the default path
         home = os.environ.get("HERMES_HOME") or str(Path.home() / ".hermes")
         return Path(home) / "dashboard-agent.key"
 
@@ -55,7 +55,7 @@ def _key_path(explicit: str | None) -> Path:
 def _read_key(explicit: str | None) -> str:
     p = _key_path(explicit)
     try:
-        key = p.read_text(encoding="utf-8").strip()
+        key = p.read_text(encoding="utf-8-sig").strip()
     except (OSError, ValueError) as exc:
         sys.exit(f"dashboard_dispatch: cannot read agent key {p}: {type(exc).__name__}")
     if not key:
@@ -136,7 +136,7 @@ async def _main(a: argparse.Namespace) -> dict:
     token = _read_key(a.key_file)
     base = a.url.rstrip("/").replace("http://", "ws://", 1).replace("https://", "wss://", 1)
     uri = f"{base}/api/ws?" + urllib.parse.urlencode({"token": token})
-    text = Path(a.prompt_file).read_text(encoding="utf-8") if a.prompt_file else a.prompt
+    text = a.prompt  # main() has read --prompt-file into it (no blocking file I/O in the event loop)
     async with websockets.connect(uri, max_size=None, open_timeout=a.timeout) as ws:
         if a.resume:
             res = await _rpc(ws, 1, "session.resume", {"session_id": a.resume}, a.timeout)
@@ -183,6 +183,11 @@ def main() -> None:
         a.cwd = os.path.abspath(os.path.expanduser(a.cwd))
         if not os.path.isdir(a.cwd):
             ap.error(f"--cwd {a.cwd} is not a directory")
+    if a.prompt_file:
+        try:
+            a.prompt = Path(a.prompt_file).read_text(encoding="utf-8-sig")
+        except (OSError, ValueError) as exc:
+            ap.error(f"--prompt-file {a.prompt_file}: {type(exc).__name__}")
     try:
         print(json.dumps(asyncio.run(_main(a))))
     except (RuntimeError, TimeoutError, OSError) as exc:
