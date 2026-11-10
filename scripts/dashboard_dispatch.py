@@ -111,13 +111,23 @@ async def _deliver(ws, live_id: str, text: str, timeout: float, *, steer: bool) 
             res = await _rpc(ws, 2, "session.steer", {"session_id": live_id, "text": text}, timeout)
         except RuntimeError:  # e.g. 4010: the agent cannot steer, or the turn is still being built
             res = {}
-        # "queued" = accepted by the running turn (or parked behind a compression); "rejected" = idle.
+        except TimeoutError:
+            # No fallback: the steer may still have landed, and a submit could deliver the text twice.
+            raise TimeoutError("session.steer: no reply in time; the text may or may not have been "
+                               "steered into the running turn, so check the chat before re-sending") from None
+        # "queued" = accepted by the running turn (or, during a compression, parked for the next turn);
+        # "rejected" = the session is idle or the agent refused it.
         if res.get("status") == "queued":
             return "steered"
     # queued=True: a busy session queues this behind its turn instead of applying
     # display.busy_input_mode (interrupt/redirect); an idle session starts the turn now.
     res = await _rpc(ws, 3, "prompt.submit", {"session_id": live_id, "text": text, "queued": True}, timeout)
-    return "queued" if res.get("status") == "queued" else "started"
+    status = res.get("status")
+    if status == "queued":
+        return "queued"
+    if status == "streaming":
+        return "started"
+    raise RuntimeError(f"prompt.submit returned no turn: {json.dumps(res, sort_keys=True)[:300]}")
 
 
 async def _main(a: argparse.Namespace) -> dict:

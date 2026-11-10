@@ -166,6 +166,9 @@ _WS_ORPHAN_INTERRUPT_REAP_POLL_S = 1.0
 # (review finding, PR #90373). After this many polls we log loudly and force-reap, mirroring the
 # pre-existing stuck-`running` safety net's role of breaking the deadlock.
 _WS_ORPHAN_INTERRUPT_REAP_MAX_POLLS = 60
+# A detached idle session with a queued prompt is spared for this many grace periods (default 20 s each)
+# while the ended turn's post-turn housekeeping runs and the queue drains; then the normal reap applies.
+_WS_ORPHAN_QUEUED_MAX_POLLS = 30
 _TURN_SETTLE_BEFORE_CLOSE_SECONDS = 5.0
 _DETAIL_SECTION_NAMES = ("thinking", "tools", "subagents", "activity")
 _DETAIL_MODES = frozenset({"hidden", "collapsed", "expanded"})
