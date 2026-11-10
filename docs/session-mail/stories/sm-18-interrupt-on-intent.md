@@ -10,9 +10,9 @@
 - **I want** `delivery="interrupt"` to stop that work and run my message now, and, where the host cannot interrupt, to get the next strongest delivery and be told so
 - **So that** wrong work stops as soon as possible, and I never believe I stopped something I did not
 - **Done when**
-  - [ ] Into a running turn on a host that can redirect, the turn is redirected and the message runs now; where it can only stop hard, the turn is stopped and the message is the next turn. Receipt: `interrupted`, whose sentence says "redirected … runs now" for a redirect, and "stopped … runs as that session's next turn" for a hard interrupt.
+  - [ ] Into a running turn on the dashboard, a classic CLI or the gateway, a v0.22 agent's turn is redirected and the message runs now (Trial round 2, R1). Only a media payload or an older agent falls back to a hard interrupt: the turn is stopped and the message is the next turn. Receipt: `interrupted`.
   - [ ] The delivered message's line 1 says `interrupt`, and line 3 tells the target its previous work was stopped at a peer's request and that it decides whether to go back to it.
   - [ ] Where interrupt is not possible now (the session is compacting, or it is a classic CLI on a Hermes build without the seam), `steer` is applied, else `queue`; the receipt says "asked: interrupt", and the header has no `interrupt` label.
-  - [ ] Alex sees the surface's usual redirect: a classic CLI prints "↪ Redirected current turn" or "⚡ New message detected, interrupting…"; the dashboard, desktop and phone show the stopped answer, the message, then the new answer.
+  - [ ] Alex sees the surface's usual redirect: a classic CLI prints "↪ Redirected current turn" (or, in the hard-interrupt fallback only, "⚡ New message detected, interrupting…"); the dashboard, desktop and phone show the stopped answer, the message, then the new answer.
   - [ ] Nothing is retried after a fallback.
 - **Out of scope** — interrupting a turn the sender's own session is running (own-session messages are refused).
