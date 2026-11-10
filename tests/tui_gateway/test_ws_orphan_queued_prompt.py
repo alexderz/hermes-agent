@@ -110,3 +110,53 @@ def test_idle_session_without_a_queue_is_still_reaped(server, detached):
     _fire(server, sid)
 
     assert sid not in server._sessions and popped == [session]
+
+
+def test_running_turn_resets_the_budget(server, detached):
+    sid, session, _ = detached
+    session["queued_prompt"] = {"text": "mail", "transport": None}
+    _fire(server, sid)
+    assert session["_ws_orphan_queued_polls"] == 1
+
+    session["running"] = True  # the queue drained into a new turn (head still set by a later queuer)
+    session["_last_turn_activity_at"] = None
+    server._schedule_ws_orphan_reap(sid, _expected_timer=server._pending_ws_reaps.get(sid))
+    _Timer.created[-1].callback()
+
+    assert "_ws_orphan_queued_polls" not in session
+
+
+def test_leftover_steer_is_queued_before_running_is_released(server, detached):
+    """The turn's release requeues a steer it never consumed, so a reap in the housekeeping window spares it."""
+    sid, session, popped = detached
+    result = {"final_response": "done", "pending_steer": "late mail from Home"}
+
+    with session["history_lock"]:  # what run_body's finally does, in order
+        server._requeue_leftover_steer(session, result)
+        session["running"] = False
+    _fire(server, sid)  # reap tick during post-turn housekeeping
+
+    assert server._sessions.get(sid) is session and not popped
+    assert session["queued_prompt"]["text"] == "late mail from Home"
+
+
+def test_leftover_steer_is_requeued_once(server, detached):
+    _, session, _ = detached
+    result = {"pending_steer": "late mail"}
+    with session["history_lock"]:
+        server._requeue_leftover_steer(session, result)
+        server._requeue_leftover_steer(session, result)  # the post-turn follow-ups call it again
+    assert session["queued_prompt"]["text"] == "late mail"
+    assert not session.get("queued_prompts")
+
+
+def test_lru_and_ttl_reapers_spare_a_session_with_a_queued_prompt(server, detached, monkeypatch):
+    sid, session, _ = detached
+    from tui_gateway import session_reaper
+
+    monkeypatch.setattr(server, "_session_is_lru_evictable", lambda *a: True, raising=False)
+    monkeypatch.setattr(session_reaper, "_session_is_lru_evictable", lambda *a: True, raising=False)
+    reapable = getattr(server, "_session_is_reapable", None) or session_reaper._session_is_reapable
+    assert reapable(sid, session) is True
+    session["queued_prompt"] = {"text": "mail", "transport": None}
+    assert reapable(sid, session) is False

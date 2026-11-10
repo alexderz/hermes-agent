@@ -243,7 +243,9 @@ def _session_is_reapable(sid: str, session: dict) -> bool:
     """Reaper eligibility: the LRU exemptions, and not the sole driver of an active /loop or /heartbeat
     (closing the session stops the notification poller that fires it, freezing the schedule until a client
     reattaches). Kept out of ``_sessions_quiescent``: an idle looping session does not block a memory trim."""
-    return _session_is_lru_evictable(sid, session) and not _session_owns_live_wakeup_schedule(session)
+    # A queued prompt is pending work (it drains at the idle boundary after the turn's housekeeping).
+    return (_session_is_lru_evictable(sid, session) and not _session_owns_live_wakeup_schedule(session)
+            and not session.get("queued_prompt"))
 
 
 def _session_is_evictable(sid: str, session: dict, now: float) -> bool:
