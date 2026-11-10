@@ -3,8 +3,12 @@
 Steer when a turn is running, queue (``queued: true``) when steering is refused, start a turn
 when the session is idle.
 """
+import argparse
 import asyncio
 import json
+import sys
+
+import pytest
 
 from scripts import dashboard_dispatch as dd
 
@@ -63,8 +67,75 @@ def test_no_steer_always_submits_queued():
     assert sent[0]["params"]["queued"] is True
 
 
-def test_submit_never_omits_the_queued_flag():
-    # Without queued=True a busy submit follows display.busy_input_mode, whose default redirects the turn.
-    for steer_reply in ({"status": "rejected"}, {"error": {"code": 4010, "message": "x"}}):
-        _, sent = deliver({"session.steer": steer_reply, "prompt.submit": {"status": "queued"}})
-        assert all(r["params"].get("queued") is True for r in sent if r["method"] == "prompt.submit")
+def test_a_submit_that_starts_no_turn_is_an_error():
+    # e.g. a voice stop phrase answers {"voice_stopped": true}: not a delivery, and nothing to wait for.
+    with pytest.raises(RuntimeError, match="no turn"):
+        deliver({"session.steer": {"status": "rejected"}, "prompt.submit": {"voice_stopped": True}})
+
+
+def test_steer_timeout_does_not_fall_back_to_a_second_send(monkeypatch):
+    async def slow_rpc(ws, rid, method, params, timeout):
+        raise TimeoutError(f"{method}: no reply within {timeout:.0f}s")
+
+    monkeypatch.setattr(dd, "_rpc", slow_rpc)
+    with pytest.raises(TimeoutError, match="may or may not"):
+        asyncio.run(dd._deliver(object(), "live1", "hello", 5.0, steer=True))
+
+
+# --- _main: which sessions are steered, and when it waits for the turn to start ---------------------------
+
+
+class _Connect:
+    def __init__(self, ws):
+        self.ws = ws
+
+    async def __aenter__(self):
+        return self.ws
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+def run_main(monkeypatch, replies, **args):
+    import types
+
+    ws = FakeWS(replies)
+    fake = types.ModuleType("websockets")
+    fake.connect = lambda *a, **kw: _Connect(ws)
+    monkeypatch.setitem(sys.modules, "websockets", fake)
+    monkeypatch.setattr(dd, "_read_key", lambda _p: "k")
+    waited = []
+
+    async def fake_wait(_ws, sid, timeout):
+        waited.append(sid)
+        return "message.start"
+
+    monkeypatch.setattr(dd, "_wait_started", fake_wait)
+    ns = argparse.Namespace(url="http://127.0.0.1:1", key_file=None, title=None, cwd=None, resume=None,
+                            prompt="hello", prompt_file=None, timeout=5.0, start_timeout=5.0, steer=True)
+    for k, v in args.items():
+        setattr(ns, k, v)
+    out = asyncio.run(dd._main(ns))
+    return out, [r["method"] for r in ws.sent], waited
+
+
+def test_new_session_is_never_steered(monkeypatch):
+    out, methods, waited = run_main(monkeypatch, {"session.create": {"session_id": "live1"},
+                                                  "prompt.submit": {"status": "streaming"}}, title="T")
+    assert methods == ["session.create", "prompt.submit"]
+    assert out["delivery"] == "started" and waited == ["live1"]
+
+
+def test_queued_delivery_detaches_without_waiting(monkeypatch):
+    out, methods, waited = run_main(monkeypatch, {"session.resume": {"session_id": "live1"},
+                                                  "session.steer": {"status": "rejected"},
+                                                  "prompt.submit": {"status": "queued"}}, resume="s1")
+    assert methods == ["session.resume", "session.steer", "prompt.submit"]
+    assert out["delivery"] == "queued" and out["started"] is None and waited == []
+
+
+def test_steered_delivery_detaches_without_waiting(monkeypatch):
+    out, methods, waited = run_main(monkeypatch, {"session.resume": {"session_id": "live1"},
+                                                  "session.steer": {"status": "queued"}}, resume="s1")
+    assert methods == ["session.resume", "session.steer"]
+    assert out["delivery"] == "steered" and waited == []
