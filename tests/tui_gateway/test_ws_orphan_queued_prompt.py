@@ -150,10 +150,18 @@ def test_real_turn_queues_a_leftover_steer_before_releasing_running_and_drains_i
     agent = types.SimpleNamespace(session_id="x", clear_interrupt=lambda: None,
                                   run_conversation=lambda *a, **k: {"final_response": "done",
                                                                     "pending_steer": "late mail"})
-    session = {"agent": agent, "session_key": "k", "history": [], "profile_home": str(tmp_path),
-               "history_lock": threading.RLock(), "history_version": 0, "running": True, "attached_images": [],
-               "image_counter": 0, "cols": 80, "slash_worker": None, "show_reasoning": False,
-               "tool_progress_mode": "all", "inflight_turn": None}
+    releases = []  # the queue at the instant ``running`` flips False (the reaper reads both without the lock)
+
+    class _Session(dict):
+        def __setitem__(self, key, value):
+            if key == "running" and value is False:
+                releases.append((self.get("queued_prompt") or {}).get("text"))
+            super().__setitem__(key, value)
+
+    session = _Session({"agent": agent, "session_key": "k", "history": [], "profile_home": str(tmp_path),
+                        "history_lock": threading.RLock(), "history_version": 0, "running": True,
+                        "attached_images": [], "image_counter": 0, "cols": 80, "slash_worker": None,
+                        "show_reasoning": False, "tool_progress_mode": "all", "inflight_turn": None})
     for name in ("_wire_callbacks", "_sync_agent_model_with_config", "_register_session_cwd",
                  "_sync_session_key_after_compress"):
         monkeypatch.setattr(server, name, lambda *a, **k: None)
@@ -177,6 +185,7 @@ def test_real_turn_queues_a_leftover_steer_before_releasing_running_and_drains_i
 
     server._run_prompt_submit("r", "s", session, "hello")
 
+    assert releases == ["late mail"]
     assert seen == [(False, "late mail")]
     assert drained == ["late mail"]
 
@@ -191,5 +200,8 @@ def test_lru_and_ttl_reapers_spare_a_fresh_queue_but_not_a_stuck_one(server, det
     assert server._session_is_reapable(sid, session) is True
     session["queued_prompt"] = {"text": "mail", "transport": None}
     assert server._session_is_reapable(sid, session) is False  # drains at the idle boundary
-    session["last_active"] = _time.time() - 2 * server._WS_ORPHAN_REAP_GRACE_S * server._WS_ORPHAN_QUEUED_MAX_POLLS
+    monkeypatch.setattr(server, "_WS_ORPHAN_REAP_GRACE_S", 0)  # "park forever" WS setting: spare still holds
+    assert server._session_is_reapable(sid, session) is False
+    session["last_active"] = _time.time() - 2 * server._QUEUED_PROMPT_SPARE_S
     assert server._session_is_reapable(sid, session) is True  # stuck: no longer pinned
+    assert session["_queued_prompt_stale_logged"] is True  # logged once, not on every pass
