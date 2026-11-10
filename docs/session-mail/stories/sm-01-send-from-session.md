@@ -10,7 +10,8 @@
 - **I want** to send it mail with one `session_message` call and get a final result back in the same call
 - **So that** I know at once whether it landed, and can carry on without waiting for the answer
 - **Done when**
-  - [ ] `session_message` is listed in the tools of every default-profile session whose process loaded the plugin (the dashboard after the deploy restart, and new CLI, TUI and gateway processes; see sm-16), with the description in `ux.md` § "Tool description", word for word.
+  - [ ] `session_message` is callable from every default-profile session whose process loaded the plugin (the dashboard after the deploy restart, and new CLI, TUI and gateway processes; see sm-16): in its tool list when Tool Search is off, or through `tool_call` when it is on.
+  - [ ] `tool_describe` (or the tool list, with Tool Search off) returns the description in `ux.md` § "Tool description", word for word; its first sentence names the job and the no-empty-messages rule.
   - [ ] It takes `to` and `message` (required) and `expect_reply` (optional, default `true`).
   - [ ] A successful call returns the mail id, the target's full title and id, and one of `steered`, `queued`, `started`, with the `message` text from `ux.md` § "Tool results".
   - [ ] The sender is taken from the calling session, never from the model's input: a `message` that claims another sender changes nothing in the header.
