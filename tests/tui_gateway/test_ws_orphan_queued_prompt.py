@@ -126,37 +126,70 @@ def test_running_turn_resets_the_budget(server, detached):
     assert "_ws_orphan_queued_polls" not in session
 
 
-def test_leftover_steer_is_queued_before_running_is_released(server, detached):
-    """The turn's release requeues a steer it never consumed, so a reap in the housekeeping window spares it."""
-    sid, session, popped = detached
-    result = {"final_response": "done", "pending_steer": "late mail from Home"}
+class _InlineThread:
+    def __init__(self, target=None, daemon=None, args=(), kwargs=None, name=None):
+        self._target, self._args, self._kwargs = target, args, kwargs or {}
 
-    with session["history_lock"]:  # what run_body's finally does, in order
-        server._requeue_leftover_steer(session, result)
-        session["running"] = False
-    _fire(server, sid)  # reap tick during post-turn housekeeping
+    def start(self):
+        self._target(*self._args, **self._kwargs)
 
-    assert server._sessions.get(sid) is session and not popped
-    assert session["queued_prompt"]["text"] == "late mail from Home"
+    def is_alive(self):
+        return False
 
-
-def test_leftover_steer_is_requeued_once(server, detached):
-    _, session, _ = detached
-    result = {"pending_steer": "late mail"}
-    with session["history_lock"]:
-        server._requeue_leftover_steer(session, result)
-        server._requeue_leftover_steer(session, result)  # the post-turn follow-ups call it again
-    assert session["queued_prompt"]["text"] == "late mail"
-    assert not session.get("queued_prompts")
+    def join(self, timeout=None):
+        return None
 
 
-def test_lru_and_ttl_reapers_spare_a_session_with_a_queued_prompt(server, detached, monkeypatch):
+def test_real_turn_queues_a_leftover_steer_before_releasing_running_and_drains_it_once(tmp_path, monkeypatch):
+    """Drives the real ``_run_prompt_submit``: in the post-turn housekeeping window (after ``running`` is
+    released, before the follow-ups) the steer the turn never consumed must already be queued."""
+    import types
+
+    from tui_gateway import server
+
+    agent = types.SimpleNamespace(session_id="x", clear_interrupt=lambda: None,
+                                  run_conversation=lambda *a, **k: {"final_response": "done",
+                                                                    "pending_steer": "late mail"})
+    session = {"agent": agent, "session_key": "k", "history": [], "profile_home": str(tmp_path),
+               "history_lock": threading.RLock(), "history_version": 0, "running": True, "attached_images": [],
+               "image_counter": 0, "cols": 80, "slash_worker": None, "show_reasoning": False,
+               "tool_progress_mode": "all", "inflight_turn": None}
+    for name in ("_wire_callbacks", "_sync_agent_model_with_config", "_register_session_cwd",
+                 "_sync_session_key_after_compress"):
+        monkeypatch.setattr(server, name, lambda *a, **k: None)
+    monkeypatch.setattr(server, "_emit", lambda *a, **k: None)
+    monkeypatch.setattr(server, "_session_cwd", lambda s: str(tmp_path))
+    monkeypatch.setattr(server, "_tts_stream_begin", lambda: None)
+    monkeypatch.setattr(server, "_get_usage", lambda a: {})
+    monkeypatch.setattr(server.threading, "Thread", _InlineThread)
+    seen, drained = [], []
+    monkeypatch.setattr(server, "_emit_settled_session_info",  # runs in the housekeeping window
+                        lambda *a: seen.append((session["running"], (session.get("queued_prompt") or {}).get("text"))))
+
+    def drain(rid, sid, s):
+        drained.append((s.get("queued_prompt") or {}).get("text"))
+        s.pop("queued_prompt", None)
+        s.pop("queued_prompts", None)
+        return True
+
+    monkeypatch.setattr(server, "_drain_queued_prompt", drain)
+    monkeypatch.setitem(server._sessions, "s", session)
+
+    server._run_prompt_submit("r", "s", session, "hello")
+
+    assert seen == [(False, "late mail")]
+    assert drained == ["late mail"]
+
+
+def test_lru_and_ttl_reapers_spare_a_fresh_queue_but_not_a_stuck_one(server, detached, monkeypatch):
+    import time as _time
+
     sid, session, _ = detached
-    from tui_gateway import session_reaper
-
-    monkeypatch.setattr(server, "_session_is_lru_evictable", lambda *a: True, raising=False)
-    monkeypatch.setattr(session_reaper, "_session_is_lru_evictable", lambda *a: True, raising=False)
-    reapable = getattr(server, "_session_is_reapable", None) or session_reaper._session_is_reapable
-    assert reapable(sid, session) is True
+    # session_reaper's bodies are rebound onto tui_gateway.server's globals (bind_module): patch that seam.
+    monkeypatch.setattr(server, "_session_is_lru_evictable", lambda *a: True)
+    session["last_active"] = _time.time()
+    assert server._session_is_reapable(sid, session) is True
     session["queued_prompt"] = {"text": "mail", "transport": None}
-    assert reapable(sid, session) is False
+    assert server._session_is_reapable(sid, session) is False  # drains at the idle boundary
+    session["last_active"] = _time.time() - 2 * server._WS_ORPHAN_REAP_GRACE_S * server._WS_ORPHAN_QUEUED_MAX_POLLS
+    assert server._session_is_reapable(sid, session) is True  # stuck: no longer pinned
