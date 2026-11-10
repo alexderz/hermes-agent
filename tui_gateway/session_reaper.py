@@ -244,11 +244,24 @@ def _session_is_reapable(sid: str, session: dict) -> bool:
     /heartbeat, or a running background process that will notify it (closing the session stops the notification
     poller that delivers both, and ``agent_close`` kills the process). Kept out of ``_sessions_quiescent``: an idle
     session waiting on a wake-up does not block a memory trim."""
-    # Fork (alex/dispatch-steer-queue): a queued prompt is pending work (it drains at the idle boundary
-    # after the turn's housekeeping).
+    # Fork (alex/dispatch-steer-queue): a fresh queued prompt is pending work (bounded below).
     return (_session_is_lru_evictable(sid, session) and not _session_owns_live_wakeup_schedule(session)
             and not _session_owns_pending_process_notification(session)
-            and not session.get("queued_prompt"))
+            and not _queued_prompt_is_fresh(session))
+
+
+def _queued_prompt_is_fresh(session: dict) -> bool:
+    """A queued prompt on a recently active session is pending work: it drains at the idle boundary after the
+    turn's housekeeping. Bounded like the WS orphan reaper's queued budget, so a queue that never drains does
+    not pin the session; reaping one that still holds a prompt is logged."""
+    if not session.get("queued_prompt"):
+        return False
+    idle_s = time.time() - float(session.get("last_active") or 0.0)
+    if idle_s <= _WS_ORPHAN_REAP_GRACE_S * _WS_ORPHAN_QUEUED_MAX_POLLS:
+        return True
+    logger.warning("reaper: session %s still holds a queued prompt after %.0fs idle; it is reapable",
+                   session.get("session_key") or "?", idle_s)
+    return False
 
 
 def _session_is_evictable(sid: str, session: dict, now: float) -> bool:
