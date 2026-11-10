@@ -12,7 +12,7 @@
 - **Done when**
   - [ ] `send` takes `--to`, one of `--message`, `--file PATH` or `--file -`, and optional `--from`, `--no-reply` and `--json`, as in `ux.md`.
   - [ ] A delivery prints `mail <id> → "<title>": <steered|queued|started> (<reason>)` on standard output and exits 0.
-  - [ ] Exit codes are 2 for usage errors, 3 for a refused address, 4 for a target held by a command-line session, and 5 for an unreachable dashboard or another delivery error; error text goes to standard error.
+  - [ ] Exit codes are 2 for usage errors (missing `--to`, neither or both of `--message` and `--file`), 3 for a refusal (an ambiguous or unknown address, or a body that is empty or only whitespace), 4 for a target held by a command-line session, 5 when nothing was delivered (dashboard not reachable, or it refused the call with an error), and 6 when delivery is unknown (the dashboard stopped answering during the send); error text goes to standard error.
   - [ ] `--json` prints one object with the mail id, target title and id, and result, on success and on failure, with the same exit codes.
   - [ ] The header names the sender `script "<--from>"`, or `script "cli"` without `--from`.
   - [ ] `send` starts no turn in its own process.
