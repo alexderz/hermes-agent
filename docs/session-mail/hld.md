@@ -206,6 +206,7 @@ ctx.inject_message(content, role="user", *, session_key=None, origin=None,
                    mode=None)   # mode: None | "interrupt" | "steer" | "queue"
 ```
 
+- **Trial round 2 (R1):** all three modes and the idle start were observed on the dashboard, classic-CLI and gateway hosts. The stand-in reused each host's own typed-input or busy-submit logic. Every v0.22 agent reports `_supports_active_turn_redirect` (`agent/agent_init.py:544`), so `interrupt` normally applies as **redirect**; the hard-interrupt fallback is for media payloads and older agents (`poc/round2/poc.md`).
 - `mode=None` keeps today's behaviour exactly, so existing plugins see no change (the plugin
   compatibility contract).
 - With a mode, every host applies the **strongest supported mode at or below the request**
@@ -307,7 +308,7 @@ until one side writes `[SILENT]`; nothing counts rounds. `ask` keeps intercom's 
 | Step | Test | Delivered by |
 |---|---|---|
 | 0 | Target is the sender's own session | Refused (`self`). Intercom refused the whole **process**; now only the session is refused, so two dashboard chats can mail each other |
-| 1 | A live lease for the stored id in `runtime/active_sessions.json` | Its `pid`. If that is the sender's own pid, P1 is called in-process. Otherwise intercom connects to the socket registered for that pid. A pid with no intercom entry (a process started before the deploy) → `error no-endpoint`: "it receives mail after its next start" |
+| 1 | A live lease for the stored id in `runtime/active_sessions.json` | Its `pid`. If that is the sender's own pid, P1 is called in-process. Otherwise intercom connects to the socket registered for that pid. A pid with no intercom entry (a process started before the deploy) → `error no-endpoint`: "it receives mail after its next start". **Trial R2/R3:** a lease exists only after the session's **first turn** in that process (dashboard and CLI alike). A lazy-resumed or never-run session has none and goes to step 3, as does a host that answers "not hosted" (lazy or closing) |
 | 2 | No lease, and the session's source is a messaging platform or it has a `gateway_routing` row | The registry entry with role `gateway`, which calls `lookup_by_session_id` and then P1 with that session key. No running gateway → `error no-gateway`. It never falls through to the dashboard, which would answer outside the chat |
 | 3 | Live nowhere | P5 wake (fork): resume, then submit, then wait for the start. Requested `interrupt`/`steer` on an idle session applies `start`. No dashboard → `error no-dashboard`. Upstream intercom without P5 returns intercom's "no live peer" |
 
@@ -367,7 +368,7 @@ candidates. The switch-over to DER-686 is by column presence, with no flag.
 |---|---|
 | **Endpoint role** | The gateway publishes its message host after its adapters start (`gateway/run_startup.py:1654`), later than `inbox.start()`. So intercom checks `manager.has_gateway_message_injector` (`hermes_cli/plugins.py:1242`) when it refreshes its registry entry, and sets `roles: [gateway]`. One pid can be both a dashboard and a gateway. |
 | **Routing** | `lookup_by_session_id` (`gateway/session.py:1311-1317`), then P1 with `session_key` and the mode |
-| **Silence** | A bare `[SILENT]` answer in a gateway chat must not be posted. Injected turns need the `internal_notification` kind (`gateway/response_filters.py:19-34`), or D3's silence rule applies first. Trial R4 checks it |
+| **Silence** | **Settled by Trial R4.** Injected gateway turns are stored as `internal_notification`, so a bare `[SILENT]` answer is not posted to the chat (`gateway/response_filters.py:19-34`), while normal answers are |
 | **SM-Q15 (b)** | Before the turn starts, one adapter send posts the header and body into the target's chat or topic. It needs security's view first (B4c, O7) |
 | **Bot-loop guard** | It counts bot-authored sources only; injection reuses the chat's human source (`gateway/authz_mixin.py:600-612`). It is not a cap |
 
@@ -481,8 +482,12 @@ candidates. The switch-over to DER-686 is by column presence, with no flag.
 | O14 | **Multi-profile dashboard:** the socket serves the profile that loaded intercom; other profiles' sessions get `no-endpoint` | Serving every profile from one socket is cross-profile scope, so it would need a decision |
 | O15 | **One restart shared with DER-686** | — |
 | O16 | **v0.23 rebase:** miyu4u's unified-gateway transport may replace the socket lookup for tui sessions; P1 must be re-applied on v0.23's injection code | — |
+| O17 | **Queued prompts are written twice in the dashboard (Trial round 2, existing Hermes bug).** The accept-time row is not adopted when the queued turn runs (`tui_gateway/session_workdir.py:727`), so any queued prompt, Alex's own or mail, appears twice in the transcript and on the phone. It also shows in the first Trial's plain queued text. Proposed: a separate small fork fix with an upstream report, outside the intercom plugin. Reply capture is safe because the record check sends one reply per mail | If left unfixed, queued mail shows twice on the phone |
+| O18 | **A CLI with a session open but no turn yet has no lease** (Trial R2: the lease appears at the first turn). Mail to it goes to step 3, so the dashboard would resume that session while the CLI has it open, and the CLI's next turn could then be refused 4090 | Proposed: accept for v1 (rare: the session must already exist and be idle in a fresh CLI); Spec checks whether the CLI writes its lease at resume |
 
 ## PoC questions (Trial round 2)
+
+**Ran 2026-11-09:** `poc/round2/poc.md`. Run 3 passed 23 of 24 (one harness miss, rerun); run 4 (CLI) passed 9 of 9. R1, R2, R3, R4 (apart from the `/compress` lookup and the SM-Q15 post), R5, R6 (CLI and gateway), R7 and R9 pass. R8, R10, R11 and the Ink TUI host were not run. The design changes are in D1, D4, D6 and O17–O18.
 
 The first Trial (`poc/poc.md`) covered the dashboard WebSocket path, framing, the reply hook,
 the reaper, a CLI-held session's 4090, Tool Search and debates. The new shape needs these
