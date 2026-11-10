@@ -83,9 +83,9 @@ The sender never waits or polls. The tool description tells it the answer will a
 **F2b. A reply cannot be delivered.** Hermes Improvement sent mail, then Alex opened it in `hermes chat` in a terminal; or the dashboard is down when the reply goes out. The reply is stored on the original mail, and the reply mail is recorded with result `error` and its code (`SESSION_NOT_OWNED`, or the dashboard error). Nothing retries and nobody is woken (settled). Alex sees it in `hermes session-mail list`, where the original mail's line reads `reply: 8e41b0 not delivered (held)`, and reads the text with `status`.
 
 **F3. A dashboard restart with mail in flight.** None of these cases is retried (settled):
-- *The dashboard is down when the mail is sent* (the connection fails). The tool returns `error` (not reachable): "Not delivered". The CLI exits 5. The sender can send again.
-- *The dashboard stopped answering during the send* (it restarted, or a call timed out, after the connection was made). The mail may already have landed. The tool returns `error` (delivery unknown): "Delivery of mail 3f2a9c is unknown … check status before you send again", and the CLI exits 6. So the sender does not send a duplicate blindly.
-- *The sending process itself died during the send.* The outbox shows delivery `unknown` (the row is written before delivery starts; HLD, "Data: the outbox").
+- *The dashboard is down when the mail is sent* (the connection fails, or the resume fails before the mail is handed over). The tool returns `error` (not reachable): "Not delivered". The CLI exits 5. The sender can send again.
+- *The dashboard stopped answering during the send* (it restarted, or a call timed out, after the steer or submit call was sent). The mail may already have landed. The tool returns `error` (delivery unknown) and tells the sender to run `hermes session-mail status 3f2a9c`; the CLI exits 6. `status` then looks for the mail in the target's transcript (read only) and says `found in the target's transcript` or `not found`, so the sender knows whether to send again instead of guessing. A resume that fails or times out before the steer or submit call is sent delivered nothing: that is `error` (not reachable), exit 5.
+- *The sending process itself died during the send.* The outbox shows delivery `unknown` (the row is written before delivery starts; HLD, "Data: the outbox"), and `status` runs the same transcript check.
 - *Mail was queued but had not run when the dashboard restarted.* It is lost. The outbox still shows `queued` and "no reply recorded". Nobody is told, by design. Alex can spot it with `hermes session-mail list`.
 - *A reply was on its way when the dashboard restarted.* The reply text is stored on the original mail, but the reply mail's delivery shows `unknown`, so `status` reads "reply stored, not delivered". The sender is not told.
 
@@ -103,7 +103,7 @@ When Alex's message joins a turn that mail started (or mail joins his), the turn
 - *What the model reads.* Each mail sits between its 📨 header and its closing line `📨 End of mail <id>`. Text outside those lines is not mail: Alex's words keep his authority, and a second mail has its own header and closing line. A body cannot fake either line (lookalikes are relabelled).
 - *What Alex sees.* One bubble (phone, desktop) or one user row (dashboard). If his text came first, the bubble starts with his words and the 📨 header is further down; if the mail came first, the bubble starts with the header and his words follow the closing line. Either way the header and closing line show, in words, where the mail starts and ends.
 
-**F9. Alex stops a mail turn, or the turn fails.** A turn that Alex stops, or that ends in an error, sends no reply. Whatever text it produced is stored on the mail as "not sent (turn stopped)" or "not sent (turn failed)", and `status` shows it. This is Alex's own stop, not a cap: it is how he ends a debate he does not want to go on, and the other session is not woken.
+**F9. Alex stops a mail turn, or the turn fails.** A turn that Alex stops, or that ends in an error, sends no reply and wakes no one. When the reply hook sees such a turn, its text is stored on the mail as "not sent (turn stopped)" or "not sent (turn failed)", and `status` shows that. When Hermes does not call the hook for such a turn, nothing is recorded and `status` shows `no reply recorded`. Which of the two happens is what HLD PoC Q9 is checking now; either way nothing is sent. This is Alex's own stop, not a cap: it is how he ends a debate he does not want to go on.
 
 ## Stories
 
@@ -173,8 +173,8 @@ The tool returns JSON (HLD D4). Each result names the mail id and the target's f
 | `refused` (unknown) | `Nothing was sent. No session matches "@budget". Closest:` then candidate lines, or `No session matches "@budget", and nothing is close.` |
 | `refused` (empty) | `Nothing was sent: the message is empty.` |
 | `error` (held) | `Not delivered (SESSION_NOT_OWNED): "Budgeting — Orchestrator" is open in a command-line session, so the dashboard cannot deliver to it. You may send again once that session is closed.` |
-| `error` (not reachable) | `Not delivered: could not connect to the dashboard. You may send again later.` |
-| `error` (delivery unknown) | `Delivery of mail 3f2a9c is unknown: the dashboard stopped answering during the send, so it may already have arrived. Check "hermes session-mail status 3f2a9c" before you send it again.` |
+| `error` (not reachable) | `Not delivered: could not reach the dashboard, or it stopped answering before the mail was handed over. You may send again later.` |
+| `error` (delivery unknown) | `Delivery of mail 3f2a9c is unknown: the dashboard stopped answering after the mail was handed over, so it may already have arrived. Run "hermes session-mail status 3f2a9c": if it says "found in the target's transcript", do not send again; if it says "not found", you may send again.` |
 | `error` (other) | `Not delivered (<code>): <the dashboard's message, as given>. You may send again later.` |
 
 There is no "pending" or "will retry" result. Every result is final.
@@ -205,7 +205,7 @@ Mail from a script on this machine, not from Alex (the user). It carries none of
 Rules:
 - Line 1 is for Alex's glance and for the model; line 2 is the authority line for the model. Line 1 puts the glance words first: "📨 Mail (not Alex)" and the reply label fit in about 36 characters, the first wrapped line of a phone bubble. Then the sender, then the id (it matters least to Alex).
 - **Sender label.** A session is `session "<title>"`. An untitled session is `session <id> (untitled)`. A CLI sender is `script "<--from value>"`, and `script "cli"` when `--from` is not given (the HLD's default label).
-- **Lookalikes in the body.** A body line that starts like a 📨 header (`📨 Mail`, `📨 Reply`), a closing line (`📨 End of mail`), or one of Hermes' own control frames, is relabelled the way hosted rooms already do (HLD B2). So a body cannot fake a second mail, close the steer wrapper, or pose as a system note; the reader sees the relabelled line.
+- **Lookalikes in the body.** Every body line that starts with `📨`, and every line that starts like one of Hermes' own control frames, is relabelled the way hosted rooms already do (HLD B2). One rule covers a fake header, a fake footer heading (`📨 How to answer mail …`) and a fake closing line. So a body cannot fake a second mail, fake answering rules, close the steer wrapper, or pose as a system note; the reader sees the relabelled line.
 - **Reply label.** `reply expected` (new mail, `expect_reply` true), `no reply needed` (`expect_reply` false or `--no-reply`), `reply optional` (a reply; it can be answered, which is how a debate continues, but it does not ask for one).
 - The header is always the very first text of the mail (brief A5). In a row that holds only the mail, that makes it the first line on every surface once Hermes' own steer wrapper is removed for display. A row that Hermes joined with other text may start with that text instead (F8).
 - It never starts with `Message from`, so the desktop app does not mistake it for a Bot Mode delivery (see "Desktop app").
@@ -299,8 +299,8 @@ hermes session-mail list [--to TARGET] [--from LABEL] [--since DURATION] [--json
 | 2 | Usage error: missing `--to`, neither `--message` nor `--file` given, or both given | no |
 | 3 | Refused: ambiguous or unknown address (candidates on standard error), or a body that is empty or only whitespace (`refused`, empty) | yes, as `refused` (HLD outbox) |
 | 4 | Target held by a command-line session | yes, as `error` |
-| 5 | Not delivered: the dashboard could not be reached, or it refused the call with an error | yes, as `error` |
-| 6 | Delivery unknown: the dashboard stopped answering during the send; check `status` before sending again | yes, as `error` (delivery unknown) |
+| 5 | Not delivered: the dashboard could not be reached, stopped answering before the steer or submit call was sent, or refused the call with an error | yes, as `error` |
+| 6 | Delivery unknown: the steer or submit call was sent and got no answer; run `status`, which checks the target's transcript, before sending again | yes, as `error` (delivery unknown) |
 
 
 **`status MAIL_ID`**
@@ -316,13 +316,19 @@ mail 7c1d02
 
 The `delivery` line shows `steered`, `queued`, `started`, `refused (<reason>)`, `error (<code>)`, or `unknown`: no result recorded yet (still sending, which can take a few minutes for a start, or the sending process was cut off).
 
+When the delivery is `unknown` or `error (delivery unknown)`, `status` also reads the target's transcript, without changing anything, for a user row that holds `mail <id>`, and adds what it found:
+- `delivery  error (delivery unknown), found in the target's transcript (07:00:04)`: the mail landed; do not send it again.
+- `delivery  error (delivery unknown), not found in the target's transcript`: it did not land as a row, so sending again will not duplicate it. One exception: a steer parked behind a compaction is written only when the compaction ends, so if the target was compacting, run `status` again a minute later before sending.
+
+This is a read, not a retry and not a pending state.
+
 The `reply` line shows one of:
 - `no reply recorded`: none yet, or lost. The outbox cannot tell which, and does not pretend to.
 - `silent (07:04:10)`.
 - `stored (07:04:10)`, followed by the reply text: kept for a sender that is not woken (a script, cron run, oneshot or subagent).
 - `sent as mail 8e41b0, steered (07:04:12)`, followed by the reply text.
 - `stored, not delivered (07:04:10): mail 8e41b0, <code>`, followed by the reply text: the reply mail's delivery is `error` (for example `held`) or `unknown` (F2b).
-- `not sent: turn stopped (07:04:10)` or `not sent: turn failed (07:04:10)`, followed by whatever text the turn produced (F9).
+- `not sent: turn stopped (07:04:10)` or `not sent: turn failed (07:04:10)`, followed by whatever text the turn produced (F9). This shows only when the reply hook saw the stopped or failed turn; otherwise the line stays `no reply recorded`.
 
 For a reply, an `in reply to  mail 3f2a9c` line is added.
 
@@ -399,10 +405,12 @@ Where a different answer from Alex changes what a person or a session sees:
 
 Changes this UX needs in `hld.md`. None adds a cap, hold, retry or gate.
 
-1. **Closing line** (UX finding 1). Every mail ends with `📨 End of mail <id>` after the footer. D2's element list gains it. B2's lookalike relabelling covers lines that start with `📨 Mail`, `📨 Reply` or `📨 End of mail`. D3 step 1 can use header-to-closing-line spans to tell each mail apart from Alex's text in a joined steer or queued row; PoC Q2's merged-text case should check that the span arrives intact.
+1. **Closing line** (UX finding 1). Every mail ends with `📨 End of mail <id>` after the footer. D2's element list gains it. B2's relabelling covers **every body line that starts with `📨`** (UX round 2, R2-4), which covers fake headers, fake footer headings and fake closing lines in one rule. D3 step 1 can use header-to-closing-line spans to tell each mail apart from Alex's text in a joined steer or queued row; PoC Q2's merged-text case should check that the span arrives intact.
 2. **Header shape** (UX findings 8 and 1). Line 1 now starts `📨 Mail (not Alex) ·` or `📨 Reply (not Alex) ·`, with the sender after the reply label. D3's line-start matcher should anchor on those openings. Scripts get their own line 2 (finding 7).
-3. **A stopped or failed turn sends no reply** (UX finding 3; HLD O9, PoC Q9). Whatever `post_llm_call` sees for an interrupted or failed turn, the hook stores the text (or nothing) with `reply_state` "not sent", plus the reason `turn stopped` or `turn failed`, and delivers nothing. This gives O9's Spec rule its target: it is Alex's own stop, not a cap.
-4. **Two kinds of dashboard error** (UX finding 5). D4's `error` row splits into "could not connect" (nothing delivered) and "delivery unknown" (connected, then the dashboard stopped answering or a call timed out, so the mail may have landed). They need distinct `detail` codes; the CLI maps them to exit 5 and exit 6.
+3. **A stopped or failed turn sends no reply** (UX finding 3, R2-2; HLD O9, PoC Q9). Precondition: **either** the hook can tell a stopped or failed turn from a finished one (PoC Q9 must find that signal), **or** such a turn never reaches the reply path at all. Please confirm one of the two holds before Spec; without either, a stopped turn's partial text would be mailed as a normal answer, which F9 forbids. When the hook does see the turn, it stores the text (or nothing) with `reply_state` "not sent" and the reason `turn stopped` or `turn failed`, and delivers nothing. When there is no hook call, nothing is stored and `status` shows `no reply recorded`. This is Alex's own stop, not a cap.
+4. **Two kinds of dashboard error, and a transcript check** (UX finding 5, R2-1).
+   - D4's `error` row splits into two `detail` codes at one point: whether the steer or submit call was sent. Before it is sent (connection failed, key unreadable, or the resume failed or timed out), nothing was delivered: "not reachable", CLI exit 5. After it is sent with no answer (the dashboard restarted or the call timed out), the mail may have landed: "delivery unknown", CLI exit 6.
+   - `status` gets a read-only check: for a mail whose delivery is `unknown` or "delivery unknown", it reads the target session's transcript in `state.db` (and its compression lineage) for a user row holding `mail <id>`, and prints "found in the target's transcript (<time>)" or "not found". The accept-time row (HLD Persistence) is what makes this work. It writes nothing and retries nothing.
 5. **Reply delivery failures** (UX finding 6). A reply mail that fails (`SESSION_NOT_OWNED` because the sender is open in a terminal, or the dashboard is down) keeps `result = error` and its code on the reply mail's row. `list` joins it to the original mail to print `reply: <id> not delivered (<code>)`.
 6. **Already listed under "Differences from the HLD":** `expect_reply` / `--no-reply`; the readable CLI line with `--json` and exit codes 0–6; the `reply optional` label.
 
