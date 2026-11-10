@@ -1,0 +1,8 @@
+name: sm-probe
+version: 0.0.1
+description: "Trial probe for DER-701 session-mail (frozen record, never product code): a session_message-shaped tool and a post_llm_call recorder."
+author: "trial"
+provides_tools:
+  - sm_probe_send
+provides_hooks:
+  - post_llm_call
