@@ -932,8 +932,12 @@ def _schedule_ws_orphan_reap(
                 # generation's settlement polls shorten a later detachment.
                 current.pop("_client_gone_interrupt_requested", None)
                 current.pop("_client_gone_interrupt_polls", None)
+                current.pop("_ws_orphan_queued_polls", None)
                 _pending_ws_reaps.pop(sid, None)
                 return
+            if current.get("running") or not current.get("queued_prompt"):
+                # A turn is running or the queue drained: a later wait gets a fresh budget.
+                current.pop("_ws_orphan_queued_polls", None)
             if _session_has_active_delegations(sid, current) or (
                     not current.get("running")
                     and not current.get("_client_gone_interrupt_requested")
@@ -941,7 +945,19 @@ def _schedule_ws_orphan_reap(
                 # Live background work, or an active /loop or /heartbeat only this process's poller can fire. A
                 # settled client-gone interrupt wins over the schedule: its latches block every tick and reattach.
                 reschedule_delay = _WS_ORPHAN_REAP_GRACE_S
+            elif (not current.get("running") and current.get("queued_prompt")
+                    and not current.get("_client_gone_interrupt_requested")
+                    and int(current.get("_ws_orphan_queued_polls") or 0) < _WS_ORPHAN_QUEUED_MAX_POLLS):
+                # A queued prompt is live work: the turn that ended drains it at its idle boundary, after
+                # post-turn housekeeping. Reaping in that window drops a prompt a detached sender (e.g. a
+                # ``queued: true`` submit that disconnected on its ack) was promised. Bounded, so a queue
+                # that never drains cannot pin the session forever.
+                current["_ws_orphan_queued_polls"] = int(current.get("_ws_orphan_queued_polls") or 0) + 1
+                reschedule_delay = _WS_ORPHAN_REAP_GRACE_S
             elif not current.get("running"):
+                if current.get("queued_prompt") and not current.get("_client_gone_interrupt_requested"):
+                    logger.warning("client_gone sid=%s: queued prompt never drained after %d grace periods — reaping",
+                                   sid, int(current.get("_ws_orphan_queued_polls") or 0))
                 session = _pop_session_by_id(sid)
             elif not current.get("_client_gone_interrupt_requested") and _ws_orphan_turn_activity_is_fresh(current):
                 # Client-absent but producing: keep running detached (the sentinel buffers emits), re-check each grace.

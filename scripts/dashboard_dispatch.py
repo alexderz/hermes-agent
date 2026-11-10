@@ -15,8 +15,14 @@ Examples::
     dashboard_dispatch.py --title "Project — Orchestrator" --cwd ~/projects/x --prompt-file brief.txt
     dashboard_dispatch.py --resume 20261108_203430_7745d1 --prompt "Status?"
 
-Disconnects only once the turn has visibly started (first agent event), so the dashboard's
-detached-turn reaper sees a live, producing turn. Prints the session ids as JSON on stdout.
+Delivery into an existing session (``--resume``) never cancels or redirects its work: if a turn
+is running the text is steered into it (between tool calls); if steering is refused it is queued
+behind the turn (``prompt.submit`` with ``queued: true``); an idle session starts a turn.
+``--no-steer`` skips steering and always queues.
+
+When a new turn starts, disconnects only once it has visibly started (first agent event), so the
+dashboard's detached-turn reaper sees a live, producing turn. A steered or queued delivery detaches
+at once. Prints the session ids and the delivery outcome as JSON on stdout.
 """
 from __future__ import annotations
 
@@ -41,7 +47,7 @@ def _key_path(explicit: str | None) -> Path:
         from hermes_cli.dashboard_auth.agent_key import key_path
 
         return key_path()
-    except Exception:
+    except Exception:  # health: allow BLE001 -- any failure in the dashboard's own key-path resolution falls back to the default path
         home = os.environ.get("HERMES_HOME") or str(Path.home() / ".hermes")
         return Path(home) / "dashboard-agent.key"
 
@@ -49,7 +55,7 @@ def _key_path(explicit: str | None) -> Path:
 def _read_key(explicit: str | None) -> str:
     p = _key_path(explicit)
     try:
-        key = p.read_text(encoding="utf-8").strip()
+        key = p.read_text(encoding="utf-8-sig").strip()
     except (OSError, ValueError) as exc:
         sys.exit(f"dashboard_dispatch: cannot read agent key {p}: {type(exc).__name__}")
     if not key:
@@ -97,13 +103,40 @@ async def _wait_started(ws, sid: str, timeout: float) -> str:
             return str(params["type"])
 
 
+async def _deliver(ws, live_id: str, text: str, timeout: float, *, steer: bool) -> str:
+    """Hand ``text`` to the live session without cancelling its work. Returns ``steered`` (taken into
+    the running turn), ``queued`` (runs after the running turn) or ``started`` (a new turn)."""
+    if steer:
+        try:
+            res = await _rpc(ws, 2, "session.steer", {"session_id": live_id, "text": text}, timeout)
+        except RuntimeError:  # e.g. 4010: the agent cannot steer, or the turn is still being built
+            res = {}
+        except TimeoutError:
+            # No fallback: the steer may still have landed, and a submit could deliver the text twice.
+            raise TimeoutError("session.steer: no reply in time; the text may or may not have been "
+                               "steered into the running turn, so check the chat before re-sending") from None
+        # "queued" = accepted by the running turn (or, during a compression, parked for the next turn);
+        # "rejected" = the session is idle or the agent refused it.
+        if res.get("status") == "queued":
+            return "steered"
+    # queued=True: a busy session queues this behind its turn instead of applying
+    # display.busy_input_mode (interrupt/redirect); an idle session starts the turn now.
+    res = await _rpc(ws, 3, "prompt.submit", {"session_id": live_id, "text": text, "queued": True}, timeout)
+    status = res.get("status")
+    if status == "queued":
+        return "queued"
+    if status == "streaming":
+        return "started"
+    raise RuntimeError(f"prompt.submit returned no turn: {json.dumps(res, sort_keys=True)[:300]}")
+
+
 async def _main(a: argparse.Namespace) -> dict:
     import websockets
 
     token = _read_key(a.key_file)
     base = a.url.rstrip("/").replace("http://", "ws://", 1).replace("https://", "wss://", 1)
     uri = f"{base}/api/ws?" + urllib.parse.urlencode({"token": token})
-    text = Path(a.prompt_file).read_text(encoding="utf-8") if a.prompt_file else a.prompt
+    text = a.prompt  # main() has read --prompt-file into it (no blocking file I/O in the event loop)
     async with websockets.connect(uri, max_size=None, open_timeout=a.timeout) as ws:
         if a.resume:
             res = await _rpc(ws, 1, "session.resume", {"session_id": a.resume}, a.timeout)
@@ -118,13 +151,16 @@ async def _main(a: argparse.Namespace) -> dict:
         live_id = res.get("session_id")
         if not live_id:
             raise RuntimeError(f"no live session id in reply: {sorted(res)}")
-        await _rpc(ws, 2, "prompt.submit", {"session_id": live_id, "text": text}, a.timeout)
-        started = await _wait_started(ws, live_id, a.start_timeout)
-        if not started:
-            print(f"dashboard_dispatch: no agent activity within {a.start_timeout:.0f}s; detaching anyway "
-                  "(the turn may still be building)", file=sys.stderr)
+        # A brand-new session has no turn to steer into.
+        delivery = await _deliver(ws, live_id, text, a.timeout, steer=bool(a.resume) and a.steer)
+        started = ""
+        if delivery == "started":
+            started = await _wait_started(ws, live_id, a.start_timeout)
+            if not started:
+                print(f"dashboard_dispatch: no agent activity within {a.start_timeout:.0f}s; detaching anyway "
+                      "(the turn may still be building)", file=sys.stderr)
         return {"session_id": live_id, "stored_session_id": res.get("stored_session_id") or live_id,
-                "started": started or None}
+                "delivery": delivery, "started": started or None}
 
 
 def main() -> None:
@@ -137,6 +173,8 @@ def main() -> None:
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--prompt")
     g.add_argument("--prompt-file")
+    ap.add_argument("--no-steer", dest="steer", action="store_false",
+                    help="with --resume: never steer into a running turn; always queue behind it")
     ap.add_argument("--timeout", type=float, default=60.0, help="per-RPC reply timeout")
     ap.add_argument("--start-timeout", type=float, default=240.0,
                     help="max wait for the turn's first agent event before detaching")
@@ -145,6 +183,11 @@ def main() -> None:
         a.cwd = os.path.abspath(os.path.expanduser(a.cwd))
         if not os.path.isdir(a.cwd):
             ap.error(f"--cwd {a.cwd} is not a directory")
+    if a.prompt_file:
+        try:
+            a.prompt = Path(a.prompt_file).read_text(encoding="utf-8-sig")
+        except (OSError, ValueError) as exc:
+            ap.error(f"--prompt-file {a.prompt_file}: {type(exc).__name__}")
     try:
         print(json.dumps(asyncio.run(_main(a))))
     except (RuntimeError, TimeoutError, OSError) as exc:
