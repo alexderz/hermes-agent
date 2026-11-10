@@ -90,3 +90,62 @@ No worker, no retries, no system-prompt section, no core patch, no dashboard pag
 Requirements die: A1 (dashboard-only worker), A3 (redelivery of lost mail), SM-Q7 option C (core steer-frame patch), the 24-hour `SESSION_NOT_OWNED` retry, the `hop` column, and the Mobile issue draft. The gatherer's recommendations on SM-Q7, SM-Q9 and SM-Q11 change, and one new open point appears.
 
 Refine: back to Gather — drop the worker (A1, A3, A7's ordering half, the `plugin_api.py` and 24 h Open points, and the restart-redelivery check) for delivery at send time from the tool, CLI and reply hook; SM-Q7 recommends A on all three paths, with C dropped from this chunk (queued and started mail are plain user turns anyway); SM-Q9 narrowed to ended agent-session senders (a CLI reply goes to the outbox by fact); SM-Q11 without the Mobile issue draft; A2 must pick one shared copy of `_deliver` (`scripts/` is not a package); note `1516a52669` is not on the branch; add the open point on whether existing owner sessions see the new tool after restart.
+
+## Round 2
+
+Checked `git diff HEAD -- docs/session-mail/brief.md` against the round-1 delta, then the claims the gatherer added. The code was read in this worktree and at `1516a52669`.
+
+### Did each delta item land?
+
+| Round-1 delta item | Landed? | Where in brief.md |
+|---|---|---|
+| Drop the worker; deliver at send time from the tool, CLI and reply hook | Yes | Design choices; Out of scope; Threading section |
+| Drop A1, A3, A7's ordering half | Yes | Assumptions ("A1 and A3 were dropped"); A7 is now the settled rule only |
+| Drop the `plugin_api.py` and 24-hour Open points, and the restart-redelivery check | Yes | Open; Verify later (now "Errors are returned, not held" and "no retry loop") |
+| SM-Q7 → A on all three paths, C dropped (queued and started mail have no marker) | Yes | Steer framing facts; Options map; SM-Q7 |
+| SM-Q9 narrowed; a CLI reply goes to the outbox by fact | Yes, and the gatherer checked the "ended" test against the code. Its new option (b) has a factual problem: see below | A4; SM-Q9 |
+| SM-Q11 without the Mobile issue draft | Yes | SM-Q11; Out of scope |
+| A2: one shared copy of `_deliver` | Yes, as an options table for the architect | Options map, A2 |
+| `1516a52669` is not on the branch | Yes | Constraints |
+| New open point: do existing sessions see the tool after a restart? | Yes, and settled by code (verified below) | "Tool list of a resumed session" |
+| Outbox fields simplified, no `hop`, reply matching anywhere in the turn's new rows | Yes | Design choices |
+
+### New claims checked
+
+| Claim | Result |
+|---|---|
+| **Start wait:** the dispatcher waits for the first agent event only after a start, up to `--start-timeout` (240 s by default); the per-RPC timeout is 60 s; this holds the sender's tool call | **Verified** (`1516a52669:scripts/dashboard_dispatch.py`: the docstring at lines 22-25, `_wait_started` at 94-104, the argparse defaults). The reason given (the reaper must see a live, producing turn) matches the docstring. Note for the planner, not a delta: the worst case is resume 60 + steer 60 + submit 60 + start 240 = 420 s. That is longer than the 300 s ceiling `model_tools._run_async` puts on an `is_async` handler run on a fresh thread. A sync handler with its own short loop avoids it. This is a timeout, not a cap on sending. |
+| **WS RPCs run on worker threads,** so a loopback client in a tool thread does not block the server | **Verified** (`tui_gateway/ws.py:328`, `asyncio.to_thread(server.dispatch, …)`). |
+| **Self-mail:** `session.resume` reuses a session that is already live | **Verified** (`tui_gateway/methods_session.py:1066`, the "fast path" in the same profile; `:880` cancels any pending reap). The rest (the steer lands after the sending tool's own batch, or becomes the next turn) follows from facts verified in round 1. Keeping it as a Trial observation is right. The second half, "a reply to a session whose turn is finishing", is the normal debate path, not an edge case, so the Trial must cover it (the debate check in Verify later already does). |
+| **Reply thread carries the profile context** with `propagate_context_to_thread` | **Verified**: the function exists (`tools/thread_context.py:36`). |
+| **Existing sessions get the new tool after a restart** | **Verified.** Plugin toolsets are on unless default-off or "known" for the platform and absent from the saved list (`hermes_cli/tools_config.py:510-517`). They are added on top of a saved list (`:607-608`). `restore_agent_tool_prefix` appends new tools to the session's pinned list and persists it (`tools/mcp_tool_agent.py:204-248`). One cache miss per resumed session, then stable. The claim that the deploy changes the pin's code version (`tool_pin_version`) was not re-read. It does not change the conclusion. |
+| **"Ended" is not "over for good":** `ended_at` and `end_reason`; the first reason wins; the next real turn reopens the session | **Verified** (`hermes_state_sessions.py:520-525`, `:562`; `tui_gateway/methods_prompt.py:593-609`). |
+| **`cron_complete` and `agent_close` mean "over by design"** | **Wrong on both counts.** <br>• `agent_close` is the generic backstop. `AIAgent.close()` writes it for any session whose owner did not end the row first (`run_agent.py:1013-1017`). The code lists it among the **recoverable**, accidental reasons (`hermes_state_common.py:189`, `_RECOVERABLE_END_REASONS`). That today's `agent_close` rows are subagents is a fact about the live data, not a rule. <br>• A cron run can also end as `cron_incomplete_no_output` (`cron/scheduler.py:2172`). Option (b) as written would wake that cron session. |
+
+### Anything else not needed?
+
+- **SM-Q9 option (b) is more complex than it needs to be, and leaks.** It is an end-reason list plus a special case for oneshots, "the one case the end reason cannot show". The sender's session **source** answers the question directly. Cron runs, subagents and oneshots each carry their own source: the round-1 live metadata counts them that way, and `agent/agent_init.py:1266-1267` uses the `cron` and `subagent` platforms. Owner sessions are source `cli`, so a closed terminal (`cli_close`) never stops a reply. Recommend: (b′) store the reply in the outbox only when the sender's source is `cron`, `subagent` or `oneshot`; otherwise wake the sender (decision 4). This is a test on who the sender is, not a hold or a limit. The gatherer should confirm the exact source strings in `state.db`, read-only.
+- Nothing else. The rest of the round-2 brief is the smallest slice from round 1, plus checks that belong in the Trial.
+
+### Verdict
+
+One fact behind a question for Alex is wrong (SM-Q9: `agent_close` is classed as recoverable, and `cron_incomplete_no_output` is missing), and a simpler test exists. Everything else passes.
+
+Refine: back to Gather — SM-Q9: replace the end-reason test (b) with a test on the sender's session source (`cron`, `subagent`, `oneshot` → outbox only; everything else wakes, per decision 4), after confirming the source strings in live `state.db`; correct the fact that `agent_close` means "over by design" (it is the generic close backstop and is listed among the recoverable reasons, `hermes_state_common.py:189`), and note `cron_incomplete_no_output`; update the matching Verify-later line.
+
+## Round 3
+
+Checked only the round-2 delta and the one new fact: SM-Q9, the "ended" facts, Constraints and Verify later in `brief.md`.
+
+| Item | Result |
+|---|---|
+| SM-Q9 (b) tests the sender's source (`cron`, `subagent`, `oneshot` → outbox only; everything else wakes, per decision 4) | **Landed** (SM-Q9, and "Who counts as an ended sender"). The recommendation says it is a test on who the sender is, not a hold. |
+| `agent_close` corrected to "generic backstop, listed as recoverable"; `cron_incomplete_no_output` added | **Landed and correct** (`run_agent.py:1013-1017`, `hermes_state_common.py:185-189`, `cron/scheduler.py:2167`, `:2172`). |
+| Synchronous `session_message` handler, with the 420 s against 300 s reasoning | **Landed** (Constraints). The cited `model_tools.py:94-135` holds `_run_async` and its `future.result(timeout=300)` (line 129). Correct, and stated as a timeout, not a cap. |
+| Verify later, the unwakeable-senders line | **Landed.** It covers every end reason, plus a `cli_close` owner that must still wake. |
+| New fact: 8 of the 9 `desktop` sessions are subagent windows, which the source rule would still wake | **Fine as written.** It is stated openly in option (b) for Alex. Telling them apart would mean matching the `"Subagent:"` title prefix, a fragile rule for a rare sender, and waking one only costs an unread turn. Do not add it to v1 (YAGNI). If Alex wants those windows treated like subagents, that is his answer to SM-Q9, not a new open point. |
+| Wording, not a delta | The bullet heading "**No end reason means 'this run is over by design'.**" reads as "a session with no end reason is over". The intended meaning is "**No end reason reliably means** 'this run is over by design'." Fix it in the next edit of the brief; it changes no decision. |
+
+No requirement dies, and no new unresolved point appears.
+
+Refine: pass
