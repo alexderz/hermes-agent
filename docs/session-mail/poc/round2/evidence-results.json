@@ -1,0 +1,904 @@
+{
+  "note": "run 3 = full run (all scenarios); run 4 = CLI-focused rerun after a harness readiness fix (r1_cli, r6, r5)",
+  "placeholders": {
+    "<temp-home>": "throwaway HERMES_HOME",
+    "<run-dir>": "trial run directory outside git",
+    "<repo>": "this worktree",
+    "<intercom-clone>": "alexderz/hermes-intercom clone",
+    "<port>": "free loopback port"
+  },
+  "run3": {
+    "checks": [
+      {
+        "q": "R1",
+        "name": "dashboard: steer applied as steer and observed",
+        "pass": true,
+        "detail": {
+          "requested": "steer",
+          "applied": "steer",
+          "detail": null,
+          "host": "pid:979218",
+          "error": null,
+          "steered_into_turn": true,
+          "ran_as_own_turn": false,
+          "long_turn_steps": 6,
+          "rows": [
+            [
+              "20261109_203331_e457a5",
+              "user"
+            ]
+          ],
+          "cli_seconds": 2.11
+        }
+      },
+      {
+        "q": "R1",
+        "name": "dashboard: queue applied as queue and observed",
+        "pass": true,
+        "detail": {
+          "requested": "queue",
+          "applied": "queue",
+          "detail": null,
+          "host": "pid:979218",
+          "error": null,
+          "steered_into_turn": false,
+          "ran_as_own_turn": true,
+          "long_turn_steps": 6,
+          "rows": [
+            [
+              "20261109_203331_e457a5",
+              "user"
+            ],
+            [
+              "20261109_203331_e457a5",
+              "user"
+            ]
+          ],
+          "cli_seconds": 2.12
+        }
+      },
+      {
+        "q": "R1",
+        "name": "dashboard: interrupt applied as interrupt and observed",
+        "pass": true,
+        "detail": {
+          "requested": "interrupt",
+          "applied": "interrupt",
+          "detail": "redirect",
+          "host": "pid:979218",
+          "error": null,
+          "steered_into_turn": false,
+          "ran_as_own_turn": true,
+          "long_turn_steps": 3,
+          "rows": [
+            [
+              "20261109_203331_e457a5",
+              "user"
+            ]
+          ],
+          "cli_seconds": 2.1
+        }
+      },
+      {
+        "q": "R1",
+        "name": "dashboard: idle target starts a turn",
+        "pass": true,
+        "detail": {
+          "applied": "start",
+          "host": "pid:979218",
+          "error": null,
+          "ran_as_own_turn": true
+        }
+      },
+      {
+        "q": "R1",
+        "name": "dashboard: queued mail has a transcript row (accept-time row)",
+        "pass": true,
+        "detail": [
+          [
+            "20261109_203331_e457a5",
+            "user"
+          ],
+          [
+            "20261109_203331_e457a5",
+            "user"
+          ]
+        ]
+      },
+      {
+        "q": "R3",
+        "name": "dashboard chat A mails chat B in the same process (in-process seam)",
+        "pass": true,
+        "detail": {
+          "ok": true,
+          "mail": "d7a4e88f",
+          "to": "20261109_203402_83d00c",
+          "requested": "steer",
+          "applied": "start",
+          "applied_detail": null,
+          "host": "in-process",
+          "seconds": 0.012,
+          "error": null,
+          "sender": "20261109_203401_e0e1a8",
+          "reply_to": "",
+          "kind": "send",
+          "t": 1794278043.3751173,
+          "pid": 979218
+        }
+      },
+      {
+        "q": "R3",
+        "name": "every mail landed once, only in its addressed session",
+        "pass": true,
+        "detail": []
+      },
+      {
+        "q": "R3",
+        "name": "B's automatic reply came back to A",
+        "pass": true,
+        "detail": null
+      },
+      {
+        "q": "R3/R7",
+        "name": "a session live nowhere is woken by the sender (dispatcher rule)",
+        "pass": true,
+        "detail": {
+          "ok": true,
+          "mail": "1382a974",
+          "to": "20261109_203412_0d4d7b",
+          "requested": "steer",
+          "applied": "start",
+          "applied_detail": null,
+          "host": "wake",
+          "seconds": 0.179,
+          "error": null,
+          "cli_seconds": 2.23,
+          "rc": 0
+        }
+      },
+      {
+        "q": "R3",
+        "name": "a lazy-loaded session still receives (seam or wake fall-through)",
+        "pass": true,
+        "detail": {
+          "ok": true,
+          "mail": "56dff5ba",
+          "to": "20261109_203421_152a29",
+          "requested": "steer",
+          "applied": "start",
+          "applied_detail": null,
+          "host": "wake",
+          "seconds": 0.183,
+          "error": null,
+          "cli_seconds": 2.22,
+          "rc": 0
+        }
+      },
+      {
+        "q": "R4",
+        "name": "gateway endpoint marks itself (roles: gateway) after the host is published",
+        "pass": true,
+        "detail": null
+      },
+      {
+        "q": "R1",
+        "name": "gateway: steer applied as steer and observed",
+        "pass": true,
+        "detail": {
+          "requested": "steer",
+          "applied": "steer",
+          "detail": null,
+          "host": "gateway pid:981345",
+          "error": null,
+          "steered_into_turn": true,
+          "ran_as_own_turn": false,
+          "long_turn_steps": 6,
+          "rows": [
+            [
+              "20261109_203436_022ad467",
+              "user"
+            ]
+          ],
+          "cli_seconds": 2.23
+        }
+      },
+      {
+        "q": "R1",
+        "name": "gateway: queue applied as queue and observed",
+        "pass": true,
+        "detail": {
+          "requested": "queue",
+          "applied": "queue",
+          "detail": null,
+          "host": "gateway pid:981345",
+          "error": null,
+          "steered_into_turn": false,
+          "ran_as_own_turn": true,
+          "long_turn_steps": 6,
+          "rows": [
+            [
+              "20261109_203436_022ad467",
+              "user"
+            ]
+          ],
+          "cli_seconds": 2.2
+        }
+      },
+      {
+        "q": "R1",
+        "name": "gateway: interrupt applied as interrupt and observed",
+        "pass": true,
+        "detail": {
+          "requested": "interrupt",
+          "applied": "interrupt",
+          "detail": "redirect",
+          "host": "gateway pid:981345",
+          "error": null,
+          "steered_into_turn": false,
+          "ran_as_own_turn": true,
+          "long_turn_steps": 3,
+          "rows": [
+            [
+              "20261109_203436_022ad467",
+              "user"
+            ]
+          ],
+          "cli_seconds": 2.12
+        }
+      },
+      {
+        "q": "R1",
+        "name": "gateway: idle target starts a turn",
+        "pass": true,
+        "detail": {
+          "applied": "start",
+          "host": "gateway pid:981345",
+          "error": null,
+          "ran_as_own_turn": true
+        }
+      },
+      {
+        "q": "R4",
+        "name": "gateway: mail routed to the gateway endpoint",
+        "pass": true,
+        "detail": {
+          "steer": "gateway pid:981345",
+          "queue": "gateway pid:981345",
+          "interrupt": "gateway pid:981345",
+          "idle": "gateway pid:981345"
+        }
+      },
+      {
+        "q": "R4",
+        "name": "a bare [SILENT] answer to mail is not posted to the chat",
+        "pass": true,
+        "detail": [
+          "DONE gidle\n[REPLY 429e3777] answer from gidle round=0 [/REPLY]"
+        ]
+      },
+      {
+        "q": "R2",
+        "name": "interactive CLI started and holds a lease",
+        "pass": false,
+        "detail": {
+          "started": false,
+          "turn": true
+        }
+      },
+      {
+        "q": "R6",
+        "name": "reply from the gateway host's post_llm_call reached the dashboard sender",
+        "pass": true,
+        "detail": {
+          "ok": true,
+          "mail": "65ff46cd",
+          "to": "20261109_203704_5c5da9",
+          "requested": "steer",
+          "applied": "steer",
+          "applied_detail": null,
+          "host": "pid:979218",
+          "seconds": 0.002,
+          "error": null,
+          "sender": "20261109_203436_022ad467",
+          "reply_to": "5cad7a2d",
+          "kind": "send",
+          "t": 1794278226.3848875,
+          "pid": 981345
+        }
+      },
+      {
+        "q": "R5",
+        "name": "every delivered mail is in its target session only (no cross-delivery)",
+        "pass": true,
+        "detail": []
+      },
+      {
+        "q": "R5",
+        "name": "duplicate rows occur only for tui queued mail (the accept-time row is not adopted)",
+        "pass": true,
+        "detail": [
+          {
+            "mail": "94a10dc1",
+            "applied": "queue",
+            "host": "pid:979218",
+            "rows": 2
+          }
+        ]
+      },
+      {
+        "q": "R7",
+        "name": "gateway-source target with no gateway: no-gateway, no dashboard fall-through",
+        "pass": true,
+        "detail": {
+          "ok": false,
+          "mail": "280ac115",
+          "to": "20261109_203436_022ad467",
+          "requested": "steer",
+          "applied": null,
+          "applied_detail": "no-gateway",
+          "host": "gateway",
+          "seconds": 0.021,
+          "error": "no-gateway",
+          "cli_seconds": 2.11,
+          "rc": 5
+        }
+      },
+      {
+        "q": "R7",
+        "name": "live-nowhere target with no dashboard returns an error",
+        "pass": true,
+        "detail": {
+          "ok": false,
+          "mail": "becd6702",
+          "to": "20261109_203735_e2baf1",
+          "requested": "steer",
+          "applied": null,
+          "applied_detail": "no-dashboard",
+          "host": "wake",
+          "seconds": 0.028,
+          "error": "ConnectionRefusedError: [Errno 111] Connect call failed ('127.0.0.1', <port>)",
+          "cli_seconds": 2.14,
+          "rc": 5
+        }
+      },
+      {
+        "q": "R9",
+        "name": "intercom's own tests pass on the unedited clone",
+        "pass": true,
+        "detail": [
+          "----------------------------------------------------------------------",
+          "Ran 17 tests in 0.016s",
+          "",
+          "OK"
+        ]
+      }
+    ],
+    "obs": {
+      "leases_after_dash_init": [
+        {
+          "lease_id": "98808943d62a4e24a9b5011cd047e0d6",
+          "metadata": {
+            "bot_live_delivery_consumer": true,
+            "live_session_id": "a96d7b1b"
+          },
+          "pid": 979218,
+          "process_start_time": 1794278007.31,
+          "session_id": "20261109_203331_e457a5",
+          "started_at": 1794278012.0607033,
+          "surface": "tui",
+          "updated_at": 1794278012.0607033
+        }
+      ],
+      "R1_dashboard": {
+        "steer": {
+          "requested": "steer",
+          "applied": "steer",
+          "detail": null,
+          "host": "pid:979218",
+          "error": null,
+          "steered_into_turn": true,
+          "ran_as_own_turn": false,
+          "long_turn_steps": 6,
+          "rows": [
+            [
+              "20261109_203331_e457a5",
+              "user"
+            ]
+          ],
+          "cli_seconds": 2.11
+        },
+        "queue": {
+          "requested": "queue",
+          "applied": "queue",
+          "detail": null,
+          "host": "pid:979218",
+          "error": null,
+          "steered_into_turn": false,
+          "ran_as_own_turn": true,
+          "long_turn_steps": 6,
+          "rows": [
+            [
+              "20261109_203331_e457a5",
+              "user"
+            ],
+            [
+              "20261109_203331_e457a5",
+              "user"
+            ]
+          ],
+          "cli_seconds": 2.12
+        },
+        "interrupt": {
+          "requested": "interrupt",
+          "applied": "interrupt",
+          "detail": "redirect",
+          "host": "pid:979218",
+          "error": null,
+          "steered_into_turn": false,
+          "ran_as_own_turn": true,
+          "long_turn_steps": 3,
+          "rows": [
+            [
+              "20261109_203331_e457a5",
+              "user"
+            ]
+          ],
+          "cli_seconds": 2.1
+        },
+        "idle": {
+          "applied": "start",
+          "host": "pid:979218",
+          "error": null,
+          "ran_as_own_turn": true
+        }
+      },
+      "R3_sends": [
+        {
+          "mail": "d7a4e88f",
+          "sender": "20261109_203401_e0e1a8",
+          "to": "20261109_203402_83d00c",
+          "requested": "steer",
+          "applied": "start",
+          "host": "in-process",
+          "error": null
+        },
+        {
+          "mail": "0cac733e",
+          "sender": "20261109_203402_83d00c",
+          "to": "20261109_203401_e0e1a8",
+          "requested": "steer",
+          "applied": "steer",
+          "host": "in-process",
+          "error": null
+        },
+        {
+          "mail": "fd373bc9",
+          "sender": "20261109_203401_e0e1a8",
+          "to": "20261109_203402_83d00c",
+          "requested": "steer",
+          "applied": "start",
+          "host": "in-process",
+          "error": null
+        }
+      ],
+      "R3_leases_with_lazy": [],
+      "R3_lazy_send": {
+        "ok": true,
+        "mail": "56dff5ba",
+        "to": "20261109_203421_152a29",
+        "requested": "steer",
+        "applied": "start",
+        "applied_detail": null,
+        "host": "wake",
+        "seconds": 0.183,
+        "error": null,
+        "cli_seconds": 2.22,
+        "rc": 0
+      },
+      "R4_endpoint_role_seconds_bound": true,
+      "R4_gateway_session": {
+        "sid": "20261109_203436_022ad467",
+        "published_answers": 1
+      },
+      "R1_gateway": {
+        "steer": {
+          "requested": "steer",
+          "applied": "steer",
+          "detail": null,
+          "host": "gateway pid:981345",
+          "error": null,
+          "steered_into_turn": true,
+          "ran_as_own_turn": false,
+          "long_turn_steps": 6,
+          "rows": [
+            [
+              "20261109_203436_022ad467",
+              "user"
+            ]
+          ],
+          "cli_seconds": 2.23
+        },
+        "queue": {
+          "requested": "queue",
+          "applied": "queue",
+          "detail": null,
+          "host": "gateway pid:981345",
+          "error": null,
+          "steered_into_turn": false,
+          "ran_as_own_turn": true,
+          "long_turn_steps": 6,
+          "rows": [
+            [
+              "20261109_203436_022ad467",
+              "user"
+            ]
+          ],
+          "cli_seconds": 2.2
+        },
+        "interrupt": {
+          "requested": "interrupt",
+          "applied": "interrupt",
+          "detail": "redirect",
+          "host": "gateway pid:981345",
+          "error": null,
+          "steered_into_turn": false,
+          "ran_as_own_turn": true,
+          "long_turn_steps": 3,
+          "rows": [
+            [
+              "20261109_203436_022ad467",
+              "user"
+            ]
+          ],
+          "cli_seconds": 2.12
+        },
+        "idle": {
+          "applied": "start",
+          "host": "gateway pid:981345",
+          "error": null,
+          "ran_as_own_turn": true
+        }
+      },
+      "R4_silent_posts": [
+        "DONE gidle\n[REPLY 429e3777] answer from gidle round=0 [/REPLY]"
+      ],
+      "R2_cli_type_attempts": 2,
+      "R2_cli_lease": {
+        "lease_id": "5f9a7b83792f4df682086fd29ca1e2ea",
+        "metadata": {
+          "live_session_id": "20261109_203649_a46338"
+        },
+        "pid": 983550,
+        "process_start_time": 1794278113.64,
+        "session_id": "20261109_203649_a46338",
+        "started_at": 1794278209.5527549,
+        "surface": "cli",
+        "updated_at": 1794278209.5527549
+      },
+      "R6_replies": {
+        "cli": "host not running",
+        "gateway": {
+          "ok": true,
+          "mail": "65ff46cd",
+          "to": "20261109_203704_5c5da9",
+          "requested": "steer",
+          "applied": "steer",
+          "applied_detail": null,
+          "host": "pid:979218",
+          "seconds": 0.002,
+          "error": null,
+          "sender": "20261109_203436_022ad467",
+          "reply_to": "5cad7a2d",
+          "kind": "send",
+          "t": 1794278226.3848875,
+          "pid": 981345
+        }
+      },
+      "R5_counts": {
+        "delivered": 17,
+        "wrong_session": [],
+        "duplicate_rows": [
+          {
+            "mail": "94a10dc1",
+            "applied": "queue",
+            "host": "pid:979218",
+            "rows": 2
+          }
+        ],
+        "ran_as_prompt_requests": {
+          "97712f9b": 0,
+          "94a10dc1": 1,
+          "1c6f0f38": 1,
+          "34156461": 1,
+          "d7a4e88f": 1,
+          "0cac733e": 0,
+          "fd373bc9": 1,
+          "1382a974": 1,
+          "56dff5ba": 1,
+          "8838de9c": 0,
+          "a211cc57": 1,
+          "f856c477": 1,
+          "429e3777": 1,
+          "734a8ef6": 1,
+          "5cad7a2d": 1,
+          "65ff46cd": 0,
+          "678efee3": 1
+        }
+      },
+      "R9_intercom_tests": {
+        "rc": 0,
+        "tail": [
+          "----------------------------------------------------------------------",
+          "Ran 17 tests in 0.016s",
+          "",
+          "OK"
+        ]
+      }
+    },
+    "sha": "885b5ba120",
+    "intercom_sha": "ae90a2a",
+    "passed": 23,
+    "total": 24,
+    "model_requests": 69,
+    "ntfy_published": 9
+  },
+  "run4": {
+    "checks": [
+      {
+        "q": "R1",
+        "name": "cli: steer applied as steer and observed",
+        "pass": true,
+        "detail": {
+          "requested": "steer",
+          "applied": "steer",
+          "detail": null,
+          "host": "pid:987879",
+          "error": null,
+          "steered_into_turn": true,
+          "ran_as_own_turn": false,
+          "long_turn_steps": 5,
+          "rows": [
+            [
+              "20261109_203931_e5a82a",
+              "user"
+            ]
+          ],
+          "cli_seconds": 2.1
+        }
+      },
+      {
+        "q": "R1",
+        "name": "cli: queue applied as queue and observed",
+        "pass": true,
+        "detail": {
+          "requested": "queue",
+          "applied": "queue",
+          "detail": null,
+          "host": "pid:987879",
+          "error": null,
+          "steered_into_turn": false,
+          "ran_as_own_turn": true,
+          "long_turn_steps": 6,
+          "rows": [
+            [
+              "20261109_203931_e5a82a",
+              "user"
+            ]
+          ],
+          "cli_seconds": 2.11
+        }
+      },
+      {
+        "q": "R1",
+        "name": "cli: interrupt applied as interrupt and observed",
+        "pass": true,
+        "detail": {
+          "requested": "interrupt",
+          "applied": "interrupt",
+          "detail": "redirect",
+          "host": "pid:987879",
+          "error": null,
+          "steered_into_turn": false,
+          "ran_as_own_turn": true,
+          "long_turn_steps": 3,
+          "rows": [
+            [
+              "20261109_203931_e5a82a",
+              "user"
+            ]
+          ],
+          "cli_seconds": 2.18
+        }
+      },
+      {
+        "q": "R1",
+        "name": "cli: idle target starts a turn",
+        "pass": true,
+        "detail": {
+          "applied": "start",
+          "host": "pid:987879",
+          "error": null,
+          "ran_as_own_turn": true
+        }
+      },
+      {
+        "q": "R2",
+        "name": "CLI receives mail through intercom's socket (host pid = CLI pid)",
+        "pass": true,
+        "detail": {
+          "steer": "pid:987879",
+          "queue": "pid:987879",
+          "interrupt": "pid:987879",
+          "idle": "pid:987879"
+        }
+      },
+      {
+        "q": "R6",
+        "name": "reply from the cli host's post_llm_call reached the dashboard sender",
+        "pass": true,
+        "detail": {
+          "ok": true,
+          "mail": "77302514",
+          "to": "20261109_204017_679d84",
+          "requested": "steer",
+          "applied": "steer",
+          "applied_detail": null,
+          "host": "pid:987744",
+          "seconds": 0.004,
+          "error": null,
+          "sender": "20261109_203931_e5a82a",
+          "reply_to": "f0f9f5c7",
+          "kind": "send",
+          "t": 1794278420.8764398,
+          "pid": 987879
+        }
+      },
+      {
+        "q": "R5",
+        "name": "every delivered mail is in its target session only (no cross-delivery)",
+        "pass": true,
+        "detail": []
+      },
+      {
+        "q": "R5",
+        "name": "duplicate rows occur only for tui queued mail (the accept-time row is not adopted)",
+        "pass": true,
+        "detail": []
+      },
+      {
+        "q": "R5",
+        "name": "a lease pid with no intercom endpoint returns no-endpoint",
+        "pass": true,
+        "detail": {
+          "ok": false,
+          "mail": "cc42f25e",
+          "to": "20261109_203931_e5a82a",
+          "requested": "steer",
+          "applied": null,
+          "applied_detail": "no-endpoint",
+          "host": "pid:987879",
+          "seconds": 0.021,
+          "error": "no-endpoint",
+          "cli_seconds": 2.1,
+          "rc": 5
+        }
+      }
+    ],
+    "obs": {
+      "R2_cli_type_attempts": 2,
+      "R2_cli_lease": {
+        "lease_id": "6e70296ef9564c91805d5d777a5179e2",
+        "metadata": {
+          "live_session_id": "20261109_203931_e5a82a"
+        },
+        "pid": 987879,
+        "process_start_time": 1794278276.1,
+        "session_id": "20261109_203931_e5a82a",
+        "started_at": 1794278371.9614213,
+        "surface": "cli",
+        "updated_at": 1794278371.9614213
+      },
+      "R1_cli": {
+        "steer": {
+          "requested": "steer",
+          "applied": "steer",
+          "detail": null,
+          "host": "pid:987879",
+          "error": null,
+          "steered_into_turn": true,
+          "ran_as_own_turn": false,
+          "long_turn_steps": 5,
+          "rows": [
+            [
+              "20261109_203931_e5a82a",
+              "user"
+            ]
+          ],
+          "cli_seconds": 2.1
+        },
+        "queue": {
+          "requested": "queue",
+          "applied": "queue",
+          "detail": null,
+          "host": "pid:987879",
+          "error": null,
+          "steered_into_turn": false,
+          "ran_as_own_turn": true,
+          "long_turn_steps": 6,
+          "rows": [
+            [
+              "20261109_203931_e5a82a",
+              "user"
+            ]
+          ],
+          "cli_seconds": 2.11
+        },
+        "interrupt": {
+          "requested": "interrupt",
+          "applied": "interrupt",
+          "detail": "redirect",
+          "host": "pid:987879",
+          "error": null,
+          "steered_into_turn": false,
+          "ran_as_own_turn": true,
+          "long_turn_steps": 3,
+          "rows": [
+            [
+              "20261109_203931_e5a82a",
+              "user"
+            ]
+          ],
+          "cli_seconds": 2.18
+        },
+        "idle": {
+          "applied": "start",
+          "host": "pid:987879",
+          "error": null,
+          "ran_as_own_turn": true
+        }
+      },
+      "R6_replies": {
+        "cli": {
+          "ok": true,
+          "mail": "77302514",
+          "to": "20261109_204017_679d84",
+          "requested": "steer",
+          "applied": "steer",
+          "applied_detail": null,
+          "host": "pid:987744",
+          "seconds": 0.004,
+          "error": null,
+          "sender": "20261109_203931_e5a82a",
+          "reply_to": "f0f9f5c7",
+          "kind": "send",
+          "t": 1794278420.8764398,
+          "pid": 987879
+        },
+        "gateway": "host not running"
+      },
+      "R5_counts": {
+        "delivered": 7,
+        "wrong_session": [],
+        "duplicate_rows": [],
+        "ran_as_prompt_requests": {
+          "7d4d1aa9": 0,
+          "c075056d": 1,
+          "6664d72f": 1,
+          "58618c38": 1,
+          "f0f9f5c7": 1,
+          "77302514": 0,
+          "232a1234": 1
+        }
+      }
+    },
+    "sha": "885b5ba120",
+    "intercom_sha": "ae90a2a",
+    "passed": 9,
+    "total": 9,
+    "model_requests": 30,
+    "ntfy_published": 0
+  },
+  "passed": 32,
+  "total": 33,
+  "run3_known_harness_miss": "R2 readiness check (CLI did run its turn; cells rerun in run 4)"
+}
