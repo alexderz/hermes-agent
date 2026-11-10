@@ -16,7 +16,8 @@
   - [ ] In the Ink TUI, the message appears as a user row starting with the 📡 header, delivered by the TUI's own backend.
   - [ ] At an idle classic CLI prompt with half-typed input, the message starts its turn and the half-typed text survives in the prompt (Trial-backed).
   - [ ] Half-typed input or a composer draft is never touched; Ctrl+C, typing and `/steer` work as with any turn.
-- **Out of scope** — new terminal notices or colours.
+  - [ ] A message to a session open in a terminal that has not run a turn yet takes the dashboard wake path (HLD O18): the receipt says `started`, and the turn runs in the dashboard, as `ux.md` F13 describes.
+- **Out of scope** — new terminal notices or colours; delivering into a terminal before its first turn (O18, accepted for v1).
 
 ## Optional
 

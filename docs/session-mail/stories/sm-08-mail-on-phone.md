@@ -11,7 +11,7 @@
 - **So that** I never mistake a message for something I typed, and know at a glance whether an answer is coming
 - **Done when**
   - [ ] With today's app, a steered message that Hermes did not join with other text shows as its own bubble where it landed, after the turn ends (within about 30 seconds), and the bubble's first wrapped line reads `📡 Not Alex · reply expected` (or the matching label).
-  - [ ] A queued or started message that was not joined shows the same first wrapped line, followed by that turn's answer.
+  - [ ] A queued or started message that was not joined shows the same first wrapped line, followed by that turn's answer. A queued one shows once with the O17 fix; without it, it shows as two identical bubbles and still gets one reply.
   - [ ] An interrupting message's first line reads `📡 Not Alex · interrupt · …`, after the stopped answer.
   - [ ] In a bubble joined with Alex's own steer or queued text, the 📡 header and `📡 End of message <id>` are both visible.
   - [ ] The sender's transcript shows the `intercom` tool row with the target and the receipt.
