@@ -10,12 +10,12 @@
 - **I want** to mark it "no reply needed"
 - **So that** the target stays silent unless something is wrong, and Alex can see that no answer is coming
 - **Done when**
-  - [ ] `session_message(..., expect_reply=false)` and `send --no-reply` put `no reply needed` in header line 1.
-  - [ ] The footer's third line becomes: `No reply is needed. Answer [SILENT] unless something here is wrong, blocks you, or needs a question back.`
-  - [ ] The tool result for such a send ends with `No answer was asked for.`
-  - [ ] If the target answers anyway with something that is not silent, that answer goes back by the usual reply rule (it is not dropped).
+  - [ ] `intercom(action="send", …, expect_reply=false)` and `hermes intercom send --no-reply` put `no reply needed` in header line 1.
+  - [ ] Footer line 3 becomes: `No reply is needed. Answer [SILENT] unless something here is wrong, blocks you, or needs a question back.`
+  - [ ] The receipt ends with `No answer was asked for.`
+  - [ ] If the target answers anyway with something that is not silent, the answer goes back by the usual rule (it is not dropped).
 - **Out of scope** — blocking replies to such notes.
 
 ## Optional
 
-- Notes: this flag is beyond the brief's smallest slice. If Alex rejects U2, this story is dropped.
+- Notes: beyond the brief's minimum. If Alex rejects U2, this story is dropped.

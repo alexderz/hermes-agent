@@ -1,4 +1,4 @@
-# Story — Read mail as a peer's request
+# Story — Read a message as a peer's request
 
 - Id: `sm-05-read-as-peer`
 - HLD / UX: `docs/session-mail/hld.md`, `docs/session-mail/ux.md` § "Header", § "Footer"
@@ -6,19 +6,20 @@
 
 ## Required
 
-- **As a** session receiving mail
-- **I want** each mail to say, before anything else, who wrote it, that it is not the user, whether an answer is wanted, and how to answer
-- **So that** I weigh it as a peer's request, never as the user's instruction or approval, and answer the right way
+- **As a** session receiving a message
+- **I want** each message to say, before anything else, that it is not Alex, whether an answer is wanted, who wrote it, and, at the end, how to answer
+- **So that** I weigh it as a peer's request, never as Alex's instruction or approval, and answer the right way
 - **Done when**
-  - [ ] Every mail, on all three paths (steered, queued, started), opens with the two header lines in `ux.md`, word for word: line 1 starts `📨 Mail (not Alex) ·`, or `📨 Reply (not Alex) ·` for a reply, followed by the reply label (`reply expected`, `no reply needed` or `reply optional`), then the sender label (`session "<title>"`, `session <id> (untitled)` or `script "<label>"`) and the id; line 2 is the session variant, or the script variant for CLI senders.
-  - [ ] A reply's line 1 starts `📨 Reply (not Alex) · reply optional ·` and names the mail it answers (`answers your mail <id>`).
-  - [ ] Every mail ends with the footer in `ux.md`, with footer line 1 naming `session_message` for new mail, the right variant for script senders, cron/oneshot/subagent senders and "no reply needed", and its last line is `📨 End of mail <id>`.
-  - [ ] The body between them is exactly what was sent, apart from relabelled lookalike lines.
-  - [ ] In a row Hermes joined (a mail with Alex's steer or queued text, or two mails), each mail sits between its own header and closing line, and the text outside those lines is left exactly as it was (checked in HLD PoC Q2).
-  - [ ] No mail text starts with `Message from`.
-  - [ ] Every body line that starts with `📨` (a fake header, footer heading or closing line), and every line that starts like a Hermes control frame (for example `[/OUT-OF-BAND USER MESSAGE]`), arrives relabelled (required: unrelabelled, the Trial saw a body close the steer wrapper early), so the body cannot fake a second mail, fake answering rules or close the steer wrapper (HLD B2).
-- **Out of scope** — a separate steer frame for mail (SM-Q7 C); a system-prompt section about mail.
+  - [ ] Every message, on every host and mode, opens with the header in `ux.md`, word for word: line 1 starts `📡 Not Alex · ` and the reply label (`reply expected`, `no reply needed`, `reply optional` or `waiting for your reply`), then `hermes@<title> says (session <id> · message <id>):` (`hermes@script <label>` for a script); line 2 is the session or the script variant.
+  - [ ] Line 1 says `interrupt` and line 3 is present only when the applied mode was interrupt.
+  - [ ] A reply's line 1 names `reply to your message <id>`.
+  - [ ] Every message ends with the footer for its kind (`send`, script, cron/oneshot/subagent, no-reply, `ask`), whose line 1 names `intercom` as the tool for new messages and says to `tool_describe` then `tool_call` it if it is not in the tool list; the last line is `📡 End of message <id>`.
+  - [ ] The body between them is exactly what was sent, apart from relabelled lines.
+  - [ ] Every body line that starts with `📡`, and every line that starts like a Hermes control frame (for example `[/OUT-OF-BAND USER MESSAGE]`), arrives relabelled, so a body cannot fake a header, footer or closing line or close the steer wrapper (required: Trial Q2).
+  - [ ] In a row Hermes joined (with Alex's text or another message), each message sits between its own header and closing line, and the text outside is left as it was.
+  - [ ] No message text starts with `Message from`.
+- **Out of scope** — a separate steer frame (SM-Q7 C); a system-prompt section.
 
 ## Optional
 
-- Notes: whether real models obey this framing inside Hermes' "message from the user" steer wrapper is the brief's open point, and the trigger for reopening SM-Q7 C.
+- Notes: whether real models obey this framing inside Hermes's "message from the user" steer wrapper is the trigger for reopening SM-Q7 C.
