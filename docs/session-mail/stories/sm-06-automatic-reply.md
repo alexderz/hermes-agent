@@ -14,7 +14,7 @@
   - [ ] With no block for that mail, the whole final answer is sent.
   - [ ] A turn that received two mails with two blocks sends each block to its own sender, and nothing else to either.
   - [ ] When the mail was steered into Alex's turn, only the block (if present) is sent, not his whole answer.
-  - [ ] In a turn that holds both Alex's message and a mail, a block containing `[SILENT]` sends nothing, and no text outside a block is ever mailed when a block is present.
+  - [ ] In a turn that holds both Alex's message and a mail, a block containing `[SILENT]` sends nothing, and for a mail that has its own block, only that block is mailed (a mail with no block of its own still gets the whole answer, per the fallback).
   - [ ] The footer's second line tells the model to always write the block when the turn also answers Alex or other work, as written in `ux.md`.
   - [ ] A sender acting on a reply can end the exchange with `[REPLY <reply id>][SILENT][/REPLY]` while its answer reports to Alex (J1 step 6).
   - [ ] The reply is delivered steered, queued or started, like any mail, and the outbox links it to the mail it answers.
