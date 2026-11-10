@@ -14,5 +14,5 @@
   - [ ] An answer that is `[SILENT]` as a whole, on its first or last line, or a reply block that is empty or `[SILENT]`, or an empty answer, sends nothing, and the record says "silent".
   - [ ] `[SILENT]` mid-sentence is sent as content.
   - [ ] The plugin has no hop, round, rate, duplicate, length or daily limit (intercom's four caps are removed), and no timer that ends an exchange.
-  - [ ] The no-empty-replies rule and the instruction to answer `[SILENT]` when there is nothing new both appear, as written in `ux.md`, in the tool description and in every `send` footer variant.
+  - [ ] The no-empty-replies rule and the instruction to answer `[SILENT]` when there is nothing new both appear, as written in `ux.md`, in the tool description and in every footer variant, the `ask` footer included.
 - **Out of scope** — any cap or loop detector.
