@@ -7,15 +7,12 @@
 ## Required
 
 - **As a** sender
-- **I want** to address a session as `@<project-slug>`, by its exact title, by its id or the start of it, or as `Home`
-- **So that** I can reach a project's main session without knowing its id, and the address keeps working after that session compacts its context
+- **I want** to address a session as `@<project-slug>`, by its exact title, by its id or the start of it, as `Home`, or by an intercom endpoint name
+- **So that** I can reach a project's main session without knowing its id or where it is open, and the address keeps working after it compacts its context
 - **Done when**
   - [ ] `@hermes-improvement` reaches "Hermes Improvement — Orchestrator" (the `<Project name> — Orchestrator` rule until DER-686's owner field exists, then that field).
-  - [ ] An exact title, a full id, a unique id prefix and `Home` each reach the right session.
-  - [ ] After the target runs `/compress`, each of those addresses reaches the newest session in its compression chain (the compression tip), and the result names that session's title and id.
-  - [ ] The tool and the CLI accept the same addresses and resolve them the same way.
-- **Out of scope** — alias maps (SM-Q10 recommends a rename instead); addresses in other profiles or on other machines; partial-title search as a way to send.
-
-## Optional
-
-- Notes: if Alex answers SM-Q10 differently, `@model-testing` follows that answer (`ux.md`, Open questions).
+  - [ ] An exact title, a full id, a unique id prefix, `Home` and a live endpoint name from `list` each reach the right session.
+  - [ ] After the target runs `/compress`, each address reaches the compression tip, and the receipt names that session's title and id.
+  - [ ] The address works whatever hosts the target: the dashboard, an Ink TUI, a classic CLI, the gateway, or nothing (then it is woken).
+  - [ ] The tool and `hermes intercom send` resolve addresses the same way.
+- **Out of scope** — alias maps (SM-Q10 recommends a rename); other profiles or machines; partial-title search as a way to send.

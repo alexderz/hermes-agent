@@ -1,22 +1,21 @@
-# Story — Alex keeps control of mail-started turns
+# Story — Alex keeps control of message turns
 
 - Id: `sm-10-alex-keeps-control`
-- HLD / UX: `docs/session-mail/hld.md`, `docs/session-mail/ux.md` (J6, F5)
+- HLD / UX: `docs/session-mail/hld.md`, `docs/session-mail/ux.md` (J6, J8, F9, F11)
 - Person: Alex
 
 ## Required
 
 - **As** Alex
-- **I want** to steer or stop any turn that mail started or joined, from the phone, the dashboard or the desktop, and to keep my draft when mail arrives while I type
-- **So that** sessions talking to each other never take the session away from me
+- **I want** to steer or stop any turn a message started or joined, wherever it runs, and to keep my draft when a message arrives while I type
+- **So that** sessions talking to each other never take a session away from me
 - **Done when**
-  - [ ] A turn started by mail runs in the dashboard, and Alex can open it on Hermes Mobile, steer it and stop it.
-  - [ ] Stopping a mail-started turn works like stopping any turn; the mail stays in the transcript and the outbox.
-  - [ ] A turn Alex stops, or one that fails, sends no reply and wakes no one, and `status` for its mail shows `no reply recorded` (the reply hook does not run for such turns; HLD O9).
-  - [ ] When mail starts a turn while Alex is typing in that session, his draft is unchanged, and his send is handled as a send into a busy session (steer or queue, by his client's usual rule).
-  - [ ] When Alex is mid-turn and mail steers in, his turn keeps running and is not redirected.
-- **Out of scope** — approval gates or holds for mail (settled: none); notifications for mail.
+  - [ ] A turn started by a message runs on the target's host (a terminal, a dashboard chat, a Telegram topic) or, when woken, in the dashboard; Alex can steer and stop it there as with any turn (from Hermes Mobile for dashboard sessions).
+  - [ ] A turn Alex stops, or one that fails, sends no reply and wakes no one, and `status` shows `no reply recorded` (the reply hook does not run for it; Trial Q9).
+  - [ ] When a message starts a turn while Alex is typing in that session, his draft is unchanged, and his send follows his client's busy rule.
+  - [ ] A message with `steer` or `queue` never redirects his running turn. One with `interrupt` does, says so in its first line ("interrupt"), and Alex can stop or steer the new turn.
+- **Out of scope** — approval gates or holds (settled: none); notifications.
 
 ## Optional
 
-- Notes: stopping is the only way Alex ends a debate early, since nothing is capped. The Trial showed the reply hook does not run for an interrupted or failed turn (HLD O9), so this needs no extra rule.
+- Notes: stopping is the only way Alex ends a debate early, since nothing is capped.
