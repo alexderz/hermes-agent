@@ -1,540 +1,522 @@
-# HLD — session-mail: session-to-session messaging
+# HLD — session-mail: session-to-session messaging, built on intercom
 
-- Slug: `session-mail`
+- Slug: `session-mail` (chunk working name; the shipped plugin is `intercom`)
 - Track / chunk ids: Hermes Improvement (no tracker id) / Epic `DER-701`
-- Brief: `docs/session-mail/brief.md` (Refine: pass, round 3; review in
-  `docs/session-mail/brief-refine.md`). Alex's words and settled decisions 1–8 are in the
-  Hermes Improvement vault, `requests/2026-11-09-session-mail-brief.md`.
-- Date: `2026-11-09`
+- Brief: `docs/session-mail/brief.md`, round 6, which passed Refine round 5
+  (`docs/session-mail/brief-refine.md`). Alex's words and settled decisions are in the Hermes
+  Improvement vault, `requests/2026-11-09-session-mail-brief.md`, including the sections
+  "Scope addition", "Delivery modes" and "Build on intercom".
+- Date: `2026-11-09` (HLD round 2; round 1 is in git at `f72a12780b`)
 
-Alex has not yet answered the brief's questions SM-Q7 to SM-Q11. This HLD is designed on the
-recommended answers. Each place where a different answer changes the shape is listed under
-[Open](#open).
+Alex has not answered SM-Q7 to SM-Q11, SM-Q14 (asked elsewhere), SM-Q15 or SM-Q16. This HLD is
+designed on the recommended answers. Each place where a different answer changes the shape is
+listed under [Open](#open).
 
-Paths without a prefix are relative to the Hermes repository root, on branch
-`integrate/session-mail` (v0.22.0 plus fork patches).
+Paths without a prefix are relative to the Hermes repository root, on `integrate/session-mail`.
+That branch carries v0.22.0, the fork patches, and the dispatch fix with the queue-aware
+reapers (merge `3d4d482eb9`). Intercom paths are written `intercom:<path>`, against
+`alexderz/hermes-intercom` at `ae90a2a`.
 
 ## Problem
 
-Alex runs many long-lived Hermes sessions: one owner session per project, `Home`, and helpers.
-They cannot message each other. Today a session relays work with `scripts/dashboard_dispatch.py`
-run from a skill. That script has no record of who sent what, no reply path, and no sender
-name in the text. Every agent-key turn is credited to Alex (`dashboard.agent_key.act_as`).
+Alex runs many long-lived Hermes sessions, and they cannot message each other:
+- owner sessions per project, `Home` and helpers in the dashboard;
+- terminal sessions (classic CLI, Ink TUI);
+- messaging-gateway chats.
 
-Nothing ready-made fits (`comparables.md`):
-- Bot Mode addresses profiles, not sessions.
-- `hermes-intercom` cannot reach sessions hosted in the dashboard.
-- `hermes-walkie-talkie` needs a core seam that upstream closed unmerged.
+The community answer to upstream #81885, `majordave/hermes-intercom`, has several gaps:
+- it reaches only a classic CLI;
+- it parks mail for dashboard and TUI processes and drains it into **whichever** session runs
+  next (`intercom:__init__.py:137-147`);
+- it never interrupts and only steers;
+- it has four caps;
+- it frames mail with a process endpoint name that does not say "not Alex".
+
+Hermes's own plugin seam, `ctx.inject_message`, breaks Alex's delivery rule on two hosts:
+- a classic CLI turns every busy injection into a hard interrupt
+  (`hermes_cli/plugins_injection.py:19-23`);
+- the gateway only ever queues plugin events (`gateway/run_busy.py:843-849`);
+- the TUI host only queues, with no accept-time row (`tui_gateway/plugin_inject.py:24-64`).
 
 ## Goals
 
-1. Any session, cron job or script can send mail to one named session. The mail is delivered
-   right away inside the dashboard, so Alex can watch and steer the result from the phone
-   (settled decision 3).
-2. The receiver can tell mail from Alex's own words. It treats mail as a peer's message that
-   carries none of Alex's authority. This is best effort on every path (D1, D2).
-3. The target's final answer goes back to the sender on its own. Two sessions can debate until
-   one has nothing new to say (decisions 4–6).
-4. Every mail is recorded: sender, target, body, delivery result and reply (decision 7).
-5. A CLI sends mail without starting a turn of its own (decision 8).
+1. Any session, cron job or script can mail one named session of **any** kind: a dashboard or
+   desktop chat, an Ink TUI, a classic CLI, or a messaging-gateway chat (decision 9).
+2. The **process that hosts the target** delivers it at once, in the requested mode:
+   `interrupt`, `steer` or `queue`, with `steer` as the default. The host applies the strongest
+   mode the target supports, at or below the request. An idle target starts a turn (decision 3).
+3. A session that is live nowhere is woken in the dashboard, so Alex can watch and steer it from
+   the phone.
+4. The receiver can tell mail from Alex's words, and treats it as a peer's message (best effort,
+   D2).
+5. The final answer goes back on its own; a debate runs until `[SILENT]` (decisions 4–6).
+6. A durable record keeps the sender, the target, the body, the requested and applied mode, and
+   the reply (decision 7).
+7. The work lands **in our intercom fork, in its style**, plus one small, upstreamable core seam,
+   so both can be offered upstream (decisions 1, 11, 12).
 
 ## Non-goals
 
-- Any hold, cap, rate limit, duplicate filter, hop limit, approval gate, retry or give-up timer
-  (decisions 3 and 5, and the refined brief).
-- A background delivery worker, or redelivery of mail lost after the handover (refined brief).
-- Agent Tincan, relays, other machines or other products (SM-Q6).
-- Bot Mode, hosted rooms, one profile per agent.
-- Messaging across profiles. Each profile that enables the plugin is its own island.
-- Hermes Mobile changes, a dashboard "Mail" tab, a plugin system-prompt section.
-- A core patch to the steer frame (D1).
-- Landing DER-686's `projects.owner_session_id`. This chunk only reads it (D5).
+- Any hold, cap, rate limit, duplicate filter, hop limit, approval gate, retry or give-up timer.
+  Intercom's four caps are removed.
+- A background worker, a poller, or redelivery of mail that a host accepted and then lost.
+- Cross-machine or cross-install delivery (Agent Tincan, SM-Q6); messaging across profiles,
+  including bots in other profiles (SM-Q13).
+- A core steer-frame patch (SM-Q7 C); Hermes Mobile changes; a plugin system-prompt section.
+- miyu4u's v0.23 unified-gateway transport (prior art for the v0.23 rebase only).
+- Posting anything upstream. Drafts go into intercom's `docs/` for Alex.
+- Landing DER-686's `owner_session_id` (this chunk reads it once it exists).
 
 ## Users / operators
 
 | Who | Uses |
 |---|---|
-| **Alex** (operator) | Watches and steers mailed turns from Hermes Mobile or the web app. Answers SM-Q7 to SM-Q11. Approves the one deploy restart. Reads the outbox with `hermes session-mail list` / `status`. |
-| **Agent sessions** (owners, `Home`, helpers, subagents, cron agents) | The `session_message(to, message, expect_reply=true)` tool. They receive mail as user rows and reply with their final answer. |
-| **Scripts and cron jobs** | `hermes session-mail send --to … [--from …] (--message … \| --file …) [--no-reply] [--json]`. They read the reply with `status <id>`. |
-| **Builders and reviewers** | See [Worker rules](#worker-rules). |
+| **Alex** | Watches and steers mailed turns from Hermes Mobile, the web app or Telegram; reads the record with `hermes intercom list` / `status`; answers the SM-Qs; approves the deploy restarts |
+| **Agent sessions** (dashboard, desktop, Ink TUI, classic CLI, gateway chats) | The `intercom` tool. They receive mail as user rows and answer with their final answer |
+| **Scripts and cron jobs** | `hermes intercom send --to … [--delivery …] [--from …] [--no-reply] (--message … \| --file …) [--json]`, plus `status` and `list` |
+| **Upstream** (later, through Alex) | The #81885 update, an intercom pull request, the seam pull request |
 
 ## UX / stories
 
-`docs/session-mail/ux.md` and `docs/session-mail/stories/`. The designer writes them in
-parallel; this HLD does not. Operator acceptance: pending. The exact header, footer and
-tool-description wording belong to the UX doc. This HLD fixes only which elements they must
-carry (D2).
+`docs/session-mail/ux.md` and `docs/session-mail/stories/` (designer). They must be redone for
+the new base: intercom's `📡` frame instead of `📨`, the `intercom` tool instead of
+`session_message`, `hermes intercom` instead of `hermes session-mail`, delivery modes, and
+terminal and Telegram surfaces. Operator acceptance: pending. The HLD fixes the elements; the
+wording belongs to the UX doc.
 
 ## Comparables
 
-`docs/session-mail/comparables.md`: Bot Mode's live-owner mailbox, `hermes-intercom`,
-`hermes-walkie-talkie`, and Claude Code cross-session messaging.
+`docs/session-mail/comparables.md`. Intercom is now the **base**, not a comparable. The
+comparables are Bot Mode, walkie-talkie, Claude Code, and upstream #106423 (peer messaging),
+with miyu4u as prior art.
+
+## Superseded decisions (HLD round 1 → round 2)
+
+- P3, a new `plugins/session-mail` with a `session_message` tool → **our intercom fork**, plugin
+  `intercom`, tool `intercom` (brief decision 1). The CLI `hermes session-mail` →
+  `hermes intercom`.
+- D4, every send goes over the dashboard WebSocket → **the hosting process delivers** through
+  its intercom socket and the seam. The dashboard WebSocket is kept **only** for waking a session
+  that is live nowhere (P5).
+- "Never cancel or redirect" → **three delivery modes** with fallback, default `steer`
+  (decision 3).
+- "No core patch" → **one seam**, `inject_message(mode=…)` (decision 11).
+- D2's `📨 Mail (not Alex)` header and `📨 End of mail` → **intercom's `📡 hermes@… says:` line
+  in A′ form** (SM-Q7). The rules carry over: header first, an authority line, a footer, a
+  closing line, and one relabel rule for every body line starting with the header emoji.
+- The 4090 / `SESSION_NOT_OWNED` error for a CLI-held target → that target is now **delivered by
+  its own CLI process**. 4090 remains only as a wake-path race (D4).
+- D6, one dashboard restart only → dashboard **and gateway** restarts, plus vendoring by
+  `git subtree` (SM-Q14).
+- O11 and footer naming `session_message` → the footer names `intercom`.
+
+Still holds from round 1 and the Trial (`poc/poc.md`):
+- the A′ reasoning (the outer frame is true; the content is a peer's);
+- relabelling control-frame openers in bodies (Trial Q2);
+- reply capture in `post_llm_call` with the record's target and "no reply yet" check (Trial Q3);
+- stopped and failed turns fire no hook, so they send no reply (Trial Q9);
+- Tool Search defers plugin tools (Trial Q8);
+- the reaper's quiet-turn loss (Trial Q1);
+- addressing (D5);
+- the round-4 record fields, exit codes and the `status` transcript check.
 
 ## Shape
 
 ### Parts
 
-| # | Part | Where | What it owns |
+| # | Part | Repo / where | Owns |
 |---|---|---|---|
-| P1 | **Delivery module** | A fork module next to the agent key (Spec names it, for example `hermes_cli/dashboard_dispatch.py`). It is code moved out of `scripts/dashboard_dispatch.py` after `1516a52669` is on the branch. | The **one copy** of the steer → queue → start rule. It connects over the loopback WebSocket with the agent key, resumes the session, then calls `_deliver` and, after a start only, `_wait_started`. It returns an outcome object and raises typed errors instead of calling `sys.exit`. It has a sync entry point, `deliver(...)` (D4). |
-| P2 | **Dispatcher script** | `scripts/dashboard_dispatch.py` | A thin command-line wrapper over P1. Its flags and JSON output stay the same, so the three skills that run it keep working unchanged. |
-| P3 | **Plugin** `session-mail` | `plugins/session-mail/` (`plugin.yaml`, `__init__.py` with `register(ctx)`, shaped like `plugins/model-routing/`) | Addressing (D5), the outbox, mail framing (D1/D2), the `session_message` tool, the `hermes session-mail` CLI (`send`, `list`, `status`), and the `post_llm_call` reply hook (D3). |
+| P1 | **Core seam** | alexderz/hermes-agent: `hermes_cli/plugins.py` (`inject_message`), `hermes_cli/plugins_injection.py`, `tui_gateway/plugin_inject.py`, the CLI host (`hermes_cli/cli_tui_mixin.py` typed-input routine), `gateway/run_plugin_injection.py` + `gateway/run_busy.py` | `inject_message(…, mode="interrupt"\|"steer"\|"queue")` with the fallback chain on every host, returning what was applied (D1) |
+| P2 | **Intercom transport changes** | alexderz/hermes-intercom: `inbox.py`, `__init__.py` | Socket kept; lookup by lease `pid`; many sessions per process; delivery through P1; GC lookup and private-field delivery dropped where P1 exists; caps removed; frame in A′ form (D2) |
+| P3 | **Our additions inside intercom** | alexderz/hermes-intercom: new modules in its style (for example `address.py`, `record.py`, `replies.py`, `cli.py`) | Addressing (D5), `delivery` argument and receipt (D1), the record, automatic replies and `[SILENT]` (D3), `hermes intercom` CLI (D4) |
+| P4 | **Gateway endpoint** | alexderz/hermes-intercom (gateway branch), plus P1's gateway path | The gateway's intercom endpoint marks itself; routing idle gateway sessions by `lookup_by_session_id`; SM-Q15 topic post (D6) |
+| P5 | **Wake path** (fork only) | alexderz/hermes-agent: the dispatcher rule moved from `scripts/dashboard_dispatch.py` into an importable fork module (for example `hermes_cli/dashboard_dispatch.py`), with the script as a thin wrapper | Waking a session that is live nowhere: resume, then submit, then wait for the start, over the dashboard's loopback WebSocket with the agent key. Intercom feature-detects the module (D4) |
+| P6 | **Vendored copy** | alexderz/hermes-agent: `plugins/intercom/`, by `git subtree` from alexderz/hermes-intercom (SM-Q14) | What the install runs; enabled through house-infra (D7) |
+| P7 | **Upstream drafts** | alexderz/hermes-intercom `docs/` | The #81885 update, an intercom pull-request text, and the seam pull-request text. Nothing posted |
 
-The plugin touches no core file (`plugins/AGENTS.md`). P1 and P2 reshape existing fork-only
-code: the agent key and the dispatcher are fork patches (`24ab7c436e`, `c5ea34b5b3`,
-`1fff8a0a08`), and neither exists at `v0.23.0`. No upstream file changes.
+Intercom stays a plugin that touches no core file (`plugins/AGENTS.md`). P1 is the only core
+change: generic, used through `ctx`, and it has a concrete consumer. P5 reshapes existing
+fork-only code: the agent key and the dispatcher are not in `v0.23.0`.
 
 ### Sketch
 
 ```
- sender turn (dashboard, CLI, gateway or cron process)      script / cron job
-   session_message(to, msg) ─┐                                hermes session-mail send
-                             ▼                                        │
-                  P3: resolve address (D5) → outbox row (result empty) ◄┘
-                             │  frame text: 📨 header · body (frames relabelled) · footer
-                             ▼
-                  P1.deliver(): own thread + own event loop
-                             │  loopback WS, agent key
-                             ▼
-   ┌──────────────────────── dashboard process ─────────────────────────┐
-   │ session.resume → session.steer ──accepted──► "steered"             │
-   │                    └─refused─► prompt.submit(queued) ─► "queued"   │
-   │                                              └─idle──► "started"   │
-   │ target turn runs … final answer                                    │
-   │   post_llm_call (P3 hook): find mail ids in this turn's user rows  │
-   │     → store reply / "silent" in outbox                             │
-   │     → wakeable sender? short-lived thread → P1.deliver(reply mail) │
-   └────────────────────────────────────────────────────────────────────┘
-                             │
-                  outbox row updated: result, detail, timestamps
-                  sender sees: steered | queued | started | refused | error
+ sender (tool in any host process, or `hermes intercom send`)
+   │ P3: resolve address (state.db → compression tip)        ──refused──► receipt
+   │ P3: record row (applied empty)
+   │ route (D4):
+   │   1. lease for the stored id in runtime/active_sessions.json → pid
+   │        same pid as me → P1 in-process   other pid → that pid's intercom socket
+   │   2. no lease, gateway source or route → the gateway's intercom endpoint
+   │   3. live nowhere → P5 wake over the dashboard WebSocket (fork) / error
+   ▼
+ host process (dashboard/desktop, Ink TUI, classic CLI, gateway)
+   P2 serve thread → P1 inject_message(session_key, text, mode=requested)
+        → applied: interrupt (redirect | hard) / steer / queue / start
+   receipt {mail, requested, applied, to} ──► sender ──► record updated
+   … target turn ends … post_llm_call (P3 in that host): find mail ids in the turn's rows
+        → reply stored / silent → reply thread → same route, delivery=steer
 ```
 
-### Data: the outbox
+### Data
 
-One row per mail, replies included. A reply is a mail with `in_reply_to` set.
+**Intercom registry (kept):** `$HERMES_HOME/intercom/sessions/<pid>-<time>.json`, one per
+process (`name, pid, cwd, session_id, socket, started_at`). It gains `roles` (`gateway` when
+that process hosts the messaging gateway; P4) and `seam: true|false`. The 0600 socket sits next
+to it.
+
+**Lease registry (Hermes, read-only to intercom):** `runtime/active_sessions.json`, one entry per
+live session, with `session_id`, `surface` and `pid` (`hermes_cli/active_sessions.py:461-480`).
+CLI and `tui_gateway` key it by the stored session id; the gateway keys it by the gateway
+session key, and only while a turn runs.
+
+**The record:** a SQLite file under `<hermes-home>/plugin-data/intercom/`, 0600, WAL, with short
+write transactions. One row per mail; replies are mails with `in_reply_to`.
 
 | Field | Meaning |
 |---|---|
-| `id` | Short random hex id. It appears in the header as `mail <id>`. |
-| `in_reply_to` | The id of the mail this one answers, or empty. |
-| `sender_session_id`, `sender_title`, `sender_source` | The calling session, from the handler's `session_id` keyword, never from model input (brief A4). A CLI sender stores its `--from` label (default `cli`) and no session. |
-| `target_session_id`, `target_title`, `address` | What was asked for, and the compression tip it resolved to. |
-| `body` | The text as the sender wrote it, before framing. |
-| `expect_reply` | `true` by default; `false` from the tool's `expect_reply: false` or the CLI's `--no-reply`. A reply mail is written `false` and labelled "reply optional". It changes only the header label and one footer line (D2). It is not a gate: the hook still captures the answer, and a non-silent answer still goes back (decision 4). |
-| `result`, `detail` | Empty while in flight. Then one of `steered`, `queued`, `started`, `refused` or `error`. `detail` holds the refusal reason with the candidates, or for `error` one of the codes in D4: `not-reachable`, `delivery-unknown`, or the dashboard's own code (for example `4090`). |
-| `reply`, `reply_state` | The captured reply text, and `stored`, `silent`, or empty for "no reply yet". When the reply goes back as mail, `reply_mail_id` points at that reply's own row, and **that row carries its delivery result**. A reply that failed to reach its sender (4090 because the sender is open in a terminal, or the dashboard down) is that row's `error` and code. No second field and no retry: `list` joins the two rows (D4, "CLI"). |
-| `created_at`, `delivered_at`, `replied_at` | Timestamps. |
+| `id`, `in_reply_to`, `reply_mail_id` | Short hex id (in the header); the mail answered; the reply's own row |
+| `kind` | `send` or `ask`. Automatic replies apply only to `send` (SM-Q16 a) |
+| `sender_session_id`, `sender_title`, `sender_source` | From the handler's `session_id` keyword, never model input. A CLI sender stores its `--from` label (default `cli`) |
+| `target_session_id`, `target_title`, `address`, `host` | What was asked; the compression tip it resolved to; `pid:<n>`, `gateway`, `wake` or `in-process` |
+| `body`, `expect_reply` | The text before framing; `true` by default (`false` from `expect_reply: false` / `--no-reply`; replies are `false` and labelled "reply optional") |
+| `requested`, `applied`, `applied_detail` | `interrupt`/`steer`/`queue`; `interrupt`/`steer`/`queue`/`start`; for example `redirect` or `hard-interrupt` |
+| `result`, `detail` | Empty while in flight; then `delivered`, `refused` or `error`. `detail` holds the reason, the candidates, or an error code: `not-reachable`, `delivery-unknown`, `no-endpoint`, `no-seam`, `no-dashboard`, `no-gateway`, or a host code |
+| `reply`, `reply_state` | The captured reply; `stored`, `silent`, or empty |
+| `created_at`, `delivered_at`, `replied_at` | Timestamps |
 
-There is no `hop` column, no status ladder and no retry count (refined brief).
+The row is written **before** routing. A fast target can finish and fire its hook before the
+sender's receipt returns. There is no hop column, no status ladder and no retry count.
 
-**The row is written before delivery starts, with an empty result.** This is not a status
-ladder. A fast target can finish a steered turn, and fire the reply hook, before the sender's
-`deliver()` returns, and the hook must find the mail id. A crash in between leaves an honest
-"result unknown" row.
-
-### Trust boundaries (HLD grain; the LLD's trust-boundary section details them)
+### Trust boundaries (HLD grain; the LLD details them for security)
 
 | Boundary | Crossing | Rule |
 |---|---|---|
-| **B1: a process to the dashboard, over the loopback WebSocket with the agent key** | P1 reads the existing key file (`hermes_cli/dashboard_auth/agent_key.py`, 0600, owned by the dashboard user) and connects to `127.0.0.1`. | No new credential and no new network surface. The key already grants operator power, including the terminal, so mail adds no privilege. Every sender is a process that already runs as the Hermes user. The dashboard URL is a plugin setting in `config.yaml` (`plugins.entries.session-mail.settings`), not a new `HERMES_*` variable. |
-| **B2: model-written text becomes a `role: user` row in another session** | The body of a mail, and every reply, is another model's output. | Mail is attributed and inert (D1, D2). The sender comes from the session, never from model input. Hermes control-frame openers in the body are relabelled the way hosted rooms already do (`gateway/hosted_room_discussion.py:39-48`, from `agent.prompt_builder.CONTROL_FRAME_OPENERS`), so a body cannot close the steer frame or fake a compaction or system note. **One rule for 📨:** every body line that starts with `📨` is relabelled. That covers a fake header, a fake footer heading and a fake closing line, so only the plugin's own lines start with `📨` (UX round 2, R2-4). **Required, not optional:** the Trial showed a body's `[/OUT-OF-BAND USER MESSAGE]` passing verbatim and closing the steer frame early (`poc/poc.md` Q2). Mail is never `display_kind: "hidden"` (brief A6). |
-| **B3: identity** | `act_as` credits agent-key turns to Alex. | The sender is named in the header and in the outbox. Nothing claims the turn's author is the sender. |
-| **B4: profile** | The reply thread runs outside the turn's own call stack. | It starts through `tools.thread_context.propagate_context_to_thread`, so `get_hermes_home()` and the plugin data directory stay the turn's profile (HX002/HX005). The tool handler runs inside the turn and is already bound. |
+| **B1: process to process over intercom's socket** | A sender connects to a host's `0600` Unix socket | Kept from intercom: the peer-UID check refuses other users (`intercom:inbox.py:545-569`); there is no TCP listener. Every sender already runs as the Hermes user. |
+| **B2: process to dashboard, loopback WebSocket with the agent key** (wake path only, fork only) | P5 reads the existing key file and connects to 127.0.0.1 | No new credential and no new surface. The key already grants operator power. The URL is an intercom setting in `config.yaml`, not a `HERMES_*` variable. |
+| **B3: model-written text becomes a user row in another session** | Every body and reply is another model's output | Attributed and inert (D2). The sender comes from the session, never from model input. **Relabel** every body line starting with `📡`, and every Hermes control-frame opener, the way hosted rooms do (`gateway/hosted_room_discussion.py:39-48`; required by Trial Q2). Intercom's existing defence breaks only `📡 INTERCOM`, which no longer matches its own `📡 hermes@` header (`intercom:inbox.py:154-181`), so it is replaced. Never `display_kind: "hidden"`. |
+| **B4: the messaging gateway** | (a) Mail now steers or interrupts a gateway turn. Today internal events always queue, because "plugin events carry untrusted payload text" (`gateway/run_busy.py:843-849`). (b) Text a platform user typed can become mail from that session to Alex's other sessions. (c) SM-Q15 posts mail into a chat | (a) Only with the plugin's `allow_gateway_injection: true`, and still with `allow_gateway_control=False`: no slash commands, approvals or bang input. (b) The header names the sender session and its source (for example `telegram`), and the authority line applies. (c) Is a data-class question for security at Spec: mail from other sessions posted into a group chat leaves the machine (O7). |
+| **B5: identity** | `act_as` credits agent-key turns to Alex | The sender is named in the header and the record. |
+| **B6: profile** | Socket serve threads and reply threads run outside a turn | They bind the plugin manager's profile (`propagate_context_to_thread`, or the manager's `home_path` scope). The registry and the record live under that profile's `HERMES_HOME`. A dashboard that serves several profiles delivers through its socket only to sessions of the profile that loaded intercom; others are refused (`no-endpoint`). Cross-profile is out of scope (O14). |
 
-Security reviews B1–B4 at Spec.
+### D1: the core seam
 
-### D1: how steered mail is framed
+```python
+ctx.inject_message(content, role="user", *, session_key=None, origin=None,
+                   mode=None)   # mode: None | "interrupt" | "steer" | "queue"
+```
 
-Hermes wraps every steer in `[OUT-OF-BAND USER MESSAGE — a direct message from the user …]`
-(`agent/prompt_builder.py:561-579`, `steer_user_row` at `:585-591`). `STEER_CHANNEL_NOTE`
-(`:594-611`), which every session with tools carries, says that marker has "the same authority
-as their original request". The caller cannot choose another frame: `session.steer` passes only
-`text` (`tui_gateway/methods_session_interrupt.py:137-172`), and `AIAgent.steer(text)` joins
-pending steers under one marker (`agent/interrupt_control.py:267-278`).
+- `mode=None` keeps today's behaviour exactly, so existing plugins see no change (the plugin
+  compatibility contract).
+- With a mode, every host applies the **strongest supported mode at or below the request**
+  (interrupt > steer > queue), and an idle session starts a turn.
+- It returns a result that is truthy when a host accepted. Its fields are `applied`
+  (`interrupt`/`steer`/`queue`/`start`), `detail` (`redirect` / `hard-interrupt`) and `reason`
+  when refused.
 
-| Option | Steered mail | Queued and started mail | Core change | v0.23 rebase | Hermes Mobile | Settled decisions |
-|---|---|---|---|---|---|---|
-| **A′. Header only, written as a forwarding note (chosen)** | Inside the user frame. The first line says it is forwarded mail from session "X", not Alex's instruction. | Same header. These are plain user turns, so the header is the only marker on these paths anyway. | None | None | The app strips the leading steer marker (`ui/chat/ChatTranscriptMerge.kt:17-39`), so the header is the first visible line. | Keeps 1 and 3 |
-| C. Fork patch: `session.steer` takes a `kind`/`author` that selects a peer marker, plus a second system note | Own frame, told it is not the user | **No change.** Still plain user turns. | About 100 lines across `prompt_builder`, `interrupt_control`, `methods_session_interrupt`, and a new system-note paragraph | Conflicts. v0.23 stores steers as per-part `(ticket, text)` entries (`git show v0.23.0:agent/interrupt_control.py`, `steer` at line 310). | Shows the new marker literally (it strips only the old one). | Needs a real blocker and Alex's agreement (decision 1) |
-| Q. Queue instead of steer | Never steered | Plain user turns | None | None | Fine | **Breaks decision 3** ("steer where they can") |
+| Host | `interrupt` | `steer` | `queue` | Idle | Change |
+|---|---|---|---|---|---|
+| **`tui_gateway`** (dashboard, desktop, Ink TUI) | `_handle_busy_submit` in interrupt mode: redirect when `_supports_active_turn_redirect`, else queue then a hard interrupt | `agent.steer`; refused → queue | Queued submit, **with the accept-time row** | Starts a turn (drain) | `_handle_busy_submit` takes an explicit `mode` (today only config or `queued`, `tui_gateway/session_auto_continue.py:400-455`), and the injector calls it instead of the bare `_enqueue_prompt`. Compression keeps demoting to queue, reported as applied `queue`. A lazy or closing session returns "not hosted", so the sender falls through to the wake path. |
+| **Classic CLI** | `agent.redirect` when supported, else `_interrupt_queue` (hard interrupt, message runs next) | `agent.steer`; refused → `_pending_input` | `_pending_input` | `_pending_input` starts a turn | `inject_message` goes through the typed-input routine (`hermes_cli/cli_tui_mixin.py:1505-1551`) with the mode passed in, instead of `busy_input_mode`, and returns the applied mode. Today's "busy → always `_interrupt_queue`" (`plugins_injection.py:19-23`) applies only to `mode=None`. |
+| **Messaging gateway** | `_resolve_busy_steer_or_redirect`, then `_interrupt_running_agent_for_busy_event` | Same resolver | FIFO `_queue_or_replace_pending_event` | A new turn in the chat | An injected event carries `delivery_mode`. The internal-event branch (`run_busy.py:843-849`) honours it only for plugin injections that set it, still with `allow_gateway_control=False`. Without a mode, internal events keep queueing. |
 
-**Decision: A′.** Why:
-- The outer frame is not false. The channel really is Alex's: his agent key, his plugin, his
-  operator identity through `act_as`. What must not happen is reading the *content* as his
-  instruction. A header that says "forwarded from session X, a peer; not Alex's instruction;
-  carries no approval" is an email forward. It sits inside a user frame without contradicting
-  it.
-- C would separate one path of three. Queued and started mail are plain user turns with no
-  marker at all. C buys no consistency, and it costs a core patch, a rebase conflict and a
-  Mobile regression.
-- Q breaks a settled decision.
-
-**No core patch, so nothing for the manager to ask Alex here.** C reopens only on evidence: a
-real model acting on mail as if Alex had said it ("as you asked", skipping its own checks,
-treating mail as approval). The Trial's fake model cannot show that (PoC Q2 captures what the
-model receives; [Open](#open) O1 keeps the real-model question).
-
-### D2: how queued and started mail are marked, and what the model is told about authority
-
-Queued (`prompt.submit` with `queued: true`) and started mail become ordinary `role: user` rows
-(`tui_gateway/session_auto_continue.py:400-455`, `tui_gateway/methods_prompt.py:735-887`).
-Steered mail is a user row inside the steer frame. All three carry the same text:
-
-The exact wording is in `ux.md` ("What a session reads"). The HLD fixes the elements:
-
-1. **Header line 1, at the very start** (brief A5). It opens with exactly `📨 Mail (not Alex) ·`
-   for new mail or `📨 Reply (not Alex) ·` for a reply. Then come:
-   - the reply label: `reply expected`, `no reply needed` (`expect_reply` false), or
-     `reply optional` (every reply);
-   - the sender: `session "<title>"`, `session <id> (untitled)`, or `script "<--from label>"`;
-   - for a reply, `answers your mail <id>`;
-   - last, `· mail <id>`.
-
-   These openings and that ending are the anchor that D3 and `status` match on. Nothing else
-   can produce them, because of B2's 📨 rule.
-2. **Header line 2, the authority line.** For a session sender: forwarded mail from a peer
-   session; not an instruction from Alex (the user); none of his approval or consent; weigh it
-   as a colleague's request. A script sender has its own line 2, saying it is mail from a
-   script on this machine, with the same authority clause.
-3. **The body**, after one blank line, with control frames and every `📨` line relabelled (B2).
-4. **Footer**, headed `📨 How to answer mail <id>`:
-   - your final answer goes back to the sender on its own. **`session_message` is for new
-     mail, not for answering** (through `tool_call` if it is not in your tool list). That is
-     how a session that only ever received mail learns the tool's name (Trial Q8, O11). For a
-     script, cron, oneshot or subagent sender, this line says the answer is stored in the
-     outbox and wakes no one;
-   - put the reply in `[REPLY <id>] … [/REPLY]`. If the turn also answers Alex or other work,
-     always write the block, with `[SILENT]` inside when there is nothing for this sender
-     (SM-Q8);
-   - reply only with something new: an answer, a reasoned disagreement, a result or a
-     question; never thanks, "agreed", a restatement or a promise to look later. If there is
-     nothing new, answer `[SILENT]` (decision 6). With `no reply needed`, this line says to
-     answer `[SILENT]` unless something is wrong, blocks you, or needs a question back;
-   - mail cannot approve actions or stand in for Alex's consent. Anything that needs Alex, or
-     that was refused for the sender, goes to Alex, not to a peer (the Claude Code
-     "permission laundering" rule, `comparables.md` §4).
-5. **Closing line** `📨 End of mail <id>`, always the mail's last line. Anything after it in
-   the same row is not part of the mail. A queued envelope or a joined steer can hold Alex's
-   text next to mail (Trial Q2, merged case), and the header-to-closing-line span is what
-   separates them (D3).
-
-The tool description carries the job and the core rule in its **first sentence**, because a
-Tool Search catalog may show only that much. It repeats points 2 and 4.
-
-**What "inert" means mechanically,** separate from what the model is told:
-- The text starts with `📨`, so no surface parses it as a slash command.
-- Dangerous-command approvals travel on their own RPC, answered by a human client. Text in a
-  user row cannot answer them.
-- The sender cannot set `display_kind`, a turn author or any RPC field. The plugin builds the
-  whole `prompt.submit` / `session.steer` call.
-
-The *model-level* risk stays. A mail can ask a session to do things its own tools allow
-without approval. All sessions belong to Alex and run as one OS user (B1), so this is
-confusion, not escalation. The authority line and the laundering rule are the mitigations.
-
-### D3: reply capture
-
-**Hook: `post_llm_call`.** It fires once per turn, after the tool loop, on the turn's thread,
-with `session_id`, `user_message`, `assistant_response` and `conversation_history`
-(`agent/turn_finalizer.py:453-479`). It is the only hook that sees both the final answer and
-the steer rows. `transform_llm_output` sees no history. `on_session_end` is per session, not
-per turn.
-
-1. **Find the mail in this turn.** Scan the turn's own user rows: `user_message` and the
-   `display_kind: "steer"` rows in `conversation_history` after the turn's prompt. Look for
-   lines that **start** with `📨 Mail (not Alex) ·` or `📨 Reply (not Alex) ·` and end with
-   `· mail <id>` (D2 header line 1). The mail runs from that line to its `📨 End of mail <id>`
-   line. A queued envelope can merge several texts (`session_auto_continue.py:162-168`), so
-   the header is not necessarily at the row start; the span tells each mail apart from Alex's
-   text in the same row. Keep a mail id only if
-   its outbox row targets this session (or its compression lineage) and has no reply yet.
-   That covers:
-   - an accepted steer;
-   - a steer parked during compression;
-   - a leftover steer requeued as the next turn's plain text (`turn_finalizer.py:745-749`,
-     `prompt_turn.py:444-447`), whose reply comes from that next turn;
-   - queued mail merged with other text;
-   - a quoted header, which is skipped because its target or reply-state check fails.
-
-   The Trial confirmed every path above except the compression-parked steer, which was not run
-   (`poc/poc.md` Q3). It also showed the line-start anchor alone matching a forged header in a
-   body. So the outbox target and "no reply yet" check, plus header relabelling (B2), are both
-   required.
-2. **Take the reply for each mail.**
-   - the matching `[REPLY <id>] … [/REPLY]` block; otherwise
-   - the whole final answer (SM-Q8 option 2). A mail steered into one of Alex's own turns
-     gets that turn's final answer only when the model wrote no block.
-3. **Silence.** Each of these stores `reply_state = silent` and sends nothing (decision 4):
-   - a block that is empty or `[SILENT]`;
-   - with no block, an empty answer;
-   - with no block, an answer that is `[SILENT]` read the way cron reads it: the whole answer,
-     or its first or last line (`SILENT_MARKER`, `cron/scheduler.py:526`).
-
-   `[SILENT]` in the middle of a sentence is content. `expect_reply = false` does not change
-   this rule: a non-silent answer to a "no reply needed" note still goes back.
-4. **Store the reply first, then deliver it.** The hook does only outbox work on the turn
-   thread. A reply that should go back starts a short-lived daemon thread
-   (`propagate_context_to_thread`) that builds a reply mail (new id, `in_reply_to`) and calls
-   `P1.deliver()`. Turn finalisation never waits on a resume. The reply mail's own row records
-   its result like any mail. A reply that could not be delivered (for example 4090, sender
-   open in a terminal) is that row's `error`, and `list` shows `reply: <id> not delivered
-   (<code>)`. Nothing retries it. A restart while that thread runs loses the delivery, and the
-   outbox shows the reply stored with no result on its reply row.
-5. **Who gets woken** (SM-Q9 option b): the sender's session source decides.
-   - `cron`, `subagent` or `oneshot` senders: store only.
-   - CLI senders: store only; they have no session (brief A4).
-   - Everyone else, by decision 4: steered into a busy sender, queued, or a started turn.
-   Owner sessions are source `cli`, so a closed terminal never stops their reply.
-
-A reply is itself mail. It carries the same footer and can be answered, so a debate runs until
-one side writes `[SILENT]` (decision 5). Nothing counts rounds.
-
-| Alternative | Rejected because |
-|---|---|
-| The target replies with the tool (SM-Q8 option 3) | Contradicts decision 4 ("automatically"), and costs extra tool turns. |
-| Match only `user_message` | Misses steered mail, which is the default path for a busy owner. |
-| Match the mail id anywhere in any row | Replayed history and quoted mail would trigger replies. The line-start anchor plus the outbox check prevent that. |
-
-### D4: delivery at send time
-
-**One shared copy (brief A2): move the code into an importable fork module (P1).**
-
-| Option | Cost | Failure surface | Chosen |
+| Seam option | For | Against | Chosen |
 |---|---|---|---|
-| **Move `_rpc`, `_deliver`, `_wait_started` and the resume step into a fork module; the script becomes a wrapper** | One more touch of the script from `1516a52669`. Its tests (`tests/scripts/test_dashboard_dispatch_delivery.py`) move with the code. | Typed exceptions and an outcome object, in process | **Yes** |
-| Run the script as a subprocess per mail | A Python start plus the `websockets` import per mail, a temporary prompt file, and finding the install checkout and venv from inside a plugin | Exit codes and stderr text. Its `sys.exit` on a bad key turns into parsing text. | No |
-| Load the script by file path with `importlib` | No move | Private names, and `sys.exit` inside a tool thread | No |
+| **`mode=` on `inject_message`, fallback in the host, applied mode returned** | One small, additive change; each host already has the three behaviours for typed input; feature-detectable; the same shape as closed #83661, but narrower | The return type grows from `bool` to a truthy result object | **Yes** |
+| #83661's full shape (`mode` + `target_session` + `on_session_open` + slash-command context) | Upstream already saw it | Several surfaces nobody here needs; its author closed it | No |
+| A new `ctx.deliver_message()` method | Clean return type | A second API for the same job; the compatibility rule prefers extending | No |
+| No seam; intercom reaches into host internals (today's GC and private fields) | No core patch | Cannot address one of many dashboard sessions; breaks on every refactor; cannot be upstreamed | No (this is the "real blocker") |
 
-The build branch first takes `1516a52669` (branch `alex/dispatch-steer-queue`) by merge or
-cherry-pick, so its authorship survives. Today it is not on `integrate/session-mail`. The move
-follows in its own commit.
+**Feature detection:** intercom checks `inspect.signature(ctx.inject_message)` for `mode`.
+Without it (an older Hermes), intercom keeps its current CLI-only delivery for CLI targets
+(minus the caps). Dashboard, TUI and gateway targets are refused with `no-seam`, and nothing is
+parked. So the process-wide `pre_llm_call` drain never puts mail into the wrong session.
 
-**Thread and event-loop safety.** `P1.deliver()` is synchronous. It runs its coroutine with
-`asyncio.run` on a **fresh thread** wrapped in `propagate_context_to_thread`, and joins it.
-- The `session_message` handler is registered sync (`is_async=False`). An async handler on a
-  thread that already runs a loop goes through `model_tools._run_async`, which gives up after
-  300 seconds (`model_tools.py:94-135`, `future.result(timeout=300)`). One send can take up to
-  about 420 seconds: resume, steer and submit at 60 seconds each, plus a 240-second start
-  wait. Those are timeouts, not caps.
-- A fresh thread works the same whether or not the caller's thread already runs a loop. The
-  messaging gateway runs tools under one, a CLI does not, and a dashboard turn's tool thread
-  may hold an idle thread-local loop. That gives one code path for the tool, the CLI and the
-  reply thread.
-- **A tool inside a dashboard-hosted turn that connects back to the same dashboard does not
-  deadlock.** The dashboard answers each WebSocket RPC on a worker thread
-  (`await asyncio.to_thread(server.dispatch, …)`, `tui_gateway/ws.py:319-333`). The turn runs
-  on its own thread (`methods_prompt.py:879-886`). So the sender's blocked tool thread is
-  neither the server loop nor the RPC worker that must answer it. PoC Q7 checks this under
-  load.
-- **Self-mail** (a session mailing itself, or a reply into a sender whose own turn is
-  finishing): `session.resume` takes the fast path for a live session
-  (`tui_gateway/methods_session.py:1066`). An accepted steer lands after the current tool
-  batch. A late one becomes the next turn. Checked in PoC Q3.
-- **With `dashboard.turn_isolation` on**, the turn and its tool run in a compute-host child.
-  Delivery is still a loopback client, so nothing changes. The setting is off by default
-  (`hermes_cli/config_defaults.py:1005`).
+**Tests (fork, `scripts/run_tests.sh`):**
+- one behaviour test per host and mode: applied mode, fallback, idle start;
+- `mode=None` unchanged per host;
+- the tui accept-time row;
+- the gateway keeps `allow_gateway_control=False` and still queues internal events without a
+  mode;
+- compression demotion reported as `queue`.
 
-**What the sender sees.** The tool is `session_message(to, message, expect_reply=true)`. It
-returns JSON: the mail id, the target's title and id, the outcome, and a `message` sentence
-(wording in `ux.md`, "Tool results"). Every result is final: there is no "pending" or "will
-retry". The CLI is in "CLI" below.
+Each test is proven red on the base.
 
-| Outcome | When | Sender is told | Outbox `result` / `detail` |
-|---|---|---|---|
-| `steered` | `session.steer` answered `queued`: accepted, or parked behind a compression | Delivered into "X"'s running turn; its final answer comes back as mail | `steered` |
-| `queued` | Steer refused; `prompt.submit` with `queued: true` queued it | Queued behind "X"'s current turn; the reply comes after it runs. Lost if the dashboard restarts first. | `queued` |
-| `started` | The target was idle; a turn started. The call returns after the first agent event, or after 240 seconds. | Started a turn in "X", or "no agent activity yet, the turn may still be building" | `started`, plus the first event type or `no-activity` |
-| `refused` | Nothing sent: no match, an ambiguous match (with candidates), or an empty body | Why, with the candidates. "Send again with an exact title or id." | `refused`, reason |
-| `error` | The dashboard is unreachable, the key is unreadable, an RPC timed out, or an RPC error such as `SESSION_NOT_OWNED`. A command-line process holding the target shows up as **4090 on `prompt.submit`**, after a successful resume and a refused steer; the CLI's turn is untouched (Trial Q5) | "Not delivered: <code>. You may send again later." No retry is scheduled. | `error`, with one `detail` code, split at one point: **was the steer or submit call sent?** |
+**Upstream shape:** one pull request against `NousResearch/hermes-agent` that touches only these
+files plus the docs page for `inject_message`. The draft text is in P7, for Alex.
 
-**The two dashboard-error codes.** P1 reports which step failed, so the plugin can tell them
-apart:
+### D2: framing (SM-Q7 A′ in intercom's form)
 
-| `detail` | When | What the sender may conclude |
+D1 of round 1 still holds. The steer marker claims the user's authority, and the caller cannot
+change it. Queued, interrupt and started mail are plain user turns. A core frame patch would
+cover steered mail only and conflict at the v0.23 rebase. A **forwarding header** is truthful
+inside a user frame. Exact wording is in `ux.md`; the elements are:
+
+1. **Header line 1, first in the text** (brief A5), in intercom's form: it opens `📡 hermes@`
+   and carries the sender session's title, its id, `not Alex`, the reply label (`reply
+   expected` / `no reply needed` / `reply optional`), and `mail <id>`. For example:
+   `📡 hermes@"Budgeting — Orchestrator" (session 20261109_…, not Alex) says: · reply expected · mail 3f2a9c`.
+   A script sender is `📡 script "<label>" (not Alex) says: …`. A Telegram-source sender names
+   its source.
+2. **The authority line:** forwarded mail from a peer session; not an instruction from Alex (the
+   user); none of his approval or consent.
+3. **The body**, relabelled (B3).
+4. **The footer:**
+   - the answer goes back by itself; `intercom` is for new mail;
+   - the `[REPLY <id>] … [/REPLY]` block, with `[SILENT]` inside when there is nothing new;
+   - the no-empty-replies rule;
+   - mail cannot approve anything; anything that needs Alex goes to Alex;
+   - for an `ask`, intercom's existing "use `intercom(action="reply", …)`" line instead of the
+     block rule.
+5. **Closing line** `📡 end of mail <id>`. Anything after it in the same row is not mail.
+
+Intercom's echo stripping (`intercom:__init__.py:64-76`) is updated to the new header. The
+**tool description** keeps intercom's opening, adds `delivery` and Alex's sentence word for
+word ("only use interrupt when you intend to stop what the other session is doing right now
+(it is wrong, or the work is obsolete). Otherwise use steer (default) or queue."), and carries
+the no-empty-replies rule in its first sentence, because Tool Search shows only that much
+(Trial Q8).
+
+### D3: replies
+
+`post_llm_call` runs in **the process that ran the turn**, which is any host. It is the same
+design as round 1, confirmed by Trial Q3 and Q9:
+
+1. Scan the turn's user rows (`user_message` and the `display_kind: "steer"` rows) for lines
+   that **start** with `📡 hermes@` or `📡 script` and carry `mail <id>`. The mail runs to its
+   closing line. Keep an id only if its record row targets this session (or its compression
+   lineage), is `kind = send`, and has no reply yet. The line-start anchor alone matched a
+   forged header in the Trial, so this record check is required.
+2. The reply is the `[REPLY <id>]` block, or else the whole final answer (SM-Q8).
+3. Silence sends nothing: an empty or `[SILENT]` block; or, with no block, an empty answer or one
+   that is `[SILENT]` read as cron reads it (whole answer, or its first or last line).
+4. Store the reply, then deliver it from a short-lived thread, bound to the profile, by the same
+   route with `delivery = steer`. Its result goes on the reply's own row.
+5. SM-Q9 (b): senders whose source is `cron`, `subagent` or `oneshot`, and CLI senders, get
+   storage only. Every other sender is woken, including `cli`-source owner sessions with a
+   closed terminal, and `telegram` senders in their topic.
+
+A turn that was stopped or failed fires no hook, so nothing is sent (Trial Q9). A debate runs
+until one side writes `[SILENT]`; nothing counts rounds. `ask` keeps intercom's explicit
+`reply` and its in-memory waiter (SM-Q16 a).
+
+### D4: routing, the receipt and the CLI
+
+**Routing**, first match wins:
+
+| Step | Test | Delivered by |
 |---|---|---|
-| `not-reachable` | Before the steer or submit call was sent: the connection failed, the key was unreadable, or resume failed or timed out | Nothing was delivered; sending again is safe |
-| `delivery-unknown` | The steer or submit call was sent and got no answer: the dashboard restarted, or the call timed out | The mail may have landed. Run `status` before sending again. |
-| the dashboard's code (e.g. `4090`) | The call was answered with an error | Not delivered |
+| 0 | Target is the sender's own session | Refused (`self`). Intercom refused the whole **process**; now only the session is refused, so two dashboard chats can mail each other |
+| 1 | A live lease for the stored id in `runtime/active_sessions.json` | Its `pid`. If that is the sender's own pid, P1 is called in-process. Otherwise intercom connects to the socket registered for that pid. A pid with no intercom entry (a process started before the deploy) → `error no-endpoint`: "it receives mail after its next start" |
+| 2 | No lease, and the session's source is a messaging platform or it has a `gateway_routing` row | The registry entry with role `gateway`, which calls `lookup_by_session_id` and then P1 with that session key. No running gateway → `error no-gateway`. It never falls through to the dashboard, which would answer outside the chat |
+| 3 | Live nowhere | P5 wake (fork): resume, then submit, then wait for the start. Requested `interrupt`/`steer` on an idle session applies `start`. No dashboard → `error no-dashboard`. Upstream intercom without P5 returns intercom's "no live peer" |
 
-A steer that is *refused* (an answered error, or `rejected`) is not a failure. The rule moves
-on to submit, as at `1516a52669`.
+A gateway turn's lease is keyed by the gateway session key, so step 1 never matches it; step 2
+handles it.
 
-**CLI** (`hermes session-mail send | status | list`; full surface in `ux.md`, "Command line").
-- **`send`** prints one readable line by default: the mail id, the target, and the outcome in
-  words. The same JSON as the tool comes with `--json`. Refusals and failures go to standard
-  error. `--no-reply` sets `expect_reply = false`.
-- **Exit codes**, the same with `--json`:
+| Routing option | For | Against | Chosen |
+|---|---|---|---|
+| **Lease `pid` → per-process socket** | Hermes already keeps "at most one live owner" per session; intercom keeps one entry per process; nothing to sync on compression or reaping | Gateway idle sessions need step 2 | **Yes** (Refine round 4) |
+| One intercom entry per live session | Direct lookup | Must track every park, unpark and compression | No |
+| Outbox as a bus with a poller per process | No sockets | A worker and polling; superseded by Alex's base | No |
 
-  | Code | Meaning |
-  |---|---|
-  | 0 | `steered`, `queued` or `started` |
-  | 1 | `status`: no such mail id |
-  | 2 | Usage error |
-  | 3 | `refused` |
-  | 4 | `error` 4090: the target is held by a command-line session |
-  | 5 | `error` `not-reachable`, or another answered error |
-  | 6 | `error` `delivery-unknown` |
+**Exactly once:** only the process named by the lease (or the gateway) delivers (brief A8).
 
-  Every outcome except 1 and 2 is recorded in the outbox.
-- **`status <id>`** prints the outbox row, including the reply and, for a reply, `in reply
-  to`. When the result is empty (in flight, or the sender was cut off) or `delivery-unknown`,
-  `status` also **reads the target's transcript, read-only**. It opens `state.db` read-only,
-  follows the target's compression lineage, and looks for a user row with a line that starts
-  with that mail's header line 1 and ends `· mail <id>`: the same anchor as D3. A quoted id or
-  a relabelled lookalike does not match. It prints "found in the target's transcript
-  (<time>)" or "not found (yet)". The accept-time row (Persistence) is what makes this work.
-  It writes nothing, retries nothing, and sets no timer.
-- **`list`** shows the newest mail first, in a default 24-hour window (`--since`). Its `reply:`
-  column is filled by joining each mail to its reply row: `none recorded`, `silent`,
-  `stored`, the reply's id, or `<id> not delivered (<code>)`.
+**Timeouts, not caps:**
+- Intercom's 5-second exchange timeout becomes long enough for a host to accept (Spec sets it;
+  acceptance does not wait for a turn).
+- A timeout after the request was sent is `delivery-unknown`.
+- The wake path keeps P5's limits: 60 seconds per RPC and a 240-second start wait. So the tool
+  handler stays synchronous with its own short loop on a fresh thread (round-1 D4; Trial Q7).
 
-### D5: addressing, before and after DER-686
+**Receipt** (tool JSON, intercom style): `ok`, `receipt` (intercom's `delivered` / `held` /
+`refused`; `held` now means queued), `mail`, `to` (title and id), `requested`, `applied`,
+`applied_detail`, and a `message` sentence (wording in `ux.md`). Every result is final.
 
-Resolution, first match wins:
-1. `Home`, or any exact title (`get_session_by_title`, `hermes_state_titles.py:186-192`).
-   Titles are unique.
-2. A session id, or an id prefix (`resolve_session_id`, `hermes_state_sessions.py:942`).
-3. `@<project-slug>`: look up the slug in `projects.db`.
-   - **After DER-686:** the project row has an `owner_session_id` column and it is set. Use it.
-   - **Until then, or when it is empty:** the exact title `<project name> — Orchestrator`.
-4. Always resolve the result to the compression tip (`get_compression_tip`,
-   `hermes_state_compression.py:779-783`).
+**CLI** (`register_cli_command`, as `plugins/model-routing/__init__.py` does):
+`hermes intercom send|status|list`, with the round-4 output and exit codes.
 
-Several candidates (an id prefix that matches more than one session, or a title that is also
-another session's id prefix) are refused with the list (decision 2). The sender never mails a
-"best guess".
+| Exit code | Meaning |
+|---|---|
+| 0 | Delivered |
+| 1 | `status`: no such id |
+| 2 | Usage error |
+| 3 | Refused (address, empty body, self) |
+| 4 | The host refused, or `no-seam` |
+| 5 | `not-reachable`, `no-endpoint`, `no-gateway` or `no-dashboard` |
+| 6 | `delivery-unknown` |
 
-**Switch-over: by column presence, with no flag and no code change.** The resolver checks for
-`owner_session_id` when it reads the project row. DER-686's column is additive and
-downgrade-safe (DER-686 HLD, Persistence). When it lands, and its one-time seed sets the six
-owners, `@<slug>` follows the column. The title rule stays as the fallback for projects without
-an owner.
+`status` keeps its **read-only** transcript check (it opens `state.db` read-only and matches the
+header anchor). `list` joins reply rows.
 
-Until then, `@model-testing` fails, because that owner is titled "Model Master". The
-recommended SM-Q10 answer is to rename it (`/title`, no code).
+### D5: addressing (unchanged from round 1)
 
-### D6: deploy
+- An exact title or `Home`.
+- A session id or id prefix.
+- `@<project-slug>`: DER-686's `owner_session_id` when that column exists and is set, else the
+  exact title `<name> — Orchestrator`.
+- An **intercom endpoint name** (kept for compatibility; it maps to that process's single CLI
+  session, or is refused as ambiguous for a multi-session process).
 
-1. **Code:** item branches → `integrate/session-mail` → fast-forward into the deployed branch
-   `alex/v0.22.0-mobile-fixes` → `git pull --ff-only` in the install (vault rule 19). The pull
-   alone restarts nothing.
-2. **Enable:** house-infra `hosts/<dashboard-host>/hermes.py` adds `session-mail` to the
-   default profile's `plugins.enabled`, plus `settings.dashboard_url` only if the port is not
-   the default. It is applied the usual house-infra way. There are no live edits and no
-   symlinks into `<hermes-home>/plugins`.
+The result always resolves to the compression tip. An ambiguous match is refused, with the
+candidates. The switch-over to DER-686 is by column presence, with no flag.
+
+### D6: the gateway host (build step 2)
+
+| Item | Decision |
+|---|---|
+| **Endpoint role** | The gateway publishes its message host after its adapters start (`gateway/run_startup.py:1654`), later than `inbox.start()`. So intercom checks `manager.has_gateway_message_injector` (`hermes_cli/plugins.py:1242`) when it refreshes its registry entry, and sets `roles: [gateway]`. One pid can be both a dashboard and a gateway. |
+| **Routing** | `lookup_by_session_id` (`gateway/session.py:1311-1317`), then P1 with `session_key` and the mode |
+| **Silence** | A bare `[SILENT]` answer in a gateway chat must not be posted. Injected turns need the `internal_notification` kind (`gateway/response_filters.py:19-34`), or D3's silence rule applies first. Trial R4 checks it |
+| **SM-Q15 (b)** | Before the turn starts, one adapter send posts the header and body into the target's chat or topic. It needs security's view first (B4c, O7) |
+| **Bot-loop guard** | It counts bot-authored sources only; injection reuses the chat's human source (`gateway/authz_mixin.py:600-612`). It is not a cap |
+
+### D7: deploy (SM-Q14 as recommended)
+
+1. **Code:**
+   - The seam (P1) and the wake module (P5) land on alexderz/hermes-agent's
+     `integrate/session-mail`.
+   - Intercom changes land on alexderz/hermes-intercom's `integrate/session-mail` and are
+     vendored into hermes-agent as `plugins/intercom` with `git subtree add/pull --prefix
+     plugins/intercom` (no `--squash`, so authorship survives).
+   - hermes-agent's project-main is fast-forwarded into `alex/v0.22.0-mobile-fixes`, then
+     `git pull --ff-only` in the install (rule 19). There are no side repos and no symlinks
+     into `<hermes-home>/plugins`.
+2. **Enable through house-infra** (`hosts/<dashboard-host>/hermes.py`): `plugins.enabled` gains
+   `intercom`, plus `plugins.entries.intercom.allow_gateway_injection: true` and the dashboard
+   URL setting if the port is not the default.
 3. **Restarts:**
 
-| Process | Restart? | Why |
+| Process | Restart | Why |
 |---|---|---|
-| **Dashboard** | **Yes, once, announced.** List the busy sessions first. It cuts the phone off and kills running owner turns (DER-686 HLD, deploy section). | The dashboard is where target turns run, so it must load the reply hook. Its own sessions need the tool. Plugins are discovered at process start. **Tool Search changes the cost (Trial Q8).** Every plugin tool is deferred behind `tool_search`/`tool_describe`/`tool_call` when `tools.tool_search.enabled` is `auto` (the default; the live value was not read). A session created before the deploy keeps byte-identical tool definitions, so it pays **no cache miss**. Its pinned bridge listing does not name the new tool, but `tool_call` to it works. Sessions created after the deploy see it in the deferred catalog. If Tool Search is off live, the earlier analysis holds: the tool is appended to the pinned list (`tools/mcp_tool_agent.py:204-248`), and each resumed session pays one miss. |
-| Messaging gateway | **No** (recommended; O6) | Sessions it hosts (messaging chats, cron agents) get the tool at its next routine restart. Until then they send with `hermes session-mail send` from the terminal, which is a new process and loads the plugin. A gateway restart does not cut the phone off, so it could be done at the same time if Alex prefers. |
-| CLI / TUI processes | No | New processes load the plugin when they start. A running one gets it at its next start. |
+| Dashboard | **Yes, once, announced**; list busy sessions first. It cuts the phone off and kills running owner turns | It hosts most targets and must load intercom and the seam |
+| Messaging gateway | **Yes** (it does not cut the phone off) | It hosts gateway targets (build step 2); without it, step 2 returns `no-gateway` |
+| CLI / TUI processes | At their next start | Until then their sessions return `no-endpoint` (D4 step 1) |
 
-4. **Share the restart with DER-686** if both are ready in the same window: one cut-off instead
-   of two (O8).
-5. **Rollback:** remove the enable in house-infra and restart the dashboard, or revert the
-   fast-forward. The outbox file stays and harms nothing.
-6. **Relay skills (O11):** right after the restart, the manager replaces the dispatcher command
-   in the relay skills with `ux.md`'s one `session_message` line. Skills are the manager's
-   procedural notes, so this is a text edit made through the Hermes account, not product code.
-   On rollback, the manager restores the old line.
+4. **Cost:** with Tool Search on (the default), `intercom` is deferred, so there is no
+   cache miss but pre-deploy sessions are not told it exists (Trial Q8). With it off, there is
+   one miss per resumed session (O12).
+5. **Relay skills:** the manager replaces the dispatcher command with an `intercom` line at
+   deploy. This is a skill-text change, not product code.
+6. **Share the restart with DER-686** when both are ready.
+7. **Rollback:** remove the enable and restart, or revert the fast-forward. The record file
+   stays.
+
+### Host build order
+
+1. **`tui_gateway` (dashboard, desktop, Ink TUI) and classic CLI:**
+   - P1 for those two hosts;
+   - P2 (lease routing, many sessions per process, seam delivery, caps out, A′ frame);
+   - P3 (addressing, modes, record, replies, CLI);
+   - P5 (wake).
+
+   This covers the owner sessions, `Home`, dashboard chats, desktop and terminals.
+2. **Messaging gateway:**
+   - P1's gateway path;
+   - P4 (endpoint role, `lookup_by_session_id` routing, silence, SM-Q15).
+
+   It comes second because the live install has no gateway sessions, and because it carries
+   the B4 security question.
+3. **Upstream drafts (P7)** for Alex: the #81885 update, an intercom pull request, the seam pull
+   request.
+
+| Order option | For | Against | Chosen |
+|---|---|---|---|
+| **tui_gateway + CLI → gateway → drafts** | The most-used targets first; the gateway's security question is reviewed with a working base | Telegram later | **Yes** (brief, Refine round 4) |
+| All hosts at once | One deploy | The largest diff before any proof; the gateway has no live sessions to try | No |
 
 ## Persistence
 
 | What | Where | Durable? |
 |---|---|---|
-| Outbox (every mail and reply) | `<hermes-home>/plugin-data/session-mail/data.db`, through `plugins/plugin_storage.py` `plugin_db("session-mail")`. SQLite, WAL, mode 0600, short write transactions with a busy timeout, because the dashboard, CLI and gateway processes all write it. | Yes. Never pruned in v1. |
-| Mail as the target saw it | The target's transcript in `state.db`. The steer row or the queued row is written at accept time. | Yes (Hermes owns it) |
-| Queued mail not yet run | The dashboard's in-memory prompt queue, plus the accept-time row | No. Lost when a quiet detached turn ahead of it is reaped (reproduced, Trial Q1), lost on restart, and retired on the next resume (`hermes_state_sessions.py:546-559`). The outbox then shows `queued` with no reply. |
-| A reply being delivered | Memory of the reply thread | No. The outbox shows the reply stored but not sent. |
-| Plugin settings | `config.yaml` `plugins.entries.session-mail`, written by house-infra | Yes |
-| Agent key | Existing file, `dashboard.agent_key.file` | Unchanged |
-| Design records | git, `docs/session-mail/` on `integrate/session-mail` | Yes |
-| Work state | Linear, Epic `DER-701` (the manager writes it) | Yes |
+| The record | `<hermes-home>/plugin-data/intercom/` SQLite, 0600, WAL | Yes; never pruned in v1 |
+| Intercom registry and sockets | `<hermes-home>/intercom/sessions/` | Per process; dead pids swept on read |
+| Session leases | `runtime/active_sessions.json` (Hermes) | Per live session; read only |
+| Mail as the target saw it | The target's transcript in `state.db` (tui accept-time row; steer row) | Yes |
+| Queued mail not yet run | The host's queue: tui prompt queue, CLI `_pending_input`, gateway FIFO | **No.** It is lost on a restart, on a process exit, or when a quiet detached dashboard turn is reaped (Trial Q1). The record shows "delivered, no reply" |
+| Intercom's spool | Only on the no-seam CLI fallback | As today |
+| A reply in flight | The reply thread's memory | No; the reply row shows no result |
+| Settings | `config.yaml` `plugins.entries.intercom` (house-infra) | Yes |
+| Design | git `docs/session-mail/`; upstream drafts in intercom `docs/` | Yes |
 
 ## Worker rules
 
-- **Who implements:** builders on item branches cut from `integrate/session-mail`. Grok 4.7
-  through SuperGrok (`env -u XAI_API_KEY`), or Claude Opus for P1 and the reply hook. Reviewers
-  are fresh Claude Code sessions. Measure one agent run before running several in parallel.
-- **Order:** P1/P2 (take `1516a52669`, then move the code; script behaviour unchanged) → P3
-  addressing, outbox and framing → the tool and CLI → the reply hook → deploy. Each item lands
-  by merge-and-delete after its Review (`chunk.md`).
-- **HITL (Alex):** answers SM-Q7 to SM-Q11; renames "Model Master" if SM-Q10 stands; approves
-  the restart window and whether the gateway restarts; accepts the LLD after security.
-- **Tests:** `scripts/run_tests.sh` only, with a temporary `HERMES_HOME`. These are
-  behaviour-contract tests: addressing (incl. after `/compress`), the delivery table, reply
-  matching for each path in D3, silence, sender-source waking, and the outbox. There are 1–2
-  invariant tests per fix, proven red on the base. Tests never write to the real home.
+- **Who:** builders on item branches in each repo (`chunk.md`). Grok 4.7 through SuperGrok, or
+  Claude Opus for P1 and P2. Reviewers are fresh Claude Code sessions.
+- **Intercom work is in intercom's style:** module layout, docstrings, `tests/test_protocol.py`
+  conventions. Its 17 tests keep passing, except those asserting a removed cap, which change
+  with the cap.
+- **Hermes work:** `scripts/run_tests.sh`, a temporary `HERMES_HOME`, behaviour-contract tests
+  proven red on the base, the code-health ratchet, and no `HERMES_*` variables for behaviour.
+- **HITL (Alex):** SM-Q7 to SM-Q11, SM-Q14, SM-Q15, SM-Q16; the restart window; the exact
+  upstream text. The manager makes the relay-skill edit.
 - **Workers must not:**
-  - add any hold, cap, rate or duplicate filter, hop counter, retry, give-up timer or approval
-    gate;
-  - add a background delivery worker;
-  - use `ctx.inject_message` or `display_kind: "hidden"`;
-  - patch the steer frame or other core files from the plugin; C needs Alex (D1);
-  - add `HERMES_*` variables for behaviour; settings go in `config.yaml`;
+  - add caps, holds, retries, timers, gates or a worker;
+  - use the GC lookup or private fields where the seam exists;
+  - park mail for a session other than the addressed one;
+  - set `display_kind: "hidden"`;
   - take the sender from model input;
-  - keep a second copy of the delivery rule;
-  - cache `get_hermes_home()` across calls, or start a bare `threading.Thread` without the
-    profile context;
-  - exceed the code-health ratchet (CC ≤ 20, ≤ 300 lines per function, ≤ 2,000 per file);
-  - touch the live install, its config, its dashboard or any service; restart anything; or
-    write to Linear or GitHub. The deploy is a separate, announced step.
-- **Trial:** temporary `HERMES_HOME`, its own dashboard on another port, a fake model. A
-  real-model probe (O1) costs subscription quota and needs the manager's go-ahead first.
+  - put plugin-specific logic in core (P1 stays generic);
+  - post to GitHub;
+  - touch the live install or restart anything;
+  - write to Linear.
 
 ## Open
 
-Places where a different answer from Alex changes the shape, then things only a prototype or
-real use can settle.
-
 | # | Item | If the answer differs |
 |---|---|---|
-| O1 | **SM-Q7 (framing).** Designed on A′. | Choosing C adds a fork-patch item in core: `session.steer` takes a frame kind, plus a peer marker, a system-note paragraph and a v0.23 rebase item. It also needs a Hermes Mobile follow-up, since the app would show the marker literally. It is a new trust frame, so the HLD changes shape. C also reopens on evidence from real models (D1). |
-| O2 | **SM-Q8 (which text is the reply).** Designed on option 2. | Option 1: drop the reply-block parsing and the footer line, and send the whole answer to every mail in the turn. Simpler, but Alex's own long answers go to agents. Option 3: no reply hook at all. The tool description and footer change, replies cost tool turns, and decision 4's "automatically" would need Alex's word. |
-| O3 | **SM-Q9 (waking finished agent senders).** Designed on (b), a sender-source test. | (a): drop the source test, so every session sender is woken. (c): an `ended_at` test, which would stop replies to half the owner sessions today; not advised. |
-| O4 | **SM-Q10 (`@model-testing` before DER-686).** Designed on renaming the session. | An alias map adds a `config.yaml` setting and one resolver step. "Refuse until DER-686" changes nothing in code. |
-| O5 | **SM-Q11 (the phone shows mail as Alex's bubble).** Designed on "accept for v1". | "No" puts a Hermes Mobile change or an upstream issue into scope. That is out of scope here, so it would be a new chunk. |
-| O6 | **Gateway restart at deploy.** Recommended: no. | If yes, add the gateway to the restart list. It does not affect the phone. |
-| O7 | **Real models and the header inside the user frame.** The fake model cannot show it. Watch the first real exchanges; this is the reopen trigger for C. | — |
-| O8 | **One restart shared with DER-686.** Depends on both chunks being ready together. DER-686's kickoff command could also reuse P1, which avoids a third copy of the rule. | — |
-| O9 | **Interrupted or failed turns. Resolved by the Trial (Q9):** `post_llm_call` does not fire for an interrupted turn or a provider-failed turn. No reply is captured or sent, and the outbox shows the delivery with no reply. No rule is needed. Still unknown: whether a mail steered into a turn that is then interrupted is lost or handed back to the next turn. | — |
-| O10 | **Not triggered (Trial Q1).** A queued mail survived the sender detaching straight after the `queued` ack, while the detached turn kept producing. "Detach at once" stands. The quiet-turn loss (a detached turn idle past `ws_orphan_activity_stale_s` is reaped, and its queue with it) was reproduced. It stays a documented loss, with no fix in this chunk. | — |
-| O11 | **How senders learn the tool exists (Trial Q8). Settled: a deploy step, not a question for Alex.** With Tool Search on, `session_message` is deferred. Sessions created before the deploy are never told its name by Hermes, and every session sees its full description only through `tool_describe`. Three things close the gap. The reply rules ride in every footer (D2). The footer names `session_message` for new mail. And the relay skills that run the dispatcher today switch to naming the tool. That last one is a **skill-text change the manager makes at deploy**: skills are the manager's own procedural notes, not Hermes code, so no fork branch is involved. The wording is `ux.md`'s one line under "How a session learns the tool exists". See D6 step 6. | — |
-| O12 | **The live `tools.tool_search` setting** decides D6's cache cost (none if on, one miss per resumed session if off). Read it, read-only, when the deploy is planned. | — |
-| O13 | **UX alignment (round 4): no disagreements.** `ux.md` "For the architect" items 1–6 and its "Differences from the HLD" are folded into B2, the outbox, D2, D3, D4 and D6. None adds a cap, hold, retry or gate. Two UX open questions stay with Alex as UX choices; they do not change the HLD's shape. **U1:** the header's opening words; the HLD matcher anchors on whatever line-1 opening is chosen. **U2:** `expect_reply`/`--no-reply`; if left out, drop the field and the label, and nothing else moves. | — |
+| O1 | **SM-Q7:** A′ in intercom's `📡` form | "Intercom's frame unchanged": drop the authority line and "not Alex", which is weaker. C adds a core frame patch (steered mail only) and a Mobile follow-up |
+| O2 | **SM-Q8:** reply block, whole answer as fallback | 1: no block parsing. 3: no reply hook, so replies cost tool calls |
+| O3 | **SM-Q9 (b):** store-only for `cron`/`subagent`/`oneshot` | (a): every sender is woken. (c): `ended_at`, not advised |
+| O4 | **SM-Q10:** rename "Model Master" | Alias map: a config setting and one resolver step |
+| O5 | **SM-Q11:** the phone look is acceptable for v1 | A Mobile change would be a new chunk |
+| O6 | **SM-Q14 (asked elsewhere):** designed on vendoring with `git subtree` as `plugins/intercom` | A **git submodule**: the install checkout needs `--recurse-submodules`, and the pull and deploy steps change. **Installing from the intercom repo** as a user plugin breaks rule 19 (a side repo). Either way P1 and P5 stay in hermes-agent |
+| O7 | **SM-Q15 (b):** post the mail into the Telegram chat or topic | (a): answer only, with no B4c data-class review. With (b), security decides at Spec whether group chats are excluded. That is a data boundary, not a delivery gate |
+| O8 | **SM-Q16 (a):** `ask`/`reply` unchanged; automatic replies only for `send` | (b): a cross-process waiter. (c): drop `ask` and break intercom's tests |
+| O9 | **Seam upstream shape:** the truthy result object, and whether upstream wants steering of plugin events in the gateway behind a separate consent key | A separate key adds one config line, set by house-infra |
+| O10 | **Gateway endpoint role timing:** `has_gateway_message_injector` checked at refresh | If the signal is unreliable, the gateway runner would need to announce itself, which is a core hook |
+| O11 | **Relay skills:** settled; the manager edits them at deploy | — |
+| O12 | **The live `tools.tool_search` setting** decides the cache cost | — |
+| O13 | **Real models and the header inside the steer frame** (reopen trigger for C) | — |
+| O14 | **Multi-profile dashboard:** the socket serves the profile that loaded intercom; other profiles' sessions get `no-endpoint` | Serving every profile from one socket is cross-profile scope, so it would need a decision |
+| O15 | **One restart shared with DER-686** | — |
+| O16 | **v0.23 rebase:** miyu4u's unified-gateway transport may replace the socket lookup for tui sessions; P1 must be re-applied on v0.23's injection code | — |
 
-## PoC questions (Trial)
+## PoC questions (Trial round 2)
 
-**Trial decision: run it. Ran 2026-11-09:** `poc/poc.md`, run 3 passed 25 of 26 checks. Each
-row below gets its result in the last column. Design changes from the results are marked
-"(Trial)" in B2, D3, D4, D6 and O9–O12.
+The first Trial (`poc/poc.md`) covered the dashboard WebSocket path, framing, the reply hook,
+the reaper, a CLI-held session's 4090, Tool Search and debates. The new shape needs these
+answered. They are not run in this pass.
 
-Setup for all questions: a temporary `HERMES_HOME`, its own dashboard on a non-default port, a
-fake model that records each request, and the plugin enabled in that home only.
+Setup: the same as the first Trial (a temporary `HERMES_HOME`, a gated dashboard on a free
+loopback port, a fake model), plus the seam branch, the intercom branch copied into the temp
+home, a classic CLI process, an Ink TUI backend process, and a messaging gateway with a
+throwaway platform-adapter plugin in the temp home, modelled on `plugins/platforms/irc` and
+recording what it sends. The built-in webhook adapter is the fallback.
 
-| # | Question | Pass looks like | Trial result |
-|---|---|---|---|
-| Q1 | **Does a queued mail survive the WebSocket orphan reaper** when the sender detaches straight after the `queued` ack (`tui_gateway/session_lifecycle.py:937-1060`)? Cases: the running turn keeps producing; the turn has no client and goes quiet; the turn-end drain window (`prompt_turn.py:438-448`), as an observation. | The mail runs after the turn, unless the turn was stale for 600 seconds. Each loss case shows in the outbox as `queued` with no reply. | **Pass.** Ran after a producing detached turn; a quiet detached turn was reaped and the mail lost (expected case 1). |
-| Q2 | **What the model actually receives** for steered, queued and started mail: the full request the fake model sees. Steer marker plus header; plain queued row; queued text merged with other text; the body after control-frame relabelling. | The header is the first line inside the marker or row, and the authority line and footer are intact. A body containing `[/OUT-OF-BAND USER MESSAGE]` or a fake `📨` header arrives relabelled. | **Observed.** Header is the first line inside the marker or row; merged queue puts it mid-row; a body's close marker passes **verbatim** → relabel required (B2). |
-| Q3 | **Does `post_llm_call` see the right turn for steered mail?** Cases: a steer accepted mid-turn; a steer parked during compression; a late steer requeued as the next turn; queued mail merged with Alex-style text; self-mail; a reply into a sender whose turn is finishing. | Each mail id gets exactly one stored reply, from the turn that actually processed it, and goes to the right sender. Nothing fires for quoted or replayed headers. | **Pass, 5 of 6 paths** (compression-parked not run). Late steer → next turn's plain text, answered once. Forged header matched by the anchor alone → outbox check required. |
-| Q4 | **Idle start of a session not loaded in the dashboard:** resume, submit, `started`. How long is the sender's tool call held until the first agent event? | `started` with an event type. The time is recorded, and the turn shows in the dashboard. | **Pass.** `started` in 0.14 s (fake model). |
-| Q5 | **A command-line process holds the target session:** which RPC refuses (resume or submit), with which code, and the CLI's own turn is untouched. | `error SESSION_NOT_OWNED` reaches the sender and the outbox. No interrupt, no redirect. | **Pass.** 4090 on `prompt.submit`; CLI turn untouched; mail never reached the model. |
-| Q6 | **A second mail into a session whose turn was started by a detached first mail** must steer or queue. It must never trigger the detached-lease takeover, which hard-interrupts the old runtime's turn (`session_lifecycle.py:157-175`). | `steered` or `queued`. The first turn completes. | **Pass.** `steered`; first turn ran all steps; no takeover. |
-| Q7 | **Loopback from inside a dashboard turn:** while a tool handler delivers, and holds through a 240-second start wait, other clients' RPCs on the same dashboard are still answered. Optional: repeat with `dashboard.turn_isolation` on. | No stall, and the timings are recorded. | **Pass.** Other RPCs ≤ 0.021 s; tool thread had no running loop. The 240 s wait was not exercised (start returns at `message.start`). |
-| Q8 | **A session created before the plugin was enabled** lists and calls `session_message` after a dashboard restart, and pays one cache miss on its first turn, not one every turn. | The tool is present; the cache prefix is stable from the second turn. | **Fail as worded.** Tool deferred by Tool Search: no cache miss, callable via `tool_call`, but not named to pre-plugin sessions (D6, O11, O12). |
-| Q9 | **Interrupted or failed target turn:** does `post_llm_call` fire, and with what text (O9)? | Recorded; the Spec rule follows. | **Observed.** Hook does not fire for interrupted or failed turns (O9 resolved). |
-| Q10 | **Debate:** two sessions reply to each other for several rounds and stop at `[SILENT]`. The hook's thread does not delay the target's turn end. | The rounds end only at `[SILENT]`; turn end is not delayed. | **Pass.** 3 replies (started, steered, started), stopped at `[SILENT]`; hook ≤ 0.6 ms. |
+| # | Question | Pass looks like |
+|---|---|---|
+| R1 | **The seam's three modes on each host** (tui_gateway, classic CLI, gateway): `interrupt` (redirect vs a hard interrupt), `steer`, `queue`, and an idle start; the applied mode returned; `mode=None` unchanged | Each cell of D1's table is observed, and the tui path writes the accept-time row |
+| R2 | **A classic CLI session receives mail through intercom's socket and the seam**, with no GC lookup: `steer` lands without interrupting; `interrupt` redirects; `queue` waits | Yes, with the applied mode in the receipt |
+| R3 | **One dashboard process, several sessions, one socket:** routing by lease `pid`; mail to chat A never lands in B; two chats in one process mail each other in-process; a lazy session falls through to the wake path | No cross-delivery; in-process delivery works |
+| R4 | **Gateway sessions in the trial home**, with the fake adapter: idle → a new turn in the chat; busy → steer with `allow_gateway_control=False`; a bare `[SILENT]` is not posted; `lookup_by_session_id` after `/compress`; the endpoint role set after the gateway's host is published; the SM-Q15 post | Each one observed. The answer and the posted header appear in the adapter's recorded sends |
+| R5 | **Exactly once across hosts:** with a CLI, a dashboard and a gateway running, each mail is delivered once, by the right process; a process without intercom returns `no-endpoint` | One delivery per mail, with the right error |
+| R6 | **Replies from each host's `post_llm_call`** (CLI, Ink TUI, gateway) back to a sender on another host, including a steered mail | One reply per mail, to the right sender |
+| R7 | **Wake path from a non-dashboard sender** (a CLI process) through P5; with the dashboard stopped, `no-dashboard`; a gateway-source target with no gateway, `no-gateway` | As stated, with no fall-through to the dashboard for gateway targets |
+| R8 | **No-seam behaviour:** intercom on a build without `mode` keeps CLI delivery and refuses other hosts with `no-seam`, parking nothing | Nothing parked; clear errors |
+| R9 | **Intercom's own tests** on our branch | 17 pass, apart from the changed cap tests |
+| R10 | **A dashboard serving two profiles:** mail for the second profile's session is refused, and nothing leaks across homes | `no-endpoint`; files only under the first profile's home |
+| R11 | **Interrupt on a dashboard compute-host turn** (`dashboard.turn_isolation` on), optional | Redirect or a hard interrupt reported correctly |
 
 ## Risks
 
-- **The model obeys mail as if Alex had said it** (O1/O7). Mitigated by the authority line and
-  the laundering rule. The fix is option C, with Alex's agreement.
-- **Lost queued mail** on restart or reaper (Persistence, O10). The outbox shows it, and the
-  sender can send again.
-- **A start holds the sender's turn** for the target's agent build: normally seconds, at most
-  240 seconds (Q4).
-- **Fallback to the whole final answer** mails Alex's long answer to an agent when the model
-  skips the reply block (SM-Q8 option 2, accepted).
+- **`interrupt` misused** by a model: it would stop Alex's or an orchestrator's work. Mitigated
+  by Alex's sentence in the description and the default `steer`. No gate (decision 3).
+- **Untrusted gateway text** becoming mail that steers Alex's sessions (B4b). Mitigated by the
+  sender's source in the header and the authority line; security review at Spec.
+- **Pre-deploy processes** cannot receive mail until restarted (`no-endpoint`).
+- **Queued mail lost** on restart, process exit or reaper (Persistence). It is visible in the
+  record.
+- **Two repos and a subtree:** drift between `plugins/intercom` and alexderz/hermes-intercom if
+  a fix lands in only one. Rule: intercom changes land in alexderz/hermes-intercom first, then
+  `git subtree pull`.
