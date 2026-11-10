@@ -252,15 +252,17 @@ def _session_is_reapable(sid: str, session: dict) -> bool:
 
 def _queued_prompt_is_fresh(session: dict) -> bool:
     """A queued prompt on a recently active session is pending work: it drains at the idle boundary after the
-    turn's housekeeping. Bounded like the WS orphan reaper's queued budget, so a queue that never drains does
-    not pin the session; reaping one that still holds a prompt is logged."""
+    turn's housekeeping. Bounded by ``_QUEUED_PROMPT_SPARE_S``, so a queue that never drains does not pin the
+    session; the first time a stuck queue makes a session reapable is logged."""
     if not session.get("queued_prompt"):
         return False
     idle_s = time.time() - float(session.get("last_active") or 0.0)
-    if idle_s <= _WS_ORPHAN_REAP_GRACE_S * _WS_ORPHAN_QUEUED_MAX_POLLS:
+    if idle_s <= _QUEUED_PROMPT_SPARE_S:
         return True
-    logger.warning("reaper: session %s still holds a queued prompt after %.0fs idle; it is reapable",
-                   session.get("session_key") or "?", idle_s)
+    if not session.get("_queued_prompt_stale_logged"):
+        session["_queued_prompt_stale_logged"] = True
+        logger.warning("reaper: session %s still holds a queued prompt after %.0fs idle; it is reapable",
+                       session.get("session_key") or "?", idle_s)
     return False
 
 
