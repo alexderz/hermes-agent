@@ -3,13 +3,37 @@
 How others let one agent session message another. Written before locking the HLD shape.
 
 - Slug: `session-mail`
-- Brief / options map: `docs/session-mail/brief.md` (Refine: pass, round 3). The research note
-  in the Hermes Improvement vault (`research/session-messaging.md`, sections 1–2b) already names
-  these candidates; this page checks each one at its source.
-- Date: `2026-11-09`
+- Brief / options map: `docs/session-mail/brief.md` (round 6, Refine: pass, round 5). The
+  research note in the Hermes Improvement vault (`research/session-messaging.md`, sections
+  1–2b) names the first candidates; this page checks each one at its source.
+- Date: `2026-11-09` (round 2: intercom became the base)
 
 Agent Tincan was also named in the research. It is out of scope for this chunk (cross-machine
 agents, SM-Q6 "maybe later"), so it is not used as a comparable here.
+
+## The base, not a comparable: intercom and its forks
+
+Since Alex's decision "Build on intercom" (brief decision 1), `majordave/hermes-intercom` is the
+**base** we extend, through our fork `alexderz/hermes-intercom`. What it does, and what we change
+or add, is in the brief's mapping table and the HLD's parts P2 and P3. It is not listed below as
+a comparable.
+
+- `majordave/hermes-intercom` (MIT, implements #81885, last push 2026-09-04):
+  <https://github.com/majordave/hermes-intercom>
+- Our fork: <https://github.com/alexderz/hermes-intercom>
+- **Prior art: `miyu4u/hermes-intercom`** (4 commits ahead of majordave, 2026-11-04):
+  <https://github.com/miyu4u/hermes-intercom>
+  - It adds `gateway_peers.py`, a "same-workspace gateway transport with correlated replies",
+    and redesigns the frame into a readable header with a verbatim body.
+  - Its transport runs over v0.23's **unified** gateway (CLI, TUI, desktop and ACP sessions),
+    not the messaging gateway, so it does not reach Telegram.
+  - It needs `hermes_cli.gateway_client`, `discover_gateway_endpoint` and
+    `gateway.session_context.bound_session_key`. All three are in `v0.23.0`; none is in our
+    v0.22.0 base.
+  - **Steal later:** at the v0.23 rebase, its transport may replace our lease-and-socket
+    lookup for tui sessions, and its readable-header frame is worth comparing with our A′
+    header.
+  - **Won't copy now:** anything that depends on v0.23 APIs.
 
 ## 1. Hermes Bot Mode: `message_agent` and the live-owner mailbox
 
@@ -39,37 +63,10 @@ agents, SM-Q6 "maybe later"), so it is not used as a comparable here.
   - Delivery only at idle points (the poller claims a ticket only when no turn and no human
     prompt are pending). Settled decision 3 says steer right away, with no hold.
   - The hop loop guard. Settled decision 5 says no caps.
-  - The claim state machine. Without a worker there is nothing to claim. The outbox keeps one
+  - The claim state machine. Without a worker there is nothing to claim. The record keeps one
     delivery result instead.
 
-## 2. `majordave/hermes-intercom`
-
-- **Who / what** — A community Hermes plugin (MIT) implementing upstream issue #81885, "Local
-  cross-session messaging (intercom)". Last push 2026-09-04.
-  <https://github.com/majordave/hermes-intercom>
-- **What they did**
-  - One multiplexed tool, `intercom`, with `list`, `send` and `ask` actions.
-  - Each process registers a `0600` Unix socket and finds its live `HermesCLI` object with a
-    garbage-collector scan.
-  - An idle receiver gets the text in its input queue and starts a turn by itself. A busy one is
-    steered between tool calls, or the text is parked for the next turn through `pre_llm_call`.
-  - Every send returns a receipt: `delivered`, `held` or `refused`.
-  - A compact frame, `📡 hermes@<session-name> says:`, and echo suppression that strips quoted
-    headers. The README says the text is inert: it cannot approve actions or run slash
-    commands.
-  - Per-peer rate limit (6 per minute), a 120-second duplicate filter and a pending-queue cap.
-- **Steal**
-  - The delivery ladder, which matches Alex's rule: steer when busy, start a turn when idle.
-  - A synchronous receipt for every send, so the sender knows what happened.
-  - A one-line emoji frame that names the sending session, and stripping quoted copies of it.
-  - Stating plainly that delivered text cannot approve actions or run slash commands.
-- **Won't copy**
-  - One interactive CLI per process, found by a GC scan. Our targets live by the dozen inside
-    the one dashboard process. Intercom can only park mail there until the next turn.
-  - The rate limit, duplicate filter and queue cap (settled decision 5).
-  - Replies sent with the tool. Settled decision 4 says the final answer goes back on its own.
-
-## 3. `Sahil-SS9/hermes-walkie-talkie`
+## 2. `Sahil-SS9/hermes-walkie-talkie`
 
 - **Who / what** — A community Hermes plugin (MIT) for same-machine peer messaging between
   independent Hermes sessions, with groups and structured requests. Last push 2026-10-31.
@@ -89,13 +86,15 @@ agents, SM-Q6 "maybe later"), so it is not used as a comparable here.
   - "Never interrupt an active turn" as a hard rule.
   - The `unreachable` outcome as its own result, separate from a refusal.
 - **Won't copy**
-  - Its reliance on a core seam that upstream rejected. Settled decision 1 rules out a core
-    patch without a real blocker.
+  - Its larger seam (#83661: `mode` plus `target_session`, an `on_session_open` event and
+    slash-command context). We **steal its `mode=queue|steer|interrupt` shape**, now our one
+    core seam (brief decision 11, HLD D1), but only that argument. Our host falls back to a
+    weaker mode instead of returning False, and reports the mode it applied.
   - Groups, broadcasts, request tracking, inbox tools and a desktop panel. That is much more
     than Alex asked for.
   - Holding mail until the next boundary instead of steering it in.
 
-## 4. Claude Code cross-session messaging (`SendMessage`, `ListAgents`)
+## 3. Claude Code cross-session messaging (`SendMessage`, `ListAgents`)
 
 - **Who / what** — Anthropic's Claude Code: the `SendMessage` and `ListAgents` tools between a
   user's own Claude Code sessions and agent-team teammates.
@@ -119,7 +118,36 @@ agents, SM-Q6 "maybe later"), so it is not used as a comparable here.
 - **Won't copy**
   - A non-user frame produced by the harness. In Claude Code the harness owns the frame. In
     Hermes the steer frame is core code that the caller cannot choose
-    (`agent/prompt_builder.py:561-611`), and a core patch needs a real blocker (HLD, decision
-    D1).
-  - Inbox files under the user's home directory. Our delivery goes over the dashboard
-    WebSocket, so the phone sees the result.
+    (`agent/prompt_builder.py:561-611`). A frame patch would cover steered mail only (HLD D2,
+    SM-Q7).
+  - Inbox files under the user's home directory. Our delivery is made by the process that
+    hosts the target, through intercom's socket and the core seam.
+
+## 4. Upstream #106423 "peer session messaging" (and #136861, #123218)
+
+- **Who / what** — A pull request by a Hermes maintainer (open), its rebase onto current main
+  (#136861, open), and a broader variant (#123218, open).
+  <https://github.com/NousResearch/hermes-agent/pull/106423>,
+  <https://github.com/NousResearch/hermes-agent/pull/136861>,
+  <https://github.com/NousResearch/hermes-agent/pull/123218>
+- **What they did**
+  - An opt-in core toolset, `peer_messaging`, with `peer_sessions` (list recent sessions from
+    the session store) and `peer_send` (to an exact session id).
+  - A filesystem mailbox under `$HERMES_HOME/runtime/peer_messages/<session>/`. The activity
+    hook drains it into the existing mid-turn steer channel. An idle session gets the mail at
+    the start of its next turn; it does not start one.
+  - The injected text names the sending session and says it carries peer-agent, not user,
+    authority.
+  - Caps of 50 pending messages per inbox and 8,000 characters per message. #123218 refuses
+    gateway sessions. None of the three has automatic replies, and none is merged.
+- **Steal**
+  - Provenance stated in the text: the sender session, and "not user authority". That is our
+    A′ authority line.
+  - Riding the existing steer channel instead of new injection machinery, for the steer mode.
+  - Exact session-id targeting, and refusing unknown targets without side effects.
+- **Won't copy**
+  - A new **core** tool. The root `AGENTS.md` footprint ladder prefers a plugin, and Alex chose
+    intercom (decision 1).
+  - Waiting for the next turn instead of waking an idle session (decision 3: an idle target
+    starts a turn).
+  - The inbox and size caps (decision 5), and refusing gateway sessions (decision 9).
