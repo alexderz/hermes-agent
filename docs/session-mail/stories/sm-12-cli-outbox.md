@@ -2,20 +2,19 @@
 
 - Id: `sm-12-cli-outbox`
 - HLD / UX: `docs/session-mail/hld.md`, `docs/session-mail/ux.md` § "Command line"
-- Person: Alex, or a script that sent mail
+- Person: Alex, or a script that sent a message
 
 ## Required
 
-- **As** Alex, or a script that sent mail
-- **I want** `hermes session-mail status <id>` and `hermes session-mail list` to show every mail's sender, target, delivery result and reply
-- **So that** I can see who said what to whom, read an answer a script cannot be woken for, and spot mail that never got a reply
+- **As** Alex, or a script that sent a message
+- **I want** `hermes intercom status <id>` and `hermes intercom log` to show every message's sender, target, requested and applied mode, and reply
+- **So that** I can see who said what to whom, read an answer a script cannot be woken for, and spot messages that never got a reply
 - **Done when**
-  - [ ] `status <id>` shows from, to (title and id), sent time, delivery result (including `unknown`, explained as "no result recorded yet: still sending, or the sending process was cut off"), and reply: `no reply recorded`, `silent`, `stored`, `sent as mail <id>`, `stored, not delivered` (with the reply mail's id and code), each with its time and the reply text where there is one; for a reply, the mail it answers.
-  - [ ] For a mail whose delivery is `unknown` or `error (delivery unknown)`, `status` reads the target's transcript without changing it and adds `found in the target's transcript (<time>)` or `not found in the target's transcript (yet)`, matching only a line that starts with that mail's header line 1 and ends `· mail <id>` (a quoted id or a relabelled lookalike does not count).
-  - [ ] The "not found" advice tells the reader to run `status` again in a minute if the send ended under a minute ago or delivery is still `unknown`, as written in `ux.md`.
+  - [ ] `status <id>` shows from, to (title, id and host), sent time, delivery (applied, with `asked: …` when weaker, or `refused`, `error`, `unknown`), and reply: `no reply recorded`, `silent`, `stored`, `sent as message <id>`, `stored, not delivered` (with the reply message's id and reason), or for an `ask` `answered by reply`, each with its time and the text where there is one.
+  - [ ] For `unknown` or `error (delivery unknown)`, `status` reads the target's transcript without changing it and adds `found in the target's transcript (<time>)` or `not found in the target's transcript (yet)`, matching only a line that starts with that message's header line 1 and ends `· message <id>):`; the "not found" advice is as written in `ux.md`.
   - [ ] `status` of an unknown id exits 1 with a one-line message.
-  - [ ] `list` shows the last 24 hours newest first, one line per mail, with sender, target, result and reply state; `--since`, `--to` and `--from` narrow or widen it.
-  - [ ] Mail lost in a restart shows its delivery result with `no reply recorded`, and a reply lost in a restart shows `stored, not delivered`; neither ever shows as delivered and answered.
-  - [ ] A reply that could not be delivered (the sender was held by a command-line session, or the dashboard was down) shows on the original mail's `list` line as `reply: <id> not delivered (<code>)`.
-  - [ ] Neither command starts a turn; both take `--json`.
-- **Out of scope** — a dashboard Mail tab; deleting or editing outbox rows.
+  - [ ] `log` shows the last 24 hours newest first, one line per message, with sender, target, applied mode and reply state; `--since`, `--to` and `--from` narrow or widen it. A reply that was not delivered shows as `reply: <id> not delivered (<reason>)`.
+  - [ ] A message lost after handover shows its delivery result with `no reply recorded`, never as answered.
+  - [ ] `list` prints the live peers as the tool's `list` does.
+  - [ ] None of these starts a turn; all take `--json`.
+- **Out of scope** — a dashboard Mail tab; editing the record.

@@ -1,4 +1,4 @@
-# Story — The answer goes back by itself
+# Story — The answer to a send goes back by itself
 
 - Id: `sm-06-automatic-reply`
 - HLD / UX: `docs/session-mail/hld.md`, `docs/session-mail/ux.md` (J1, footer)
@@ -6,21 +6,17 @@
 
 ## Required
 
-- **As a** session that asked another session something
-- **I want** the target's answer to come back to me as mail, delivered by the same steer → queue → start rule, without anyone calling a tool
+- **As a** session that sent another session a question with `send`
+- **I want** the target's answer to come back to me as a message, steered into my turn (or starting one), without anyone calling a tool
 - **So that** I can delegate a question and act on the answer when it arrives
 - **Done when**
-  - [ ] When a turn that received a mail ends, the content of its `[REPLY <id>] … [/REPLY]` block is delivered to that mail's sender as a new mail whose line 1 starts `📨 Reply (not Alex)` and names the mail it answers.
-  - [ ] With no block for that mail, the whole final answer is sent.
-  - [ ] A turn that received two mails with two blocks sends each block to its own sender, and nothing else to either.
-  - [ ] When the mail was steered into Alex's turn, only the block (if present) is sent, not his whole answer.
-  - [ ] In a turn that holds both Alex's message and a mail, a block containing `[SILENT]` sends nothing, and for a mail that has its own block, only that block is mailed (a mail with no block of its own still gets the whole answer, per the fallback).
-  - [ ] The footer's second line tells the model to always write the block when the turn also answers Alex or other work, as written in `ux.md`.
-  - [ ] A sender acting on a reply can end the exchange with `[REPLY <reply id>][SILENT][/REPLY]` while its answer reports to Alex (J1 step 6).
-  - [ ] The reply is delivered steered, queued or started, like any mail, and the outbox links it to the mail it answers.
+  - [ ] When a turn that received a `send` ends, the content of its `[REPLY <id>] … [/REPLY]` block goes to that message's sender as a new message whose line 1 starts `📡 Not Alex · reply optional ·` and names `reply to your message <id>`.
+  - [ ] With no block for that message, the whole final answer is sent.
+  - [ ] Two messages with two blocks in one turn: each block goes to its own sender, nothing else to either.
+  - [ ] For a message that has its own block, only that block is mailed; a `[SILENT]` block sends nothing, even in a turn that also answers Alex.
+  - [ ] Footer line 2 tells the model to always write the block when the turn also answers Alex or other work.
+  - [ ] A sender acting on a reply can end the exchange with `[REPLY <reply id>][SILENT][/REPLY]` while reporting to Alex (J1 step 6).
+  - [ ] The reply is delivered with the default `steer` by the sender's host (or wakes it), and the record links it to the message it answers.
+  - [ ] Messages sent with `ask` get no automatic reply (sm-21).
   - [ ] Ending the target's turn does not wait for the reply to be delivered.
-- **Out of scope** — replies from the target calling `session_message` (SM-Q8 option 3); redelivering a reply lost in a restart.
-
-## Optional
-
-- Notes: built on SM-Q8 option 2. Other answers change this story (`ux.md`, Open questions).
+- **Out of scope** — replies by calling `send` (SM-Q8 option 3); redelivering a reply lost in a restart.
