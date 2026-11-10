@@ -15,5 +15,6 @@
   - [ ] Exit codes are 2 (usage: missing `--to`, neither or both of `--message` and `--file`, unknown `--delivery`), 3 (refused: ambiguous or unknown address, empty or whitespace-only body, own session), 4 (the host cannot take it), 5 (not delivered: no host, or not handed over), 6 (delivery unknown); error text goes to standard error.
   - [ ] `--json` prints the receipt object, on success and failure, with the same exit codes.
   - [ ] The header names the sender `hermes@script <--from>`, or `hermes@script cli` without `--from`.
+  - [ ] `hermes intercom send --help` shows, for `--delivery`, Alex's sentence on interrupt word for word.
   - [ ] `send` starts no turn in its own process.
 - **Out of scope** — a `--wait` for the reply (use `status`); retries.

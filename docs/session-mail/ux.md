@@ -97,6 +97,7 @@ The host applies the strongest mode it supports: steer, else queue. The receipt 
 **F3. The target's host cannot take the message.**
 - *The host runs Hermes without the seam* (`no-seam`, an older build): a classic CLI still gets intercom's own delivery (steer or start; interrupt falls back), but a dashboard, Ink TUI or gateway session is refused with a clear error: "Not delivered: "<title>" is open in a Hermes process that cannot take messages for this kind of session (it needs the injection seam). Nothing was sent." Nothing is parked for later, so it cannot land in the wrong session. CLI exit 4.
 - *The target is held in a way its host refuses* (for example, the waking path finds it just opened in a terminal and the dashboard refuses with 4090). The receipt names the host's reason. CLI exit 4.
+- *Intercom may not inject into this host* (`injection-off`): a dashboard, desktop, Ink TUI or gateway process whose config does not set `plugins.entries.intercom.allow_gateway_injection: true` (an upstream install, or before house-infra applies it). Hermes then refuses every plugin injection there, so nothing is queued either: "Not delivered: "<title>" is open in a Hermes process where intercom may not inject messages (allow_gateway_injection is off). Nothing was sent." CLI exit 4. A classic CLI target is not affected.
 
 **F4. No host can be reached.** CLI exit 5 in each case, and the record stores it:
 - the target is live nowhere and no dashboard answers, so it cannot be woken (`no-dashboard`);
@@ -205,7 +206,8 @@ Intercom's receipt is kept for compatibility: `ok`, `receipt` (`delivered`, `hel
 
 | Applied | `message` the model reads |
 |---|---|
-| `interrupted` | `Message 3f2a9c interrupted the running turn of "Budgeting — Orchestrator" and runs now. Its answer will come back to you as a new message.` |
+| `interrupted` (`redirect`) | `Message 3f2a9c redirected the running turn of "Budgeting — Orchestrator" and runs now. Its answer will come back to you as a new message.` |
+| `interrupted` (`hard-interrupt`) | `Message 3f2a9c stopped the running turn of "Budgeting — Orchestrator"; it runs as that session's next turn. Its answer will come back to you as a new message.` |
 | `steered` | `Message 3f2a9c was steered into the running turn of "Budgeting — Orchestrator". Its answer will come back to you as a new message.` |
 | `queued` | `"Budgeting — Orchestrator" is busy. Message 3f2a9c is queued and runs after its current turn. Its answer will come back to you as a new message.` |
 | `started` | `"Budgeting — Orchestrator" was idle. Message 3f2a9c started a turn there. Its answer will come back to you as a new message.` |
@@ -216,11 +218,12 @@ Intercom's receipt is kept for compatibility: `ok`, `receipt` (`delivered`, `hel
 | any, `ask` | Intercom's: the call returns the reply, or its timeout result |
 | `refused` (ambiguous / unknown / empty / own session) | `Nothing was sent.` then the reason, and the candidate lines where there are any: title, id, host, last active |
 | `error` (`no-seam`, or the host refused) | `Not delivered: "<title>" is open in a Hermes process that cannot take this message (<reason>). Nothing was sent.` |
+| `error` (`injection-off`) | `Not delivered: "<title>" is open in a Hermes process where intercom may not inject messages (allow_gateway_injection is off). Nothing was sent.` |
 | `error` (`no-dashboard`) | `Not delivered: the session is not open anywhere and no dashboard is running to wake it. You may send again later.` |
 | `error` (`no-endpoint`) | `Not delivered: "<title>" is open in a Hermes process started before intercom was enabled. It can receive messages after its next start.` |
 | `error` (`no-gateway`) | `Not delivered: "<title>" is a <platform> chat and the messaging gateway is not running. You may send again later.` |
 | `error` (`not-reachable`) | `Not delivered: the Hermes process that has "<title>" open did not answer. You may send again later.` |
-| `error` (delivery unknown) | `Delivery of message 3f2a9c is unknown: its host stopped answering after the message was handed over, so it may already have arrived. Run "hermes intercom status 3f2a9c". If it says "found in the target's transcript", do not send again. If it says "not found", wait a minute, run it again, and send again only if it is still not found.` |
+| `error` (delivery unknown) | `Delivery of message 3f2a9c is unknown: its host stopped answering after the message was handed over, so it may already have arrived. Run "hermes intercom status 3f2a9c" and follow what it says: if it says "found", do not send again; if it says "not found (yet)", wait as it tells you and run it again; send again only when it says sending again will not duplicate it.` |
 
 Nothing is parked where the seam exists, so `held` means only "queued in its host". There is no "pending" or "will retry" result.
 
@@ -256,7 +259,7 @@ Message from a script on this machine, not from Alex (the user). It carries none
 ```
 
 What changes from intercom's frame, and why:
-- **Glance words first.** `📡 Not Alex · <reply label>` (30–42 characters) comes before the name, so it is the first wrapped line of a phone bubble and inside the 80-character preview a classic CLI prints, whatever the title's length. Intercom's `hermes@<name> says` stays recognisable after it.
+- **Glance words first.** `📡 Not Alex · <reply label>` (30–42 characters; 50 for an `ask` sent with interrupt, which on a narrow phone may wrap after "interrupt ·") comes before the name, so it is the first wrapped line of a phone bubble and inside the 80-character preview a classic CLI prints, whatever the title's length. Intercom's `hermes@<name> says` stays recognisable after it.
 - **The name is the sender session's title,** not the process endpoint name, and the session id and message id follow in brackets, so the target and Alex know exactly who it was and can address it back. A sender in a messaging chat names its platform after the title, for example `hermes@Family planning (Telegram) says (…)`, because the words may be someone's typed text relayed by that session (HLD B4b).
 - **The authority line returns** (intercom v3 dropped its "NOT by the user" wrapper). Steered text sits inside Hermes's "direct message from the user" marker, so the line is needed.
 - **The reply label** is one of `reply expected`, `no reply needed`, `reply optional` (a reply to a `send`) or `waiting for your reply` (an `ask`). It replaces intercom's trailing "[The sender expects a reply. Use intercom(action="reply", …)]" line, whose instruction moves into the `ask` footer.
@@ -290,7 +293,7 @@ Variants (only the named lines change):
 | Sender is a script | 1 | `Your final answer is stored in the record for script "nightly-backup". It wakes no one; do not call intercom send to answer. (intercom is the tool for new messages; …)` |
 | Sender is a cron run, oneshot or subagent (SM-Q9 b) | 1 | `Your final answer is stored in the record for session "<title>", a <source>. It wakes no one; do not call intercom send to answer. (…)` |
 | `no reply needed` | 3 | `No reply is needed. Answer [SILENT] unless something here is wrong, blocks you, or needs a question back.` |
-| `ask` | 1–2 | `The sender is waiting for your answer. Answer once with intercom(action="reply", to="<asker>", request_id="<id>", message="…"); your final answer is not sent. If you cannot answer, say so in that reply.` (lines 3–4 and 6 stay; line 5, `[SILENT]`, is dropped, because a waiting asker needs an answer) |
+| `ask` | 1–2, 5 | Lines 1–2: `The sender is waiting for your answer. Answer once with intercom(action="reply", to="<asker>", request_id="<id>", message="…"); your final answer is not sent. If you cannot answer, say so in that reply.` Line 5: `If you have nothing to add, reply once with message="[SILENT]"; the asker gets "nothing to add" at once instead of waiting.` (lines 3–4 and 6 stay) |
 
 The closing line is the message's last line. Anything after it in the same row is not part of the message (F10).
 
@@ -329,7 +332,7 @@ Each terminal is its own process and delivers messages to its own session.
 | `interrupted` | `↪ Redirected current turn: '📡 Not Alex · interrupt · reply expected · …'`, or `⚡ New message detected, interrupting...` followed by the message as the next user message |
 | `started` (idle at the prompt) | The message in the scrollback as a user message, and the turn starts, as if typed |
 
-The person's half-typed input stays in the prompt. They can type, `/steer` or press Ctrl+C as with any turn.
+The person's half-typed input stays in the prompt (for an idle prompt this is checked in the Trial). They can type, `/steer` or press Ctrl+C as with any turn.
 
 **Ink TUI.** The TUI's own backend hosts the session, so a message appears as a user row in its transcript, starting with the 📡 header. Whether the TUI shows a note for a steer or queue it did not type itself, or only the row, is checked in the Trial. The person's draft in the composer is untouched.
 
@@ -356,7 +359,7 @@ hermes intercom log [--to TARGET] [--from LABEL] [--since DURATION] [--json]   #
 ```
 
 **`send`**
-- `--to` takes the tool's addresses. `--delivery` defaults to `steer`, with the same fallback. `--from` names the script in the header (`script <label>`); the default is `cli`. `--no-reply` marks the note "no reply needed".
+- `--to` takes the tool's addresses. `--delivery` defaults to `steer`, with the same fallback. Its `--help` text carries Alex's sentence word for word: "Only use interrupt when you intend to stop what the other session is doing right now (it is wrong, or the work is obsolete). Otherwise use steer (default) or queue." `--from` names the script in the header (`script <label>`); the default is `cli`. `--no-reply` marks the note "no reply needed".
 - Output, one line on standard output: `message 7c1d02 → "Hermes Improvement — Orchestrator": <applied> (<reason>)`, with `asked: <requested>` in the reason when the applied mode is weaker. For example `steered (into its running turn)`, `queued (asked: steer; busy and not steerable, runs after its current turn)`, `interrupted (redirected its running turn)`, `started (was idle; a turn started)`.
 - Refusals and errors go to standard error in the receipts' words. `--json` prints the receipt object, on success and failure.
 
@@ -368,7 +371,7 @@ hermes intercom log [--to TARGET] [--from LABEL] [--since DURATION] [--json]   #
 | 1 | `status`: no message with that id | — |
 | 2 | Usage error: missing `--to`, neither or both of `--message` and `--file`, an unknown `--delivery` | no |
 | 3 | Refused: ambiguous or unknown address (candidates on standard error), empty or whitespace-only body, or your own session | yes, as `refused` |
-| 4 | The target's host cannot take it (`no-seam`, or it refused, for example 4090) | yes, as `error` |
+| 4 | The target's host cannot take it (`no-seam`, `injection-off`, or it refused, for example 4090) | yes, as `error` |
 | 5 | Not delivered: `no-dashboard`, `no-endpoint`, `no-gateway` or `not-reachable` | yes, as `error` |
 | 6 | Delivery unknown: handed over, no answer; run `status` before sending again | yes, as `error` (delivery unknown) |
 
@@ -386,7 +389,13 @@ message 7c1d02
 - `delivery` shows `interrupted`, `steered`, `queued`, `started` (with `asked: …` when weaker), `refused (<reason>)`, `error (<code>)`, or `unknown`: no result recorded yet (still sending, which can take a while when waking a session, or the sending process was cut off).
 - For `unknown` or `error (delivery unknown)`, `status` also reads the target's transcript, without changing anything, for a line that **starts** with that message's header line 1 and ends `· message <id>):`. A quoted id or a relabelled lookalike does not match. It adds:
   - `found in the target's transcript (07:00:04)`: it landed; do not send it again;
-  - `not found in the target's transcript (yet)`: if the send ended less than a minute ago, or the delivery is still `unknown`, run `status` again in a minute before sending. Otherwise sending again will not duplicate it. This is advice, not a timer or a hold.
+  - `not found in the target's transcript (yet)`: what to do depends on the host, which the record stores, because only the dashboard, desktop and Ink TUI write a queued message's row when they accept it. A classic CLI or gateway queue writes it only when the message runs. So `status` also reads the target's live state, read only (its lease, and intercom's busy or idle flag):
+    - **dashboard, desktop or Ink TUI host:** `not found (yet)`. If the send ended less than a minute ago, or the delivery is still `unknown`, run `status` again in a minute. Otherwise sending again will not duplicate it.
+    - **classic CLI or gateway host, target still busy:** `not found (yet); "<title>" is still busy in its terminal (or <platform> chat), so a queued message may not have run. Run status again after its current turn ends.`
+    - **classic CLI or gateway host, target now idle:** `not found; "<title>" is idle, so a queued message would have run. Sending again will not duplicate it.`
+    - **classic CLI or gateway host gone:** `not found; the process that had "<title>" open has exited, so a message queued there is lost. Sending again will not duplicate it.`
+
+    This is a read and advice, not a timer or a hold.
 - `reply` shows one of: `no reply recorded` (none yet, or lost; the record cannot tell which and does not pretend to); `silent (<time>)`; `stored (<time>)` and the text (a sender that is not woken); `sent as message 8e41b0, steered (<time>)` and the text; `stored, not delivered (<time>): message 8e41b0, <reason>` and the text; for an `ask`, `answered by reply (<time>)` and the text, or `no reply recorded`.
 - A reply adds `in reply to  message 3f2a9c`.
 
@@ -440,7 +449,7 @@ For the architect and the manager; none reopens a settled decision.
 
 - Meaning is in words: "Not Alex", "interrupt", "reply expected", "steered". `📡` is decoration (a screen reader says "satellite antenna"); nothing depends on it.
 - No colour-only status anywhere.
-- `📡 Not Alex · <reply label>` (30–42 characters) comes first, so it is the first wrapped line on a phone and inside a terminal's 80-character preview, whatever the title.
+- `📡 Not Alex · <reply label>` (30–42 characters, or 50 for an interrupting `ask`, which may wrap after "interrupt ·" on a narrow phone) comes first, so it is the first wrapped line on a phone and inside a terminal's 80-character preview, whatever the title.
 
 ## Open questions
 
@@ -465,6 +474,7 @@ Where a different answer from Alex changes what a person or a session sees:
 - The desktop shows a steered message as a user bubble starting with the 📡 header.
 - Whether the dashboard chat and the Ink TUI show a delivered message live, and what note (if any) the TUI shows for a steer or queue it did not type.
 - The classic CLI prints its existing notices for a message delivered through the seam, in every mode.
+- An idle classic CLI with half-typed input at its prompt: the message starts its turn and the half-typed text survives in the prompt.
 - On Telegram: whether a bare `[SILENT]` answer stays out of the topic, and what an interrupt looks like there.
 - How long waking a session holds the sender's call with a real model (the fake model took 0.14 seconds).
 - Whether a message steered into a turn that is then stopped is lost or answered in the next turn.
@@ -479,4 +489,6 @@ The rewritten HLD (`923a6ff272`) now covers the closing line, relabelling (B3), 
 4. **CLI verbs** (U3): `send`, `list` (live peers, as the tool), `status`, and `log` (the record). D4 has `send|status|list` with `list` as the record.
 5. **The tool description's first sentence** is a new 60-character sentence carrying the job and the no-empty rule (`Message another Hermes session; never send an empty message.`). Intercom's opening ("List or message other live Hermes sessions on this machine.") cannot also fit, so D2's "keeps intercom's opening" should read "keeps intercom's content".
 6. **The `user_name` setting** (U4): "Not Alex" reads "Not <name>" from an intercom setting, defaulting to "the user" for the upstream offer.
-7. **Queues without an accept-time row.** For CLI and gateway targets, `status`'s transcript check finds a queued message only once it runs, so "not found (yet)" means only "not run yet" there. The advice in `status` still holds; the HLD should say so.
+7. **Queues without an accept-time row** (UX review R5-1). For classic CLI and gateway targets, `status`'s transcript check finds a queued message only once it runs, so "not found (yet)" alone could invite a duplicate. `status` therefore also reads the target's live state, read only (its lease and intercom's busy or idle flag, or that its host has exited) when the record's `host` is a CLI pid or `gateway`, and words its advice by that state (`ux.md` § "status"). The HLD should add this read to D4's `status`.
+8. **`[SILENT]` on `ask`** (UX review R5-2). A `reply` whose message is `[SILENT]` returns to the asker at once as "nothing to add" (the receipt's `message` says so), and the record stores `reply_state = silent`. The asker side of intercom's `reply` needs this mapping.
+9. **`injection-off`** (R5-6). A non-CLI host whose config lacks `allow_gateway_injection: true` refuses every plugin injection (`hermes_cli/plugins_injection.py`), so the sender gets a refusal, not a silent queue. D4's `detail` codes and exit 4 should include it.

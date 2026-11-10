@@ -11,7 +11,8 @@
 - **So that** I get exactly one answer in my own tool call, as intercom does today
 - **Done when**
   - [ ] `ask` takes the same addresses and `delivery` as `send`, and keeps intercom's `timeout` (default 600 seconds, at most 3,600).
-  - [ ] The delivered message's line 1 says `waiting for your reply`, and its footer tells the target to answer once with `intercom(action="reply", to="<asker>", request_id="<id>", message="…")`, that its final answer is not sent, and to say so in the reply if it cannot answer.
+  - [ ] The delivered message's line 1 says `waiting for your reply`, and its footer tells the target to answer once with `intercom(action="reply", to="<asker>", request_id="<id>", message="…")`, that its final answer is not sent, and to say so in the reply if it cannot answer, and that if it has nothing to add it replies once with `message="[SILENT]"`.
+  - [ ] A `reply` whose message is `[SILENT]` returns to the asker at once as "nothing to add", and the record shows the reply as silent.
   - [ ] The asker's call returns the reply; only the asked peer's reply is accepted, as in intercom.
   - [ ] No automatic reply is sent for an `ask`, even if the target's turn has a `[REPLY <id>]` block.
   - [ ] On timeout the asker gets intercom's timeout result, and the record shows "no reply recorded".

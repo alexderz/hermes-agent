@@ -16,5 +16,5 @@
   - [ ] A delivered `send` returns the message id, the target's title and id, the requested and applied mode, and the `message` sentence from `ux.md` § "Receipts".
   - [ ] The sender is taken from the calling session, never from the model's input: a `message` that claims another sender changes nothing in the header.
   - [ ] The record has a row for the message: sender, target, body, requested and applied mode, timestamps.
-  - [ ] No receipt says "pending", "held" or "will retry".
+  - [ ] No receipt `message` sentence says pending or will retry. The compatibility `receipt` field may be `held`, meaning queued.
 - **Out of scope** — an `inbox` action; polling for replies; several targets in one call.
