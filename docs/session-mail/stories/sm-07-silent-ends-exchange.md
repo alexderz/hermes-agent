@@ -14,5 +14,5 @@
   - [ ] An answer that is `[SILENT]` as a whole, on its first line or on its last line, or a reply block that is empty or `[SILENT]`, or an empty answer, sends nothing, and the outbox records "silent" for that mail.
   - [ ] `[SILENT]` in the middle of a sentence is sent as content.
   - [ ] The plugin has no hop, round, rate, duplicate or daily limit, and no timer that ends an exchange.
-  - [ ] The no-empty-replies rule appears, as written in `ux.md`, in the tool description and in every footer.
+  - [ ] The no-empty-replies rule **and** the instruction to answer `[SILENT]` when there is nothing new both appear, as written in `ux.md`, in the tool description and in every footer variant.
 - **Out of scope** — any cap or loop detector; a summary of the debate.
