@@ -244,8 +244,11 @@ def _session_is_reapable(sid: str, session: dict) -> bool:
     /heartbeat, or a running background process that will notify it (closing the session stops the notification
     poller that delivers both, and ``agent_close`` kills the process). Kept out of ``_sessions_quiescent``: an idle
     session waiting on a wake-up does not block a memory trim."""
+    # Fork (alex/dispatch-steer-queue): a queued prompt is pending work (it drains at the idle boundary
+    # after the turn's housekeeping).
     return (_session_is_lru_evictable(sid, session) and not _session_owns_live_wakeup_schedule(session)
-            and not _session_owns_pending_process_notification(session))
+            and not _session_owns_pending_process_notification(session)
+            and not session.get("queued_prompt"))
 
 
 def _session_is_evictable(sid: str, session: dict, now: float) -> bool:

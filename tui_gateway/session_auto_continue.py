@@ -461,8 +461,10 @@ def _drain_queued_prompt(rid, sid: str, session: dict) -> bool:
         if not admitted or session.get("_closing") or not (queued := session.get("queued_prompt")) or session.get("running"):
             return False
         queue_generation = int(session.get("_queued_prompt_generation", 0))
-        _ac_set_queue(session, session.get("queued_prompts") or [])
+        # running before the head is cleared: the WS orphan reaper reads both without history_lock, and
+        # must never see an idle session with an empty queue between the two writes.
         session["running"] = True
+        _ac_set_queue(session, session.get("queued_prompts") or [])
         queued_transport = queued.get("transport")
         # The queuer's transport is pinned so the drained turn reaches the client that sent it — but
         # ATTACHED, not rebound: a mid-turn prompt from a second client used to silence the first for the
