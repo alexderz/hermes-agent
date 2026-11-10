@@ -1222,6 +1222,7 @@ def _run_prompt_submit(
                     _requeue_leftover_steer(session, st.result)
                     session["running"] = False
                     session["last_active"] = time.time()
+                    session.pop("_queued_prompt_stale_logged", None)  # a later stuck queue is logged again
                     session.pop("_turn_user_input", None)  # per turn: never leaks into the next one
                     if not st.error_retained:
                         _clear_inflight_turn(session)
