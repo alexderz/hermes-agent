@@ -1,8 +1,35 @@
 # Brief: session-mail (DER-701), session-to-session messaging
 
-Step: Brief (gatherer), round 4, after a scope change from Alex. Date: 2026-11-09.
+Step: Brief (gatherer), round 5, after two more decisions from Alex. Date: 2026-11-09.
 
-Source dump: the request `requests/2026-11-09-session-mail-brief.md` in the Hermes Improvement vault (Alex's words, settled decisions 1–8, and the section "Scope addition (Alex, 2026-11-09 ~19:45)"), the research note `research/session-messaging.md`, and vault rule 19.
+Source dump: the request `requests/2026-11-09-session-mail-brief.md` in the Hermes Improvement vault. It holds Alex's words, settled decisions 1–8, and three later sections:
+- "Scope addition (Alex, 2026-11-09 ~19:45)";
+- "Delivery modes (Alex, 2026-11-09 ~19:50)";
+- "Build on intercom, not a new plugin (Alex, 2026-11-09 ~20:00)".
+
+Also read: the research note `research/session-messaging.md`, and vault rule 19. The chunk keeps its working name "session-mail" (DER-701); the shipped plugin is `intercom`.
+
+**Round 5 changes:**
+- **Base = intercom (Alex; answers SM-Q12 with a fourth option, supersedes decision 1's "new plugin").** Our features land in the code of `alexderz/hermes-intercom`, a fork of `majordave/hermes-intercom`, on a feature branch, in its style. The plugin name `intercom` and the `intercom` tool stay; there is no `session-mail` plugin and no `session_message` tool. Intercom's transport is kept where it fits. Its garbage-collector lookup of the CLI object and its private-field delivery are replaced by the core seam where that is available.
+- **Delivery modes (Alex; supersede "never cancel or redirect" in decision 3):**
+  - `delivery: interrupt | steer | queue`, default `steer`;
+  - each host applies the requested mode, or the strongest weaker one it supports (interrupt > steer > queue);
+  - an idle target always starts a turn;
+  - the outbox records the requested and the applied mode, and the receipt names the applied mode.
+
+  The seam becomes `inject_message(..., mode="interrupt"|"steer"|"queue")` with that fallback on every host.
+- **New facts:** intercom read in full (socket, registry, UID check, delivery, frame, ask and reply, spool, caps) and mapped onto our requirements; the `miyu4u/hermes-intercom` fork and the v0.23 APIs it needs; a per-host table of what interrupt, steer and queue mean today.
+- **Questions:**
+  - SM-Q12 is answered (intercom), and SM-Q14 is recorded as asked elsewhere (deploy method);
+  - the round-4 Telegram question is renumbered **SM-Q15**;
+  - new **SM-Q16**: what happens to intercom's blocking `ask` and its explicit `reply` next to automatic replies;
+  - SM-Q7 to SM-Q11 are re-checked against the new base.
+
+**Superseded in round 5** (kept below as the record, marked where they appear):
+- the `plugins/session-mail` plugin and the `session_message` tool name;
+- the outbox as the bus between processes, with a poller in each one: intercom's per-process sockets carry mail instead, and the outbox stays as the durable record;
+- "never cancel or redirect";
+- the seam shape `mode="steer_or_queue"`.
 
 Where the code facts come from:
 - this worktree (branch `integrate/session-mail`, v0.22.0 plus fork patches, now including `alex/v0.22.0-mobile-fixes` up to `c843eea710`: the dispatch fix `1516a52669` and the queue-aware reapers `8d4597bf8e` and `1ec78a0dcc`);
@@ -24,7 +51,7 @@ Paths without a prefix are relative to the Hermes repository root. Hermes Mobile
   - gateway sessions;
   - finding 2 after the reaper fixes;
   - upstream peer messaging (#106423 and the work built on it).
-- **Questions:** new SM-Q12 (build on our own protocol or on upstream's) and SM-Q14 (show mail in the Telegram topic). SM-Q13 is recorded as answered. SM-Q7, SM-Q9 and SM-Q11 are updated for the wider scope.
+- **Questions:** new SM-Q12 (build on our own protocol or on upstream's) and SM-Q14 (show mail in the Telegram topic; renumbered to SM-Q15 in round 5). SM-Q13 is recorded as answered. SM-Q7, SM-Q9 and SM-Q11 are updated for the wider scope.
 
 Round 3 changes: SM-Q9 option (b) now tests the sender's session source instead of its end reason; the `agent_close` fact is corrected and `cron_incomplete_no_output` added; the `session_message` tool handler is synchronous (Constraints).
 
@@ -67,7 +94,8 @@ Still vague, and handled below:
 - ~~A background delivery worker~~ *(superseded in round 4: a light poller per process is back; see "Why a per-process poller again")*. Redelivery of mail that was lost after a handover is still out (round 2).
 - Bot Mode, hosted rooms, and one profile per agent (rejected in the research). *(Round 4, SM-Q13: the default profile's `Bot Chat` session is in scope as an ordinary target; bots in other profiles are not.)*
 - Messaging across profiles, including bots in other profiles (SM-Q13). The plugin serves the default profile's sessions.
-- Posting anything to GitHub. The upstream offer on #81885 is a later step, with Alex reviewing the text.
+- Posting anything to GitHub. The upstream offer on #81885 is a later step, with Alex reviewing the text. *(Round 5)* That also covers a possible pull request to `majordave/hermes-intercom` and the seam's own upstream pull request. Agents draft them into `docs/` on the intercom feature branch, Alex reviews the exact text, and agents never post them.
+- *(Round 5)* The v0.23 unified-gateway transport from `miyu4u/hermes-intercom` (`gateway_peers.py`). Its APIs do not exist on v0.22.0; it is prior art for the v0.23 rebase.
 - Changes to Hermes Mobile, including drafting an upstream issue for it in this chunk (that can be offered after the plugin runs).
 - A core patch for the steer frame (SM-Q7 option C, dropped from this chunk).
 - A "Mail" tab on the dashboard, and a plugin system-prompt section.
@@ -75,7 +103,12 @@ Still vague, and handled below:
 
 ## Constraints
 
-- **Fork-bundled plugin, plus one small, upstreamable core seam** *(round 4)*. Decision 1 allows a core patch when a real blocker is shown and Alex agrees. The scope addition shows one: no host can steer or wake through the plugin API (see "How each host handles injected text today"). The seam is a delivery mode on `ctx.inject_message`, for example `mode="steer_or_queue"`, honoured by the CLI, gateway and TUI/dashboard hosts. It is listed in PROJECT.md as a fork patch, kept small and upstreamable (vault rules). Round 1 said "no core patch"; that is superseded.
+- **The intercom plugin (our fork), plus one small, upstreamable core seam** *(round 4, reshaped in round 5)*. Decision 1 allows a core patch when a real blocker is shown and Alex agrees. The scope addition shows one: no host can steer or wake through the plugin API (see "How each host handles injected text today").
+  - The seam is `ctx.inject_message(..., mode="interrupt"|"steer"|"queue")`, honoured by the CLI, gateway and TUI/dashboard hosts, each falling back to the strongest weaker mode it supports. The round-4 shape `mode="steer_or_queue"` is superseded.
+  - It is a small fork patch on Alex's Hermes fork, listed in PROJECT.md, kept upstreamable.
+  - The plugin feature-detects the seam. Without it, the plugin falls back to intercom's current delivery, which is limited to the classic CLI.
+  - Round 1 said "no core patch"; that is superseded.
+- *(Round 5)* **Work lands in intercom's code and style.** That means intercom's tests (17 today, `tests/test_protocol.py`), its single multiplexed `intercom` tool, and its MIT licence. The fork is shared upstream as `alexderz/hermes-intercom`. How it reaches the Hermes install (vendored as `plugins/intercom` with `git subtree`, keeping rule 19) is **SM-Q14, asked elsewhere**.
 - ~~**The steer/queue fix is not on this branch yet.**~~ *Resolved in round 4:* `1516a52669`, `8d4597bf8e`, `1ec78a0dcc` and `c843eea710` are now in this branch, through the merge `3d4d482eb9`.
 - Hermes changes go only on fork branches. They are fast-forwarded into the deployed branch `alex/v0.22.0-mobile-fixes` and deployed with `git pull --ff-only` in the install. The plugin is enabled through house-infra `hosts/<dashboard-host>/hermes.py`. No live edits (vault rule 19).
 - One announced dashboard restart at deploy. List the busy sessions before scheduling it. The restart also costs every resumed session one prompt-cache miss, because the new tool is added to its tool list (see "Tool list of a resumed session").
@@ -87,13 +120,25 @@ Still vague, and handled below:
 - Behaviour goes in `config.yaml`, not in new `HERMES_*` environment variables.
 - The Trial uses a temporary `HERMES_HOME`, its own dashboard on another port and a fake model. *(Round 4.)* It must also run a classic CLI process, an Ink TUI process and a gateway with a test adapter, because the live install has no gateway sessions to look at (see "Gateway sessions").
 - *(Round 4.)* Every process that loads the plugin must stay cheap when there is no mail. The poller adds work to every CLI, TUI, gateway and dashboard process.
-- Question IDs continue the series. This brief uses SM-Q7 to SM-Q14.
+- Question IDs continue the series. This brief uses SM-Q7 to SM-Q16 (SM-Q14 is asked elsewhere: deploy method).
 
 ## Decisions (settled by Alex; not reopened)
 
-1. A fork-bundled plugin `plugins/session-mail`, shaped like the in-fork `plugins/model-routing/` (`plugin.yaml`, and `__init__.py` with `register(ctx)`).
+1. ~~A fork-bundled plugin `plugins/session-mail`, shaped like the in-fork `plugins/model-routing/`.~~ *Superseded in round 5 (Alex: "I want us to make a fork of intercom, add to their code and post the update in the issue above").*
+   - The base is `alexderz/hermes-intercom`; the plugin name `intercom` and the `intercom` tool are kept.
+   - Our features extend it: hosting many sessions per process in the dashboard, TUI and desktop (one socket per process, one registry entry per live session); gateway sessions; the delivery modes; addressing by title or project owner; replies with no empty replies; a durable record.
+   - The core seam stays a small fork patch on Alex's Hermes fork, feature-detected by the plugin.
 2. Addressing: `@<project-slug>` resolves to the project owner; also an exact title, a session id, or `Home`. The result resolves to the compression tip. An ambiguous match is refused, and the candidates are listed.
-3. Delivery right away: steer, else queue, else start. Never cancel or redirect. No hold.
+3. Delivery right away. No hold.
+   - *Round 5 wording (Alex: "we need all 3 as tool options, and we apply the strongest the other session supports: interrupt - steer - queue, with admonition to only interrupt on intention, default to steer or queue"):*
+     - the `intercom` tool and the CLI take `delivery: interrupt | steer | queue`, default `steer`;
+     - the host applies the requested mode if the target supports it, else the strongest weaker mode it does support (interrupt > steer > queue);
+     - `interrupt` uses the host's redirect where supported, otherwise a hard interrupt, then the message runs next; `steer` injects between tool calls; `queue` runs after the turn;
+     - an idle target starts a turn, whatever the mode;
+     - the tool description says: "only use interrupt when you intend to stop what the other session is doing right now (it is wrong, or the work is obsolete). Otherwise use steer (default) or queue.";
+     - the outbox records the requested and the applied mode, and the receipt to the sender says which was applied;
+     - `scripts/dashboard_dispatch.py` keeps its default (steer, else queue); an interrupt option there is optional.
+   - ~~"Steer, else queue, else start. Never cancel or redirect."~~ *(Rounds 1–4; superseded in round 5. "Never" now holds only for the default `steer` and for `queue`.)*
    - *Round 1 wording, superseded in round 4:* "inside the dashboard", with `prompt.submit` and `queued: true`, resuming the session in the dashboard first if needed.
    - *Round 4 wording (scope addition):* every host applies this rule to the sessions it hosts:
      - a live dashboard, desktop or TUI session is served by its process;
@@ -105,18 +150,28 @@ Still vague, and handled below:
 5. Debates are allowed. No caps.
 6. No empty replies. The tool description and the footer of every message say so; `[SILENT]` ends an exchange.
 7. A durable outbox records who sent what. The sender is named in the text.
-8. A CLI, `hermes session-mail send …`, costs no turn.
+8. A CLI for cron jobs and scripts costs no turn. *(Round 5: it becomes an `intercom` command, for example `hermes intercom send …`, with the same `delivery` option; the exact name follows intercom's style. The name `hermes session-mail send` is superseded.)*
 9. *(Round 4, scope addition.)* Every kind of session is a target: dashboard and desktop, classic CLI, Ink TUI, and messaging-gateway sessions. Cross-machine and cross-install delivery stays out (SM-Q6).
 10. *(Round 4, SM-Q13, answered by the scope change.)* Bot sessions in scope:
     - the messaging-gateway sessions;
     - the default profile's `Bot Chat`.
 
     Bots in other profiles stay out, because that is cross-profile.
-11. *(Round 4, scope addition.)* One small core seam is allowed under decision 1's exception: a steer-or-queue delivery mode on `ctx.inject_message`, honoured by each host. It goes in PROJECT.md as a fork patch.
+11. *(Round 4, reshaped in round 5.)* One small core seam is allowed under decision 1's exception: `ctx.inject_message(..., mode="interrupt"|"steer"|"queue")`, honoured by each host with the fallback chain. It goes in PROJECT.md as a fork patch.
+12. *(Round 5, SM-Q12 answered: intercom.)* Build on our fork of `majordave/hermes-intercom` (option d below), not on our own protocol (a), not on upstream's peer messaging (b), and not by waiting (c).
+13. *(Round 5.)* Upstream: when it works, draft an update for #81885, and possibly a pull request to `majordave/hermes-intercom`, into `docs/` on the branch. Alex reviews the exact text; agents never post.
 
 Design choices taken from the research and the refiner, which the code supports:
 
-- **Outbox plus a poller in every process** *(round 4, scope addition; supersedes "delivery at send time" below for every target that is live somewhere)*:
+- *(Round 5)* **Transport: intercom's per-process sockets, extended.** This supersedes the round-4 "outbox as the bus, plus a poller" for live targets.
+  - Every Hermes process that loads the plugin binds one `0600` Unix socket, with the peer-UID check, under `$HERMES_HOME/intercom/`.
+  - The registry gets one entry per live session it hosts, with the socket path, so the dashboard can list dozens.
+  - A sender resolves the target to a session, finds the process that hosts it, and connects. The host delivers through the seam in the requested mode.
+  - A target that is live nowhere is sent to the dashboard's socket, which resumes the session and starts a turn there.
+  - An idle gateway session is served by the gateway's socket, which knows its sessions through its own session store.
+  - The **outbox** remains the durable record. It also holds mail that no process can take right now (for example, when no dashboard runs); that is the A9 case, not a hold.
+  - What still holds from the refined design: no retries beyond normal delivery, no caps, no holds, errors recorded and returned to the sender.
+- ~~**Outbox plus a poller in every process**~~ *(round 4, superseded in round 5 by intercom's sockets, above)*:
   - **The outbox** (SQLite under `plugin-data/session-mail/`) is the bus between processes.
   - **The poller:** every Hermes process that loads the plugin (dashboard, gateway, each CLI or TUI) runs one. It claims mail only for sessions it hosts now, and delivers it through its own host with the new seam.
   - **Mail for a session that is live nowhere** goes to the dashboard, which resumes it and starts a turn.
@@ -137,8 +192,12 @@ Design choices taken from the research and the refiner, which the code supports:
   A failed delivery is reported, not held and not retried. The sender (a model or a script) can send again. No "is this the dashboard?" check is needed, because delivery always goes over the dashboard's own socket. This works the same with `dashboard.turn_isolation` on, where turns run in a child process. That setting is off by default (`hermes_cli/config_defaults.py:1005`).
 - **Reuse the dispatcher's rule instead of `ctx.inject_message`.** The plugin injection host only queues, never steers, and writes no accept-time row, so the phone does not see the mail until it runs (`tui_gateway/plugin_inject.py:53-64`).
 - **One copy of the delivery logic** (see the options under A2). The architect picks how it is shared.
-- **Header only on all three paths** (SM-Q7 recommendation A). The 📨 header and footer are the only separation from Alex's words.
-- **Outbox fields:** id, in-reply-to id, sender, target, body, delivery result, reply (or "silent"), timestamps. There is no `hop` column (nothing reads it, and a counter invites a cap) and no status ladder.
+- **Header only on all three paths** (SM-Q7 recommendation A). The 📨 header and footer are the only separation from Alex's words. *(Round 5: the header becomes intercom's frame, made explicit about "not Alex"; see SM-Q7.)*
+- **Outbox fields:**
+  - id, in-reply-to id, sender, target, body, reply (or "silent"), timestamps;
+  - *(round 5)* the delivery result is now two fields, **requested mode** and **applied mode**.
+
+  There is no `hop` column (nothing reads it, and a counter invites a cap) and no status ladder.
 - **Reply matching** finds the mail id anywhere in the turn's new rows: the `user_message`, or `display_kind: "steer"` rows in `conversation_history`. That covers every path:
   - an accepted steer;
   - a steer parked during compression;
@@ -146,6 +205,112 @@ Design choices taken from the research and the refiner, which the code supports:
   - a queued prompt merged with other text.
 
 ## Environment facts
+
+### Round 5: intercom, the new base (read in full)
+
+Clone of `alexderz/hermes-intercom` at `ae90a2a` (merge of a protocol-hardening pull request, 2026-09-04). The `upstream` remote is `majordave/hermes-intercom`. It has 1,783 lines in total: `__init__.py` 178, `inbox.py` 751, `tests/test_protocol.py` 451 (17 tests), `README.md`, `docs/findings.md`, and `docs/AGENTS.md` (design notes, in Spanish). The manifest is `plugin.yaml`: name `intercom`, version 0.2.0, `kind: standalone`, `provides_tools: [intercom]`. Paths below are relative to that clone.
+
+- **Tool:** one multiplexed tool `intercom(action=list|send|ask|reply, to, message, timeout, request_id)` in toolset `intercom`, with `check_fn` always true (`__init__.py:19-61,162-170`). Config is a single `inbound: always|never` setting (`:159-160`).
+- **Registry and socket:**
+  - `inbox.start()` runs once per process at plugin load (`__init__.py:172-176`). It writes `$HERMES_HOME/intercom/sessions/<id>.json` with `{name, pid, cwd, session_id, socket, started_at}`, binds `<id>.sock` with mode `0600`, and serves it on a daemon thread (`inbox.py:621-690`).
+  - The `<id>` is **not** a Hermes session id. `start()` is called without one, so it is `<pid>-<time>`, an endpoint id per process (`:629`; a test checks it ignores an inherited session id, `tests/test_protocol.py:331`).
+  - Names are `<profile>-<cwd folder>-<pid mod 1000>` (`inbox.py:114-127`).
+  - There is **one entry per process**, so a dashboard with dozens of sessions appears as one peer.
+  - Dead pids are swept on read (`:130-147,346-356`), and cleanup runs at exit (`:667-679`).
+- **Peer-UID check:** every connection is refused unless the peer's effective UID equals the server's, via `getpeereid`, `LOCAL_PEERCRED` or `SO_PEERCRED` (`inbox.py:545-569`; test `:309`). The envelope is JSON lines (`:8-11,472-487`).
+- **Delivery on the receiving side** (`_deliver_local`, `inbox.py:216-269`):
+  - **Finding the agent:** the live `HermesCLI` is found by scanning garbage-collector objects for `type(o).__name__ == "HermesCLI"` (`:201-213`), and the agent through `cli._active_agent_ref` or `cli_obj.agent` (`:221-223`).
+  - **Idle CLI:** `cli_obj._pending_input.put(text)` starts a turn ("submitted_as_turn", `:225-236`).
+  - **Busy:** guessed from private flags (`_conversation_active`, `_processing`, `_current_tool_count`, …, `:272-291`) plus the registry's `turn_active` (`:230,259`). Delivery is `agent.steer(text)` ("steered"); a refused steer is "held_steer_rejected", and nothing is queued (`:257-262`).
+  - **No reachable agent** (a TUI, dashboard or desktop process, where `cli` holds no CLI object): the text is parked in a per-process list and appended to an owner-only spool `intercom/pending/<id>.jsonl` (`:238-255,706-739`).
+  - **Parked text is drained by `pre_llm_call`** into the next turn's user message, as `[Messages delivered from other sessions while you were idle]` (`__init__.py:137-147`). **In a process hosting many sessions (the dashboard), that is the next turn of *any* session, not the addressed one.**
+  - **Interrupt:** never.
+- **Frame:**
+  - v3 is compact: `📡 hermes@<name> says:` then the body (`inbox.py:176-187`). The design notes record that v3 removed the earlier `[INTERCOM MESSAGE … NOT by the user …]` wrapper and its safety line (`docs/AGENTS.md`, "v3").
+  - Body lines that copy the header are broken with a zero-width space (`inbox.py:154-167`), and brackets and newlines are stripped from names (`:170-173`).
+  - On the sending side, `_strip_echo_headers` drops quoted `📡 hermes@… says:` lines (`__init__.py:64-76`).
+  - A steered message still sits inside Hermes's `[OUT-OF-BAND USER MESSAGE …]` user marker; parked text rides inside the user message.
+  - The README's claim that "the frame identifies the sending session so the model never mistakes it for user instructions" is not backed by any non-user frame. The human-view box `_human_view` / `_display_banner` is dead code (`inbox.py:48-98`; no callers).
+- **Ask and reply:**
+  - `ask` sends with a random `request_id` (`uuid4`) and **blocks the tool call** until a `reply` envelope comes back or the timeout ends (default 600 s, max 3,600 s; `__init__.py:102-116`, `inbox.py:370-422`). The receiver is told to call `intercom(action="reply", to=…, request_id=…)` (`:599-607`).
+  - A reply is accepted only from the peer the ask was sent to (`:425-433`; tests `:209`, `:226`). Replies skip deduplication (`:436-451`).
+  - Correlation is in-memory in the asking process, so a reply after a restart is lost.
+- **Receipts:** `delivered` (submitted as a turn, or a reply resolved), `held` (steered or parked), `refused` (`inbox.py:527-538`).
+- **Caps that conflict with decision 5 ("no caps"):**
+  - 8,000-character body (`inbox.py:35,520`);
+  - **6 messages per peer per minute** (`:37-38,503-505`);
+  - **duplicate refusal within 120 s** (`:39,508-514`);
+  - **10 parked messages**, then "rejected_pending_cap" (`:36,246-268`);
+  - a 3,600-second ask maximum.
+
+  The first four are caps to remove.
+- **Tests:** 17 unit tests on the protocol (ask metadata, request ids, prefix resolution, reply binding, UID refusal, spool permissions, a same-UID socket round trip, error passing; `tests/test_protocol.py:52-451`). None cover dashboard, TUI or gateway hosting.
+- **Its own roadmap** (README, "Still ahead") lists first-class TUI and desktop peers, a stable id per profile, durable mailbox identity, and "migrate delivery to the official host seam".
+
+### Round 5: what intercom already does, what we change, what we add
+
+| Our requirement | Intercom today | Change or add |
+|---|---|---|
+| Classic CLI target | Yes: idle starts a turn; busy steers | Replace the garbage-collector lookup and private flags with the seam; add `interrupt`; a refused steer queues instead of being "held" |
+| Ink TUI, dashboard, desktop (many sessions per process) | No: one endpoint per process; text is parked and drained into whatever turn runs next | **Add** one registry entry per live session (from `tui_gateway`'s live `_sessions`), and route by session to the seam in that process. Remove the process-wide `pre_llm_call` drain for these hosts |
+| Gateway sessions (Telegram topics) | No | **Add**: the gateway process binds a socket and registers the sessions its session store knows (`lookup_by_session_id`); delivers through the seam |
+| A session that is live nowhere | No (the sender gets "no live peer") | **Add**: route to the dashboard's socket, which resumes the session (A2 rule) and starts a turn |
+| Delivery modes interrupt / steer / queue, with fallback, default steer | Steer or park only | **Add** the `delivery` argument, the fallback chain, requested and applied mode in the receipt and the outbox, and the tool-description sentence on interrupt |
+| Addressing by title, `@project`, `Home`, id, compression tip | Name or prefix of a live endpoint (`inbox.py:454-469`) | **Add** resolution through `state.db` (exact title, `@slug` owner rule, `Home`, id or prefix) to a session id, then to its compression tip, then to the hosting process. Keep intercom names as one more form |
+| Automatic replies, no empty replies, `[SILENT]` | Explicit `reply` to an `ask` only; nothing automatic | **Add** `post_llm_call` reply capture (mail id in the turn's rows), the marked reply block (SM-Q8), `[SILENT]` and empty-answer suppression, and the footer rule. See SM-Q16 for `ask` and `reply` |
+| Debates, no caps | Rate limit, dedupe, pending cap, size cap | **Remove** the caps |
+| Durable record of who sent what | None (spool only for parked text; deleted after drain) | **Add** the outbox (SQLite, `0600`) with requested and applied mode and the reply. The spool can become the outbox's undelivered rows |
+| Sender named in the text, not Alex's authority | `📡 hermes@<endpoint-name> says:` | **Change** the header to name the sender **session** (title and id) and say "not Alex" (SM-Q7). Keep the zero-width-space forgery defence and echo stripping |
+| CLI for cron and scripts, no turn | None | **Add** a `register_cli_command` subcommand (`hermes intercom send|list|status`), as `plugins/model-routing/__init__.py` does |
+| Same UID, same machine | Peer-UID check, `0600` sockets | Keep |
+| Two sessions in the same process (two dashboard chats) | **Refused:** `send_to` rejects any target whose pid is the sender's own ("target is the current session", `inbox.py:498-499`) | **Change** to refuse only the same **session**. Same-process delivery goes straight to the seam, with no socket hop |
+
+**What survives from rounds 1–4:**
+- the outbox as the record (fields above), and reply matching by mail id in the turn's rows;
+- header-first framing with relabelling of quoted control frames;
+- SM-Q8's marked reply block, and SM-Q9's sender-source test;
+- the addressing rules and data;
+- the reaper facts (finding 2), the phone facts (finding 4) and the tool-list facts;
+- the dashboard dispatcher for waking a session that is live nowhere;
+- the per-host facts from round 4.
+
+**What intercom replaces:**
+- our socket and bus: the dashboard WebSocket from tools (round 2), and the outbox-plus-poller (round 4);
+- the `session_message` name;
+- the `session-mail` plugin name.
+
+### Round 5: the `miyu4u/hermes-intercom` fork (prior art only)
+
+- **Commits:** clone at `1c1e677`, four commits ahead of `ae90a2a`, all dated 2026-11-04 (messages in Korean): a same-workspace gateway transport with correlated replies; a frame redesign; a test matrix; docs. In total 18 files, +2,094/−233, including `gateway_peers.py` (233 lines) and tests.
+- **Its "gateway" is v0.23's unified gateway (the backend that hosts CLI, TUI, desktop and ACP sessions), not the messaging gateway.** Its roster keeps only rows whose `created_source` is `cli`, `tui`, `desktop`, `acp`, `tool` or `oneshot`, in the same workspace (`gateway_peers.py:46-62,74-79`). **It does not reach Telegram.**
+- **It relies on APIs this worktree lacks** (checked):
+
+  | API | Used at | In this worktree | In `v0.23.0` |
+  |---|---|---|---|
+  | `hermes_cli.gateway_client.connect_gateway` | `gateway_peers.py:34` | no (file missing) | yes |
+  | `hermes_cli.gateway_runtime.discover_gateway_endpoint` | `:35` | no (file missing) | yes (`hermes_cli/gateway_runtime.py:289`) |
+  | `gateway.session_context.bound_session_key` | `:26` | no | yes (`gateway/session_context.py:117`) |
+  | `session.steer` with `execution_generation` | `:224-233` | no | in the v0.23 contracts (`tui_gateway/contracts/canonical.py`) |
+
+  `ctx.session_surface()` (`:29`) and the `created_source` column do exist here (`hermes_cli/plugins.py:602`; `hermes_state_common.py:385`).
+- **Useful ideas:**
+  - a cyclic-ask refusal (`:149-163`);
+  - the sender label taken from the session **title** (`:192`);
+  - routing metadata with a `message_id` per message (`:188-194`);
+  - a frame `📡 INTERCOM from <sender> · <cwd>` plus a line `untrusted peer data (quoted; user policy)` (its `inbox.py:137-154`);
+  - delivery through `ctx.inject_message(frame, session_key=…)` for idle peers (`gateway_peers.py:205-208`).
+
+  It also keeps a 6-per-minute rate limit and a 10-message pending cap (`:173-183,199-202`).
+- **Use:** read at the v0.23 rebase. Its unified-gateway transport could replace our per-process sockets for CLI, TUI and desktop sessions there.
+
+### Round 5: delivery modes per host (what interrupt, steer and queue mean today, and what the seam adds)
+
+| Host | `interrupt` today | `steer` today | `queue` today | What the seam must add |
+|---|---|---|---|---|
+| **Dashboard / desktop / Ink TUI** (`tui_gateway`) | `_handle_busy_submit` with mode `interrupt`: redirect the active turn when the agent supports it (`_supports_active_turn_redirect`), otherwise queue, then a hard interrupt (`tui_gateway/session_auto_continue.py:400-455`, `_interrupt_busy_session` at `:446-454`) | `AIAgent.steer` via `session.steer` (`tui_gateway/methods_session_interrupt.py:137-172`); during compression, steer and interrupt are demoted to queue (`session_auto_continue.py:410-411`) | Queued submit with an accept-time row (`:406`, `:438-443`) | Today the mode comes only from config (`_load_busy_input_mode`) or the `queued` flag. The seam passes the requested mode to that function, reports the applied mode, and lets `plugin_inject.py` (queue-only today, no accept-time row) use it |
+| **Classic CLI** | `agent.redirect(text)` when supported, else `_interrupt_queue` (hard interrupt; the message becomes the next turn) (`hermes_cli/cli_tui_mixin.py:1535-1551`; `cli_chat_turn_mixin.py:418-441`) | `agent.steer(text)`, refusal → queue (`cli_tui_mixin.py:1515-1530`) | `_pending_input` (`:1531-1534`) | Today `inject_message` always uses `_interrupt_queue` when busy, which is a hard interrupt whatever is asked (`hermes_cli/plugins_injection.py:21-22`). The seam routes through the typed-input logic with the requested mode, instead of the configured `busy_input_mode` |
+| **Messaging gateway** | `_resolve_busy_steer_or_redirect` plus `_interrupt_running_agent_for_busy_event` for typed messages (`gateway/run_busy.py:856-880`) | Same resolver, steer branch | FIFO `_queue_or_replace_pending_event` (`:862-864`) | Internal (plugin) events are forced to queue (`:843-849`, "plugin events carry untrusted payload text"). The seam lets an injected event carry a requested mode while keeping `allow_gateway_control=False`, so mail can steer or interrupt but never run gateway control commands |
+| **All hosts, idle target** | starts a turn | starts a turn | starts a turn | Same on every host (decision 3) |
 
 ### Round 4: how each host handles injected text today (verifies the scope addition)
 
@@ -160,7 +325,7 @@ Design choices taken from the research and the refiner, which the code supports:
 
 - **The gateway's bot-loop guard does not apply to injected mail.** It counts only bot-authored sources (`gateway/authz_mixin.py:600-612`, `if not getattr(source, "is_bot", False): return True`). Injection reuses the chat's stored source (`gateway/run_plugin_injection.py:136-138`). So it is not a hidden cap.
 - **A bare `[SILENT]` answer to an injected gateway turn is not posted.** `gateway/response_filters.py:19-35` defines the silence markers. Only turns whose user row is the internal machinery kind (`internal_notification`) "may vanish on a bare silence marker". That injected mail rows get that kind is to **verify in Trial**.
-- **The injected text is not shown in the Telegram chat.** It enters as an internal `MessageEvent`, not as a chat message; only the turn's answer is sent through the adapter. This is read from the dispatch path above; **verify in Trial**. See SM-Q14.
+- **The injected text is not shown in the Telegram chat.** It enters as an internal `MessageEvent`, not as a chat message; only the turn's answer is sent through the adapter. This is read from the dispatch path above; **verify in Trial**. See SM-Q15.
 
 ### Round 4: which process hosts a session (`runtime/active_sessions.json`)
 
@@ -380,8 +545,9 @@ None of this is merged. `git ls-tree` finds no peer-messaging files in `v0.23.0`
 A1 and A3 were dropped in round 2. They covered the dashboard-only worker and redelivery.
 
 - **A2.** There is one shared copy of the steer → queue → start rule (`_rpc`, `_deliver` and the resume step). Two ways to share it are listed in the options map. The architect picks one.
-- **A4.** The plugin resolves the sender from the calling session, never from model input. A CLI send names itself with `--from`, or defaults to `cli`. A CLI sender has no session, so its reply is stored in the outbox and read with `hermes session-mail status <id>`.
-- **A5.** The 📨 header goes at the very start of the text, so on the phone it is the first visible line.
+- **A4.** The plugin resolves the sender from the calling session, never from model input. A CLI send names itself with `--from`, or defaults to `cli`. A CLI sender has no session, so its reply is stored in the outbox and read with the CLI's `status` command (round 5: `hermes intercom status <id>`, not `hermes session-mail status`).
+  - *(Round 5)* Intercom today names the sender by its endpoint name, `self_meta()` (`__init__.py:94-100`). That must become the calling **session**: the `session_id` keyword the tool handler receives (`model_tools.py:875`), and its title.
+- **A5.** The header goes at the very start of the text, so on the phone it is the first visible line. *(Round 5: this is intercom's header line, reworded per SM-Q7.)*
 - **A6.** Mail never uses `display_kind: "hidden"` (`tui_gateway/methods_prompt.py:743`).
 - **A7.** No mail is dropped for repetition (settled decision 5).
 - **A8** *(round 4)*. A process delivers only to sessions it hosts now:
@@ -390,20 +556,23 @@ A1 and A3 were dropped in round 2. They covered the dashboard-only worker and re
   - the gateway to sessions its session store knows (`lookup_by_session_id`).
 
   Two processes never deliver the same mail: claiming is one atomic update of the outbox row.
-- **A9** *(round 4)*. Mail for a session that no process claims goes to the dashboard. The dashboard resumes the session and starts a turn there, using the dispatcher's rule (A2) or the seam after an in-process resume. If no dashboard runs, the mail waits in the outbox; that is not a hold, since nothing could deliver it.
-- **A10** *(round 4)*. The poller's interval is short enough to count as "right away" (seconds, not minutes). The tool returns once the mail is in the outbox. The delivery result (`steered`, `queued`, `started`, error) is filled in by the host and readable with `status`. The architect may let the tool wait briefly for the claim.
+
+  *(Round 5: still true, but the hosting process is reached through its intercom socket, which the registry names per session. "Claiming" an outbox row is superseded: the sender connects to the host's socket and gets the receipt back.)*
+- **A9** *(round 4)*. Mail for a session that no process claims goes to the dashboard. The dashboard resumes the session and starts a turn there, using the dispatcher's rule (A2) or the seam after an in-process resume. If no dashboard runs, the mail waits in the outbox; that is not a hold, since nothing could deliver it. *(Round 5: kept. The dashboard's intercom socket takes mail for a session with no live registry entry. Mail waiting with no dashboard is delivered when the dashboard's socket comes up and reads the outbox.)*
+- ~~**A10** *(round 4)*. The poller's interval is short enough to count as "right away"…~~ *(Superseded in round 5: there is no poller.)* Sends are synchronous over the socket: the tool and the CLI get the receipt (requested and applied mode, or the error) at once, as intercom's `send` does today (`inbox.py:490-538`).
 
 ## Options map
 
-### SM-Q12 (round 4): what to build on
+### SM-Q12 (round 4; answered in round 5: option d): what to build on
 
 | Option | What it would be now | Fork cost | Rebase picture | Fit with Alex's rules |
 |---|---|---|---|---|
+| **(d) Our fork of `majordave/hermes-intercom` — chosen by Alex (round 5)** | Intercom's tool, sockets, registry, UID check, receipts, forgery defence and ask/reply, extended:<br>• one registry entry per live session in the dashboard, TUI and desktop processes;<br>• gateway hosting;<br>• delivery through the seam with interrupt, steer and queue;<br>• addressing through `state.db`;<br>• the outbox;<br>• automatic replies, with the caps removed;<br>• a CLI command.<br>The garbage-collector lookup and private-field delivery stay only as the fallback when the seam is missing | The plugin lives in its own repo (shared upstream), vendored into the Hermes fork (SM-Q14, asked elsewhere). The core seam is a small fork patch, the same as in (a). Intercom's ~1,800 lines grow by our features | The seam is the only core patch, the same as (a). At the v0.23 rebase, the miyu4u fork's unified-gateway transport is the prior art for CLI, TUI and desktop sessions | Plugin first, one small upstreamable seam, credit and history with the existing #81885 implementation. Its caps and its endpoint-per-process model must change. The ask/reply protocol is kept (SM-Q16) |
 | **(a) Our own protocol** | Plugin (outbox, poller per process, addressing, replies, CLI) plus one core seam: `inject_message(mode="steer_or_queue")` in the three hosts (`hermes_cli/plugins_injection.py`, `tui_gateway/plugin_inject.py`, `gateway/run_plugin_injection.py` / `gateway/run_busy.py`). Each host reuses its own steer and queue code (CLI `cli_tui_mixin.py:1515-1532`, TUI `session_auto_continue.py:400-455`, gateway `run_busy.py:856-858`). Header-only framing (SM-Q7 A) | The seam only, in 3 host files plus tests (an estimate: low hundreds of lines). The rest is a plugin | The seam touches small host files on v0.22. Upstream has nothing in these spots yet. It is the same idea as closed #83661, so it is offerable upstream on #81885 / #103748 | Plugin first, one small upstreamable patch. No caps. Reaches gateway sessions. Steered mail still sits inside the user marker (SM-Q7) |
 | **(b) #106423 + #136861 (+ the fixes from the closed fork pull request) as the base, ours on top** | Their mailbox and per-request drain as the bus and the running-session delivery in every host, with their peer frame (`[PEER SESSION MESSAGE — … not from the user …]`). Our seam only for **waking** idle sessions in each host. Our outbox (record, replies, `status`), addressing, CLI and footer. Caps removed (50-file inbox, 8,000-character body). Discovery widened beyond "recent and not ended" | Carry roughly +1,100/−150 lines of unmerged core code (+470 base, the rebase changes, about +595/−153 fixes) across `tools/`, `agent/prompt_builder.py`, `agent/turn_iteration_prep.py`, `agent/context_compressor.py` and desktop TypeScript. Ported **back** from `main` to our v0.22 base. Plus our cap removal as a patch on their patch, plus the seam | Large conflicts are likely at the v0.23 rebase, and again whenever upstream merges a different version (none of the three is mergeable now; no maintainer position). If upstream merges it as is, most of the carried code disappears, but its caps come back | A new core toolset, against "plugin first" and the "new core tool" rubric. Brings the peer frame Alex wanted for steered mail. No wake, no replies, capped: the parts we need most are still ours |
 | **(c) Wait for upstream** | Nothing now; adopt what lands | None | None until something merges | Nothing upstream wakes idle sessions, gives replies, or drops caps, and #123218 excludes gateway sessions by design. Waiting delivers less than Alex asked for, at an unknown date |
 
-### Round 4: delivery through each host (inside option a or b)
+### Round 4: delivery through each host (inside option a or b; round 5: now inside option d, and each "seam →" cell takes the requested mode; see "Round 5: delivery modes per host")
 
 | Path | Running target | Busy, cannot steer | Idle, live in this process | Live nowhere |
 |---|---|---|---|---|
@@ -449,6 +618,12 @@ A1 and A3 were dropped in round 2. They covered the dashboard-only worker and re
 
 The one change: if you pick SM-Q12 (b), steered mail gets upstream's peer frame (option D) for free. That would not cover queued or started mail.
 
+*Round 5 re-check (intercom base; SM-Q12 went to intercom, so D is out):* intercom has its own frame, `📡 hermes@<endpoint-name> says:` and the body. Its v3 dropped the earlier "NOT by the user" wrapper (`docs/AGENTS.md`, v3). It names a process endpoint, not a session, and it does not say the mail is not from you. Choices:
+- A′, header only, in intercom's style: keep the `📡` header line, but make it name the sender session and say it is not you, for example `📡 hermes@<session title> (session <id>, not Alex) says:` or `📡 INTERCOM from <session title> · not Alex`. Add our footer. Keep intercom's zero-width-space forgery defence and echo stripping, and update the echo regex to match;
+- keep intercom's v3 frame unchanged.
+
+➡️ A′. It is the same decision as A, in intercom's form. Intercom's current header carries neither the sender session nor "not you", and the footer carries the no-empty-replies rule. Interrupt and queued deliveries become ordinary user turns, like the rest, so the header stays the only separation on every path.
+
 ---
 
 ❓ **SM-Q8** — **Which text is the reply when a mail shares a turn?** A steered mail often joins one of your turns, and queued mails can merge with other queued text. Choices:
@@ -457,6 +632,12 @@ The one change: if you pick SM-Q12 (b), steered mail gets upstream's peer frame 
 - 3, the target replies with the tool.
 
 ➡️ 2. The reply stays automatic and comes from the final answer, and your own long answers are not mailed to agents.
+
+*Round 5 re-check (intercom base):*
+- Intercom already has option 3 in its own form: `ask` plus an explicit `reply` with the `request_id` (`inbox.py:599-607`).
+- Option 2 still holds for automatic replies. The `[REPLY <id>]` block takes intercom's `request_id`, or our mail id, as its id.
+- An `interrupt` delivery makes the mail its own turn, so its final answer is the reply, with no block needed. The block still works there.
+- How `ask` and `reply` live next to automatic replies is SM-Q16.
 
 ---
 
@@ -474,6 +655,10 @@ The sender's session source answers it directly. Choices:
 
 *Round 4 re-check (gateway senders):* a messaging-gateway session stores the platform name as its source (for example `telegram`; `gateway/session_recovery.py:173`, `gateway/slash_commands_session.py:792`). It is not in the list, so it is woken, in the same Telegram topic: the gateway starts the turn in that chat and the answer is posted there. That is what the Telegram-topics use case on #81885 asks for. A classic CLI sender in its own terminal is source `cli` and is woken by its own process if it is still open. If not, the dashboard wakes it.
 
+*Round 5 re-check (intercom base):* unchanged. Two notes:
+- A reply is mail like any other, so it is delivered with the default `steer` mode. A reply never interrupts the sender unless the replying session asks for `interrupt` explicitly.
+- Intercom's blocking `ask` has one more sender case: a sender still waiting inside its tool call gets the reply as the tool result, not as a wake. See SM-Q16.
+
 ---
 
 ❓ **SM-Q10** — **How should `@model-testing` resolve before DER-686 lands?** Five projects follow `<Project name> — Orchestrator`, but Model Testing's owner is titled "Model Master". Choices:
@@ -483,6 +668,8 @@ The sender's session source answers it directly. Choices:
 
 ➡️ Rename the session (a one-line `/title`, no code). DER-686 replaces the title rule later.
 
+*Round 5 re-check (intercom base):* unchanged. Intercom's own names (`<profile>-<cwd folder>-<pid>`) cannot name an owner session that is not live, so the `@project` rule goes through `state.db` either way.
+
 ---
 
 ❓ **SM-Q11** — **Is "looks like you typed it" acceptable on the phone for v1?** Every mail is a bubble in your colour with a double tick, appearing 0–30 seconds after the turn ends, marked only by its 📨 first line.
@@ -491,11 +678,17 @@ The sender's session source answers it directly. Choices:
 
 *Round 4 re-check:*
 - **Terminal sessions** would show mail like typed input that was queued or steered, if the seam reuses the CLI's typed-input routine: that routine prints a "steered" or "queued for next turn" line with a preview (`hermes_cli/cli_tui_mixin.py:1527-1534`).
-- **Telegram** is different: the mail is **not shown in the topic at all**. Only the target's answer is posted, including any `[REPLY …]` block markers from SM-Q8; a bare `[SILENT]` answer is suppressed. That is a separate decision: see SM-Q14. For the phone app, the answer above stands.
+- **Telegram** is different: the mail is **not shown in the topic at all**. Only the target's answer is posted, including any `[REPLY …]` block markers from SM-Q8; a bare `[SILENT]` answer is suppressed. That is a separate decision: see SM-Q15. For the phone app, the answer above stands.
+
+*Round 5 re-check (intercom base):*
+- **Phone:** the bubble's first line becomes intercom's header (SM-Q7 A′) instead of the 📨 one. Everything else stands.
+- **Interrupt:** an `interrupt` delivery on the dashboard redirects or stops the turn Alex may be watching. The phone shows that like any redirect, with nothing marking that a mail caused it beyond the header in the next user bubble. That is accepted by Alex's delivery-modes decision; the tool description limits interrupt to intent.
 
 ---
 
-❓ **SM-Q12** — **Build on our own protocol, on upstream's peer messaging, or wait?** *(Already asked, not answered yet; restated for the wider scope.)* Upstream has three open, unmerged pull requests: #106423 by a maintainer, #136861 rebasing it, and #123218 adding replies and acknowledgements. They steer mail into a **running** session in every host (CLI, TUI, dashboard, gateway) from a file mailbox. They do **not** wake idle sessions, have no automatic replies, and cap the inbox at 50 and the body at 8,000 characters. #123218 also refuses Telegram and other gateway sessions. The fixes that stop mail being lost, looking like you, or landing in the wrong turn sit in a fork pull request that was closed unmerged. Choices:
+❓ **SM-Q12** — **Build on our own protocol, on upstream's peer messaging, or wait?** ✅ **Answered by Alex (2026-11-09 ~20:00), with a fourth option: (d) build on our fork of `majordave/hermes-intercom`** ("I want us to make a fork of intercom, add to their code and post the update in the issue above"). Recorded as decision 12; the options table above keeps (a) to (c) as the record. The round-4 text below is kept as asked.
+
+*Round 4 text:* Upstream has three open, unmerged pull requests: #106423 by a maintainer, #136861 rebasing it, and #123218 adding replies and acknowledgements. They steer mail into a **running** session in every host (CLI, TUI, dashboard, gateway) from a file mailbox. They do **not** wake idle sessions, have no automatic replies, and cap the inbox at 50 and the body at 8,000 characters. #123218 also refuses Telegram and other gateway sessions. The fixes that stop mail being lost, looking like you, or landing in the wrong turn sit in a fork pull request that was closed unmerged. Choices:
 - (a) **Our own protocol:**
   - our outbox, a light poller in each process, addressing, replies, CLI, header framing;
   - one small seam (`inject_message(mode="steer_or_queue")`) in the CLI, gateway and TUI/dashboard hosts, which also does the wake.
@@ -520,22 +713,50 @@ The sender's session source answers it directly. Choices:
 
 ---
 
-❓ **SM-Q14** — **Should mail to a Telegram session also show in its topic?** Injected mail enters the gateway as an internal event, so the topic shows only the target's answer, out of nowhere, and you do not see what the agent was asked or by whom. The Telegram-topics comment on #81885 asks to "show the exchange in the topics". Choices:
+❓ **SM-Q14 (asked elsewhere): deploy method.** Asked of Alex by the "Session Messaging" session, not by this brief. The recommendation there: vendor `alexderz/hermes-intercom` into Alex's Hermes fork as `plugins/intercom` with `git subtree`, so rule 19 holds (no side repos or symlinks into the plugins folder). Recorded here only so the ID is not reused.
+
+---
+
+❓ **SM-Q15** *(was SM-Q14 in round 4; renumbered in round 5)* — **Should mail to a Telegram session also show in its topic?** Injected mail enters the gateway as an internal event, so the topic shows only the target's answer, out of nowhere, and you do not see what the agent was asked or by whom. The Telegram-topics comment on #81885 asks to "show the exchange in the topics". Choices:
 - (a) answer only (today's behaviour, no extra code);
 - (b) before the turn starts, post the 📨 header and the body into the topic as a bot message, through the same adapter (one send per mail).
 
 ➡️ (b). Telegram is one of your phone surfaces, and without it a gateway session's chat reads as the bot talking to itself. It is one adapter send, and it needs no change to how the turn runs.
 
+*Round 5 re-check:* unchanged by the intercom base. The posted text is intercom's header (SM-Q7 A′) and the body.
+
+---
+
+❓ **SM-Q16** — **What happens to intercom's blocking `ask` and explicit `reply`, now that replies are automatic?**
+- **Today:** intercom's `ask` holds the sender's tool call for up to 600 s by default (3,600 s max) until the target calls `intercom(action="reply", request_id=…)`. The correlation lives only in the asking process's memory, so it is lost on restart. Our design makes every reply automatic: the target's final answer (its `[REPLY]` block) goes back as new mail and wakes the sender.
+- **The conflict:** keeping both as they are gives two reply paths. A target could answer twice, once with the `reply` action and once through the automatic reply, or a waiting `ask` could miss an automatic reply.
+
+Choices:
+- (a) keep `send`, `ask` and `reply` as they are, and add automatic replies only for `send`;
+- (b) keep all three actions for upstream compatibility, but route everything through one reply path:
+  - an automatic reply resolves a waiting `ask` as its tool result;
+  - if the sender is no longer waiting, the reply is delivered as mail;
+  - `reply` becomes an explicit way to send the same reply early;
+  - the outbox records each reply once;
+- (c) drop `ask` and `reply`; every message is `send`, and replies are automatic only.
+
+➡️ (b). It keeps intercom's existing protocol and tests, which the upstream offer relies on. It gives each mail exactly one reply, and an orchestrator that wants a synchronous answer can still `ask`. The ask timeout is a wait on one tool call, not a cap on messages.
+
 ## Open (cannot be settled by reading)
 
 - **Real models and a 📨 header inside the out-of-band user frame.** The Trial's fake model cannot show this. Real use can, and it is the trigger for reopening SM-Q7 option C.
 - ~~**The reaper race at turn end**~~ *(closed in round 4 by `8d4597bf8e` and `1ec78a0dcc`; see finding 2).*
-- *(Round 4)* **The seam's exact shape:** one `mode` argument on `inject_message`, or a new method. How the gateway steers for an internal event, given that `run_busy.py:843-849` deliberately queues internal events because "plugin events carry untrusted payload text". The seam must keep that security split: mail is never treated as a gateway control command (`allow_gateway_control=False`).
-- *(Round 4)* **Poller wake-up:** a short poll interval, or a file watch on the outbox. The cost in every CLI and TUI process when there is no mail, to be measured.
-- *(Round 4)* **The dashboard as the "live nowhere" host** needs a dashboard-only start point again: the `dashboard/plugin_api.py` import, or a check for the dashboard's injector install. Round 1 left this open, and the refiner removed it with the worker. It comes back with the poller. **Verify in Trial.**
+- *(Round 4, reshaped in round 5)* **The seam's exact shape:**
+  - `inject_message(..., mode="interrupt"|"steer"|"queue")` with fallback, returning the applied mode (Alex: the host falls back instead of returning False).
+  - How the gateway steers or interrupts for an internal event. `run_busy.py:843-849` deliberately queues internal events because "plugin events carry untrusted payload text", so the seam must keep that security split: mail is never treated as a gateway control command (`allow_gateway_control=False`).
+  - How the dashboard picks redirect versus a hard interrupt for a compute-host turn.
+- ~~*(Round 4)* **Poller wake-up**~~ *(superseded in round 5: no poller; intercom's sockets push).* What replaces it: the cost of one listening socket thread per process, which is intercom's existing design.
+- *(Round 5)* **One registry entry per live session in a `tui_gateway` process:** written when a session goes live and removed when it is reaped or closed. It must stay right across compression, which rotates the session id, and across the reaper's park and unpark. Intercom today writes one entry per process at plugin load. **Verify in Trial.**
+- *(Round 5)* **The fallback without the seam:** what the plugin does on a Hermes build without the seam (feature detection). It should be intercom's current CLI-only behaviour, plus refusal (not silent parking) for dashboard, TUI and gateway targets, so mail never lands in the wrong session through the process-wide `pre_llm_call` drain.
+- *(Round 4)* **The dashboard as the "live nowhere" host** needs a dashboard-only start point again: the `dashboard/plugin_api.py` import, or a check for the dashboard's injector install. Round 1 left this open, and the refiner removed it with the worker. *(Round 5: it is still needed, to know which intercom socket takes mail for sessions that are live nowhere.)* **Verify in Trial.**
 - *(Round 4)* **Gateway routing for an idle session:** whether `lookup_by_session_id` finds every gateway session a title or id can name, including after compression rotates the session id. The live install has no gateway sessions, so **verify in Trial**.
 - *(Round 4)* **Whether injected gateway turns are stored with the `internal_notification` kind**, so a bare `[SILENT]` reply is suppressed rather than posted. **Verify in Trial.**
-- **Mail to a session that is running the caller's own turn** (self-mail, or a reply to a session whose turn is finishing) over the loopback socket. It looks safe in the code, but was not traced line by line.
+- **Mail to a session that is running the caller's own turn** (self-mail, or a reply to a session whose turn is finishing) over the loopback socket. It looks safe in the code, but was not traced line by line. *(Round 5: intercom refuses a target in the same process today; the change to refuse only the same session makes this case reachable, so the Trial must cover it.)*
 - **How long a start holds the sender's tool call** for an idle target whose agent must be built. This is measured in the Trial.
 
 ## Verify later (how we would know the build matches this brief)
@@ -544,7 +765,7 @@ The sender's session source answers it directly. Choices:
 - **Queue and start:**
   - mail into a busy session that cannot steer returns `queued` and runs after the turn without interrupting it;
   - mail into an idle session that is not loaded returns `started`, and the turn runs in the dashboard;
-  - no delivery produces a redirect or an interrupt.
+  - ~~no delivery produces a redirect or an interrupt~~ *(round 5: true for `steer` and `queue`; see the delivery-mode checks below).*
 - ~~**Send-time delivery from all three callers**~~ *(superseded in round 4 by the poller checks below; the loopback-socket part remains for the dashboard waking a session that is live nowhere).*
 - *(Round 4)* **Every host delivers by the same rule:**
   - mail into a running classic CLI turn is steered, and the turn is **not** interrupted (today's `inject_message` would hard-interrupt it);
@@ -553,8 +774,8 @@ The sender's session source answers it directly. Choices:
   - mail into an idle gateway session starts the turn in that chat, and the answer is posted there.
 - *(Round 4)* **One claimant:** with the dashboard, a CLI and a gateway all running, each mail is delivered exactly once, by the process that hosts the target. A mail for a session that is live nowhere is woken by the dashboard.
 - *(Round 4)* **Gateway sender:** a reply to a mail sent from a Telegram session wakes that session in its topic (SM-Q9).
-- *(Round 4, SM-Q14 option b)* **Telegram shows the exchange:** the 📨 header and body appear in the target's topic before its answer.
-- *(Round 4)* **Idle cost:** with no mail, a CLI or TUI process shows no measurable extra CPU from the poller.
+- *(Round 4, SM-Q15 option b)* **Telegram shows the exchange:** the 📨 header and body appear in the target's topic before its answer.
+- *(Round 4)* **Idle cost:** with no mail, a CLI or TUI process shows no measurable extra CPU ~~from the poller~~ *(round 5: from intercom's socket thread)*.
 - **Errors are returned, not held:** a `SESSION_NOT_OWNED` target returns the error to the sender, and the outbox records it.
 - **Replies:**
   - a reply returns to the sender by the same rule;
@@ -562,11 +783,25 @@ The sender's session source answers it directly. Choices:
   - a two-session debate runs several rounds and stops only at `[SILENT]`;
   - a mail steered into a long unrelated turn returns only its `[REPLY <id>]` block (SM-Q8 option 2).
 - **Unwakeable senders (SM-Q9 option b):** a reply to a sender whose source is `cron`, `subagent` or `oneshot` is stored and wakes nothing, whatever its end reason (`cron_complete`, `cron_incomplete_no_output`, `agent_close`, `cli_close`, or none). A reply to an owner session (source `cli`) whose terminal was closed (`cli_close`) wakes it.
-- **Existing sessions get the tool:** a session created before the plugin was enabled lists and calls `session_message` after a dashboard restart, and pays one cache miss on its first turn, not one on every turn.
+- **Existing sessions get the tool:** a session created before the plugin was enabled lists and calls `intercom` *(round 5; was `session_message`)* after a dashboard restart, and pays one cache miss on its first turn, not one on every turn.
 - **Addressing:** `@hermes-improvement`, an exact title, an id prefix and `Home` each resolve to the compression tip after `/compress`. An ambiguous title is refused with the candidates.
 - **Outbox and CLI:**
-  - every send records sender, target, body, delivery result, reply and timestamps, with no hop column;
+  - every send records sender, target, body, requested and applied mode *(round 5)*, reply and timestamps, with no hop column;
   - `send`, `list` and `status` run without starting a turn;
   - a CLI sender reads its reply with `status`.
-- **Phone:** after the turn ends, the mail shows on Hermes Mobile as a bubble whose first line is the 📨 header.
-- **No caps, no retries:** the plugin has no hop, rate, duplicate or daily cap, and no retry loop or give-up timer.
+- **Phone:** after the turn ends, the mail shows on Hermes Mobile as a bubble whose first line is the header (round 5: intercom's header, SM-Q7 A′).
+- **No caps, no retries:** the plugin has no hop, rate, duplicate or daily cap, and no retry loop or give-up timer. *(Round 5: intercom's 6-per-minute rate limit, 120-second duplicate refusal, 10-message pending cap and 8,000-character body cap are gone. A test sends 20 identical messages in a minute and all 20 arrive.)*
+- *(Round 5)* **Delivery modes on every host** (dashboard or TUI, classic CLI, gateway with a test adapter):
+  - `delivery` omitted → `steer` is requested and applied into a running turn;
+  - `steer` into a target that cannot steer → `queue` is applied, and the receipt says so;
+  - `interrupt` → redirect where the host supports it, else a hard interrupt with the mail as the next turn; on a host where interrupt is unsupported → `steer`, else `queue`;
+  - an idle target starts a turn for every mode;
+  - the outbox shows requested and applied mode for each case;
+  - the tool description contains Alex's sentence on interrupt.
+- *(Round 5)* **Many sessions in one process:**
+  - two dashboard chats can mail each other;
+  - mail addressed to dashboard chat A never lands in chat B: no process-wide `pre_llm_call` drain;
+  - after `/compress`, the registry entry follows the new session id.
+- *(Round 5)* **Intercom compatibility:** intercom's existing 17 protocol tests still pass, except where a test asserts a removed cap (those change with the cap). `ask` gets an automatic reply as its tool result, and an explicit `reply` and an automatic reply never both deliver for one mail (SM-Q16 option b).
+- *(Round 5)* **Seam detection:** on a Hermes build without the seam, the plugin keeps intercom's CLI-only delivery, and refuses dashboard, TUI and gateway targets with a clear error instead of parking them.
+- *(Round 5)* **Upstream drafts exist and were not posted:** an update for #81885 (and, if chosen, a pull request text for `majordave/hermes-intercom` and for the seam) sits in `docs/` on the intercom branch, marked for Alex's review. Nothing was posted by an agent.
