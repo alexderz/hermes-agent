@@ -15,9 +15,10 @@
   - [ ] The turn's answer is posted in the topic as usual, with any `[REPLY <id>]` block visible.
   - [ ] A reply to a Telegram sender is delivered into its own topic, starting a turn there if it is idle.
   - [ ] Injected messages still carry no gateway control (`allow_gateway_control=False`): a message cannot run gateway commands.
+  - [ ] A bare `[SILENT]` answer to a message is not posted to the topic; real answers are (Trial round 2, R4).
   - [ ] A message from a Telegram-source sender names the platform in its header (`hermes@<title> (Telegram)`).
 - **Out of scope** — other platforms' look (they follow the same rule where their adapter can post); a Telegram client change.
 
 ## Optional
 
-- Notes: whether a bare `[SILENT]` answer stays out of the topic is checked in the Trial. Security decides at Spec whether group chats are left out of the post (HLD O7); if so, a group chat shows only the answer.
+- Notes: Security decides at Spec whether group chats are left out of the post (HLD O7); if so, a group chat shows only the answer.
