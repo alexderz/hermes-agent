@@ -149,3 +149,72 @@ Checked only the round-2 delta and the one new fact: SM-Q9, the "ended" facts, C
 No requirement dies, and no new unresolved point appears.
 
 Refine: pass
+
+## Round 4
+
+Scope: the brief after Alex's three new decisions (all sessions, delivery modes, build on intercom), in brief rounds 4 and 5. I read the brief in full (808 lines), the intercom clone at `ae90a2a`, and the host code in this worktree. Out of scope and not reopened: the three new decisions, settled decisions 2 and 4–8, and "no caps, holds or approval gates".
+
+### Fact checks
+
+| Claim in brief.md | Result |
+|---|---|
+| Intercom: one `intercom` tool (`list/send/ask/reply`); `inbox.start()` once per process, id `<pid>-<time>`, one endpoint per process; `0600` socket with a peer-UID check | **Verified** (`__init__.py:153-178`, `inbox.py:625-632`). The code files plus tests are 1,380 lines; the 1,783 total includes docs. 17 tests. |
+| Intercom delivery: garbage-collector lookup of `HermesCLI`; idle → `_pending_input`; busy → `agent.steer`, a refusal is "held_steer_rejected" with nothing queued; no agent → parked and drained by `pre_llm_call` into the next turn of **any** session in that process | **Verified** (`inbox.py:201-269`, `__init__.py:137-147`). One path is missing from the brief: an agent that exists but is idle with no `_pending_input` is "parked_idle" (`inbox.py:263-269`). It changes nothing. |
+| Intercom caps: 8,000 characters, 6 per peer per minute, duplicate refusal for 120 s, 10 parked | **Verified** (`inbox.py:35-39`, `:500-514`). |
+| Intercom refuses a target in the sender's own process | **Verified** (`inbox.py:498-499`, `"target is the current session"`). |
+| CLI host: `inject_message` puts text on `_interrupt_queue` when busy (a hard interrupt), else `_pending_input`; typed input already has steer, else queue, and redirect, else interrupt | **Verified** (`hermes_cli/plugins_injection.py:19-23`; `hermes_cli/cli_tui_mixin.py:1505-1551`). The seam can reuse the typed-input routine with the mode passed in. |
+| TUI and dashboard host: injection only queues | **Verified** in round 1 (`tui_gateway/plugin_inject.py:24-64`). |
+| Gateway host: internal events always go to the FIFO queue, never steer or interrupt; typed input has steer or redirect, else interrupt | **Verified** (`gateway/run_busy.py:843-880`). Plugin injection sets `internal=True, allow_gateway_control=False` (`gateway/run_plugin_injection.py:145-155`). |
+| `lookup_by_session_id`; `internal_notification` is the only kind that may vanish on `[SILENT]` | **Verified** (`gateway/session.py:1311-1317`; `gateway/response_filters.py:19-34`). |
+| `active_sessions.json` writers: CLI keyed by its stored session id; TUI, dashboard and desktop keyed by `session_key` with metadata; gateway keyed by its gateway session key, only while a turn runs | **Verified** (`cli.py:925-940`; `tui_gateway/session_lifecycle.py:63-85`; `gateway/run_busy.py:236-262`). |
+| `1516a52669`, `8d4597bf8e`, `1ec78a0dcc`, `c843eea710` are on this branch; queued-prompt reaper budget of 30 polls | **Verified** (`git merge-base --is-ancestor`; `tui_gateway/server.py:165`, `session_lifecycle.py:950`). |
+| "`ctx.session_surface()` (`:29`) … do exist here (`hermes_cli/plugins.py:602`)" | **Wrong.** No `session_surface` exists anywhere in `hermes_cli/`, `tui_gateway/`, `gateway/` or `agent/`. Line 602 is `inject_message`. The `created_source` column does exist (`hermes_state_common.py:385`). This matters for one point below: the plugin has no API that says "this process is the gateway". |
+
+The upstream pull-request facts (#106423, #136861, #123218) and the miyu4u fork were not re-read. Since SM-Q12 is answered, nothing in this slice rests on them.
+
+### Keep / simplify / kill
+
+| Item | Verdict | Reason |
+|---|---|---|
+| Intercom mapping table ("what intercom does, what we change, what we add") | Keep | Correct against the code. It is the core of the brief. |
+| Delivery-modes-per-host table, and the seam with fallback on every host | Keep | Settled by Alex. The facts above support each "today" cell. |
+| **One registry entry per live session in a `tui_gateway` process** (decision 1 sub-bullet, mapping row, Open point) | **Simplify: reuse `runtime/active_sessions.json`** | Hermes already records, for each live CLI, TUI, dashboard and desktop session, the `pid` of the process that hosts it. That is its own lease ("at most one live owner per stored session"). Intercom already records one endpoint per `pid`. So a sender resolves the address to a session id, reads its lease's `pid`, and connects to that pid's intercom socket. Intercom keeps its one entry per process. No per-session entries to write or remove, and none to keep right across compression or the reaper's park and unpark. That keeps the "one entry per live session" outcome Alex listed for dashboard and TUI hosting, using the registry Hermes already maintains. The Open point "one registry entry per live session" goes. |
+| **Live nowhere → the dashboard's intercom socket**, which needs a "this process is the dashboard" signal (Open point; A9) | **Simplify: the sender wakes it with the dispatcher rule** | A session with no live lease and no gateway route is idle by definition, so its only action is "start a turn in the dashboard". The dispatcher rule already does that from any process over the dashboard's loopback WebSocket (`1516a52669`, round 2 facts). No dashboard detection, and no `dashboard/plugin_api.py` start point. The A2 options (shared module or subprocess) and the synchronous-handler constraint (round 3) apply only to this path. |
+| **A9:** "if no dashboard runs, the mail waits in the outbox … delivered when the dashboard's socket comes up and reads the outbox" | **Kill** | That brings back a startup scan, and redelivery, which rounds 2–3 removed ("errors are returned, not held"). When no dashboard answers, the send returns the error, and the outbox records it. The sender can send again. |
+| Gateway routing: a target known to the gateway store goes to the gateway's socket | Keep, **with one new open point** | The gateway's endpoint has to mark itself in intercom's registry, so a sender can find it. There is no `ctx.session_surface()` (fact check), so the plugin needs some other in-process signal that it runs inside the gateway. The planner picks one; the Trial checks it. |
+| **SM-Q16** recommends (b): one shared reply path that resolves a waiting `ask` from the automatic reply, makes `reply` optional, and records each reply once | **Simplify: recommend (a)** | (a) already gives each mail exactly one reply, with no new code. An `ask` is answered by the explicit `reply`, which intercom tells the target to call. A `send` gets the automatic reply. Automatic replies skip `ask` mail, so both paths can never fire for one mail. Intercom's protocol and its 17 tests stay as they are, which is what the upstream offer needs. (b) adds cross-process plumbing (an automatic reply in the target process resolving an in-memory wait in the asker's process, plus "never both" de-duplication) for a gain nobody asked for. |
+| SM-Q15 (b): post the header and body into the Telegram topic | Keep | It is one adapter send. It is the gateway form of round 1's A6 ("Alex must see it"); without it, Alex never sees the mail on that surface. |
+| SM-Q7 A′, SM-Q8, SM-Q9, SM-Q10, SM-Q11 re-checks | Keep | Consistent with the new base. |
+| Seam feature detection: without the seam, keep intercom's CLI-only delivery and refuse other targets | Keep | Feature detection is Alex's decision. Refusing instead of parking is the smallest safe form. The process-wide `pre_llm_call` drain then runs only on the no-seam fallback, never on a host that has the seam. |
+| Removing intercom's four caps | Keep | Settled decision 5. |
+| Same-process delivery: refuse only the same **session** | Keep | Needed for two dashboard chats to mail each other. |
+| **Superseded text left in the brief** (808 lines, with struck-through rounds) | **Kill from brief.md** | The record is in git and in this file. What is left now contradicts the current design in several places that a planner would read as live requirements: <br>• Reflect, paragraph 1: "lands at once inside the dashboard … never cancels or redirects"; <br>• Design choices: "Reuse the dispatcher's rule instead of `ctx.inject_message`", which is now the seam itself; <br>• Plugin API: "`inject_message` only queues … Not used"; <br>• Constraints: "The `session_message` tool handler is synchronous"; <br>• A8's "claiming is one atomic update of the outbox row"; <br>• Verify later: "One claimant" (from the poller design), "Steer … starting with the 📨 header", "Errors … `SESSION_NOT_OWNED`" (a dashboard-socket error that a CLI-hosted target no longer returns); <br>• the full sections "Round 4: why a per-process poller again", the outbox-plus-poller design choice, "Delivery at send time", and the SM-Q12 options table and round-4 text. <br>Keep a three-line change log, the decisions, the current facts, the open points and the checks. |
+| Round 4 upstream peer-messaging section and miyu4u section | Simplify | SM-Q12 is answered. Keep five lines for the #81885 offer: what each pull request does, its caps, and that none wakes, replies or reaches Telegram. The rest is in git. |
+
+### Smallest first slice, and an order across hosts
+
+Every host Alex named stays in the chunk. Build and trial them in this order, so the most-used targets work first and each step reuses the one before:
+
+1. **Core seam on the `tui_gateway` and classic CLI hosts**, plus the intercom changes they need:
+   - addressing through `state.db`, then the target's lease `pid`, then that pid's intercom socket;
+   - the `delivery` argument with fallback, and requested and applied mode in the receipt;
+   - same-session (not same-process) refusal, and the four caps removed;
+   - the A′ header and footer;
+   - the outbox, and automatic replies via `post_llm_call` for `send` (SM-Q16 a);
+   - the `hermes intercom send|list|status` CLI;
+   - "live nowhere" woken with the dispatcher rule.
+
+   This covers the owner sessions, `Home`, two dashboard chats, desktop, the Ink TUI and the classic CLI. On the CLI host it replaces intercom's garbage-collector lookup and private-field delivery with the seam.
+2. **Gateway host:** the seam's gateway path (mode for an internal event, still with `allow_gateway_control=False`), the gateway endpoint marking itself, routing by `lookup_by_session_id`, and the SM-Q15 topic post. It comes second because the live install has no gateway sessions (the Trial must build them with a test adapter) and because the gateway carries the one security question (untrusted text that may steer).
+3. **Upstream drafts** in `docs/` (#81885 update, intercom pull request, seam pull request), for Alex's review. Nothing posted.
+
+### Delta for the gatherer
+
+1. Reuse `runtime/active_sessions.json` (session id → `pid`) to find the hosting process, keeping intercom's one entry per process. Drop the per-session registry entries and their Open point.
+2. Wake a session that is live nowhere from the sender, with the dispatcher rule over the dashboard's loopback socket. Drop the "dashboard detection" Open point and A9's waiting in the outbox; with no dashboard, the error is returned.
+3. SM-Q16: recommend (a); automatic replies skip `ask` mail.
+4. Correct the `ctx.session_surface()` claim (it does not exist here), and add the open point: how the gateway process's intercom endpoint marks itself.
+5. Remove superseded text from brief.md, in particular the contradictions listed above; shrink the upstream and miyu4u sections to a short summary.
+6. Add the host order above (tui_gateway and CLI, then gateway, then the drafts) as the build order.
+
+Refine: back to Gather — find the hosting process through `active_sessions.json` `pid` instead of per-session intercom entries; wake live-nowhere sessions from the sender with the dispatcher rule (drop dashboard detection and A9's outbox waiting; with no dashboard, return the error); SM-Q16 → (a); correct the non-existent `ctx.session_surface()` and add the open point on how the gateway endpoint identifies itself; strip superseded and contradicting text from brief.md (Reflect paragraph 1, "Reuse the dispatcher's rule instead of inject_message", "inject_message … Not used", the `session_message` synchronous constraint, A8's atomic claim, the poller-era and `SESSION_NOT_OWNED` checks, the poller and send-time sections, the SM-Q12 table); shrink the upstream and miyu4u sections; record the host build order: tui_gateway and CLI, then gateway, then drafts.
