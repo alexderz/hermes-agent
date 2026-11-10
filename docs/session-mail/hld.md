@@ -8,7 +8,7 @@
   "Scope addition", "Delivery modes" and "Build on intercom".
 - Date: `2026-11-09` (HLD round 2; round 1 is in git at `f72a12780b`)
 
-Alex has not answered SM-Q7 to SM-Q11, SM-Q14 (asked elsewhere), SM-Q15 or SM-Q16. This HLD is
+Alex has not answered SM-Q7 to SM-Q11, SM-Q15 or SM-Q16. SM-Q14 is answered (2026-11-10: subtree vendoring, "your plan is good"). This HLD is
 designed on the recommended answers. Each place where a different answer changes the shape is
 listed under [Open](#open).
 
@@ -372,7 +372,7 @@ candidates. The switch-over to DER-686 is by column presence, with no flag.
 | **SM-Q15 (b)** | Before the turn starts, one adapter send posts the header and body into the target's chat or topic. It needs security's view first (B4c, O7) |
 | **Bot-loop guard** | It counts bot-authored sources only; injection reuses the chat's human source (`gateway/authz_mixin.py:600-612`). It is not a cap |
 
-### D7: deploy (SM-Q14 as recommended)
+### D7: deploy (SM-Q14, answered: subtree vendoring)
 
 1. **Code:**
    - The seam (P1) and the wake module (P5) land on alexderz/hermes-agent's
@@ -471,7 +471,7 @@ candidates. The switch-over to DER-686 is by column presence, with no flag.
 | O3 | **SM-Q9 (b):** store-only for `cron`/`subagent`/`oneshot` | (a): every sender is woken. (c): `ended_at`, not advised |
 | O4 | **SM-Q10:** rename "Model Master" | Alias map: a config setting and one resolver step |
 | O5 | **SM-Q11:** the phone look is acceptable for v1 | A Mobile change would be a new chunk |
-| O6 | **SM-Q14 (asked elsewhere):** designed on vendoring with `git subtree` as `plugins/intercom` | A **git submodule**: the install checkout needs `--recurse-submodules`, and the pull and deploy steps change. **Installing from the intercom repo** as a user plugin breaks rule 19 (a side repo). Either way P1 and P5 stay in hermes-agent |
+| O6 | **SM-Q14 answered (Alex, 2026-11-10):** vendor with `git subtree` as `plugins/intercom`; `alexderz/hermes-intercom` stays the repo shared upstream. Alternatives kept for the record: | A **git submodule**: the install checkout needs `--recurse-submodules`, and the pull and deploy steps change. **Installing from the intercom repo** as a user plugin breaks rule 19 (a side repo). Either way P1 and P5 stay in hermes-agent |
 | O7 | **SM-Q15 (b):** post the mail into the Telegram chat or topic | (a): answer only, with no B4c data-class review. With (b), security decides at Spec whether group chats are excluded. That is a data boundary, not a delivery gate |
 | O8 | **SM-Q16 (a):** `ask`/`reply` unchanged; automatic replies only for `send` | (b): a cross-process waiter. (c): drop `ask` and break intercom's tests |
 | O9 | **Seam upstream shape:** the truthy result object, and whether upstream wants steering of plugin events in the gateway behind a separate consent key | A separate key adds one config line, set by house-infra |
