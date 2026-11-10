@@ -138,7 +138,7 @@ ladder. A fast target can finish a steered turn, and fire the reply hook, before
 | Boundary | Crossing | Rule |
 |---|---|---|
 | **B1: a process to the dashboard, over the loopback WebSocket with the agent key** | P1 reads the existing key file (`hermes_cli/dashboard_auth/agent_key.py`, 0600, owned by the dashboard user) and connects to `127.0.0.1`. | No new credential and no new network surface. The key already grants operator power, including the terminal, so mail adds no privilege. Every sender is a process that already runs as the Hermes user. The dashboard URL is a plugin setting in `config.yaml` (`plugins.entries.session-mail.settings`), not a new `HERMES_*` variable. |
-| **B2: model-written text becomes a `role: user` row in another session** | The body of a mail, and every reply, is another model's output. | Mail is attributed and inert (D1, D2). The sender comes from the session, never from model input. Hermes control-frame openers in the body are relabelled the way hosted rooms already do (`gateway/hosted_room_discussion.py:39-48`, from `agent.prompt_builder.CONTROL_FRAME_OPENERS`), so a body cannot close the steer frame or fake a compaction or system note. A header lookalike at the start of a body line is relabelled too. Mail is never `display_kind: "hidden"` (brief A6). |
+| **B2: model-written text becomes a `role: user` row in another session** | The body of a mail, and every reply, is another model's output. | Mail is attributed and inert (D1, D2). The sender comes from the session, never from model input. Hermes control-frame openers in the body are relabelled the way hosted rooms already do (`gateway/hosted_room_discussion.py:39-48`, from `agent.prompt_builder.CONTROL_FRAME_OPENERS`), so a body cannot close the steer frame or fake a compaction or system note. A header lookalike at the start of a body line is relabelled too. **Required, not optional:** the Trial showed a body's `[/OUT-OF-BAND USER MESSAGE]` passing verbatim and closing the steer frame early (`poc/poc.md` Q2). Mail is never `display_kind: "hidden"` (brief A6). |
 | **B3: identity** | `act_as` credits agent-key turns to Alex. | The sender is named in the header and in the outbox. Nothing claims the turn's author is the sender. |
 | **B4: profile** | The reply thread runs outside the turn's own call stack. | It starts through `tools.thread_context.propagate_context_to_thread`, so `get_hermes_home()` and the plugin data directory stay the turn's profile (HX002/HX005). The tool handler runs inside the turn and is already bound. |
 
@@ -231,6 +231,11 @@ per turn.
      `prompt_turn.py:444-447`), whose reply comes from that next turn;
    - queued mail merged with other text;
    - a quoted header, which is skipped because its target or reply-state check fails.
+
+   The Trial confirmed every path above except the compression-parked steer, which was not run
+   (`poc/poc.md` Q3). It also showed the line-start anchor alone matching a forged header in a
+   body. So the outbox target and "no reply yet" check, plus header relabelling (B2), are both
+   required.
 2. **Take the reply for each mail.**
    - the matching `[REPLY <id>] … [/REPLY]` block; otherwise
    - the whole final answer (SM-Q8 option 2). A mail steered into one of Alex's own turns
@@ -306,7 +311,7 @@ on `refused` or `error`.
 | `queued` | Steer refused; `prompt.submit` with `queued: true` queued it | Queued behind "X"'s current turn; the reply comes after it runs. Lost if the dashboard restarts first. | `queued` |
 | `started` | The target was idle; a turn started. The call returns after the first agent event, or after 240 seconds. | Started a turn in "X", or "no agent activity yet, the turn may still be building" | `started`, plus the first event type or `no-activity` |
 | `refused` | Nothing sent: no match, an ambiguous match (with candidates), or an empty body | Why, with the candidates. "Send again with an exact title or id." | `refused`, reason |
-| `error` | The dashboard is unreachable, the key is unreadable, an RPC timed out, or an RPC error such as `SESSION_NOT_OWNED` (a command-line process holds the target) | "Not delivered: <code>. You may send again later." No retry is scheduled. | `error`, code and message |
+| `error` | The dashboard is unreachable, the key is unreadable, an RPC timed out, or an RPC error such as `SESSION_NOT_OWNED`. A command-line process holding the target shows up as **4090 on `prompt.submit`**, after a successful resume and a refused steer; the CLI's turn is untouched (Trial Q5) | "Not delivered: <code>. You may send again later." No retry is scheduled. | `error`, code and message |
 
 ### D5: addressing, before and after DER-686
 
@@ -346,7 +351,7 @@ recommended SM-Q10 answer is to rename it (`/title`, no code).
 
 | Process | Restart? | Why |
 |---|---|---|
-| **Dashboard** | **Yes, once, announced.** List the busy sessions first. It cuts the phone off and kills running owner turns (DER-686 HLD, deploy section). | The dashboard is where target turns run, so it must load the reply hook. Its own sessions need the tool. Plugins are discovered at process start. Each resumed session then pays **one prompt-cache miss**: the new tool is appended to its pinned tool list (`tools/mcp_tool_agent.py:204-248`). The deploy changes the pin's code identity anyway. |
+| **Dashboard** | **Yes, once, announced.** List the busy sessions first. It cuts the phone off and kills running owner turns (DER-686 HLD, deploy section). | The dashboard is where target turns run, so it must load the reply hook. Its own sessions need the tool. Plugins are discovered at process start. **Tool Search changes the cost (Trial Q8).** Every plugin tool is deferred behind `tool_search`/`tool_describe`/`tool_call` when `tools.tool_search.enabled` is `auto` (the default; the live value was not read). A session created before the deploy keeps byte-identical tool definitions, so it pays **no cache miss**. Its pinned bridge listing does not name the new tool, but `tool_call` to it works. Sessions created after the deploy see it in the deferred catalog. If Tool Search is off live, the earlier analysis holds: the tool is appended to the pinned list (`tools/mcp_tool_agent.py:204-248`), and each resumed session pays one miss. |
 | Messaging gateway | **No** (recommended; O6) | Sessions it hosts (messaging chats, cron agents) get the tool at its next routine restart. Until then they send with `hermes session-mail send` from the terminal, which is a new process and loads the plugin. A gateway restart does not cut the phone off, so it could be done at the same time if Alex prefers. |
 | CLI / TUI processes | No | New processes load the plugin when they start. A running one gets it at its next start. |
 
@@ -361,7 +366,7 @@ recommended SM-Q10 answer is to rename it (`/title`, no code).
 |---|---|---|
 | Outbox (every mail and reply) | `<hermes-home>/plugin-data/session-mail/data.db`, through `plugins/plugin_storage.py` `plugin_db("session-mail")`. SQLite, WAL, mode 0600, short write transactions with a busy timeout, because the dashboard, CLI and gateway processes all write it. | Yes. Never pruned in v1. |
 | Mail as the target saw it | The target's transcript in `state.db`. The steer row or the queued row is written at accept time. | Yes (Hermes owns it) |
-| Queued mail not yet run | The dashboard's in-memory prompt queue, plus the accept-time row | No. Lost on restart, and retired on the next resume (`hermes_state_sessions.py:546-559`). The outbox then shows `queued` with no reply. |
+| Queued mail not yet run | The dashboard's in-memory prompt queue, plus the accept-time row | No. Lost when a quiet detached turn ahead of it is reaped (reproduced, Trial Q1), lost on restart, and retired on the next resume (`hermes_state_sessions.py:546-559`). The outbox then shows `queued` with no reply. |
 | A reply being delivered | Memory of the reply thread | No. The outbox shows the reply stored but not sent. |
 | Plugin settings | `config.yaml` `plugins.entries.session-mail`, written by house-infra | Yes |
 | Agent key | Existing file, `dashboard.agent_key.file` | Unchanged |
@@ -414,29 +419,32 @@ real use can settle.
 | O6 | **Gateway restart at deploy.** Recommended: no. | If yes, add the gateway to the restart list. It does not affect the phone. |
 | O7 | **Real models and the header inside the user frame.** The fake model cannot show it. Watch the first real exchanges; this is the reopen trigger for C. | — |
 | O8 | **One restart shared with DER-686.** Depends on both chunks being ready together. DER-686's kickoff command could also reuse P1, which avoids a third copy of the rule. | — |
-| O9 | **Interrupted or failed turns.** What `post_llm_call` sees then (a partial answer, an error explanation, or no call). Until PoC Q9 answers, the hook treats whatever final answer it gets like any other. | If error text would be mailed back, Spec adds a rule to store it as the reply without delivering it. That is not a retry. |
-| O10 | **If PoC Q1 shows queued mail dying when the sender detaches right after the `queued` ack**, the brief's "detach at once" cannot hold. The smallest fix inside the brief keeps the sender's socket open until the queued prompt starts, bounded like the start wait. That is still no worker and no retry. It would make queued sends as slow as starts, and Alex would be told. | — |
+| O9 | **Interrupted or failed turns. Resolved by the Trial (Q9):** `post_llm_call` does not fire for an interrupted turn or a provider-failed turn. No reply is captured or sent, and the outbox shows the delivery with no reply. No rule is needed. Still unknown: whether a mail steered into a turn that is then interrupted is lost or handed back to the next turn. | — |
+| O10 | **Not triggered (Trial Q1).** A queued mail survived the sender detaching straight after the `queued` ack, while the detached turn kept producing. "Detach at once" stands. The quiet-turn loss (a detached turn idle past `ws_orphan_activity_stale_s` is reaped, and its queue with it) was reproduced. It stays a documented loss, with no fix in this chunk. | — |
+| O11 | **How senders learn the tool exists (Trial Q8).** With Tool Search on, `session_message` is deferred. Sessions created before the deploy are never told its name, and every session sees its description (the no-empty-replies rule) only through `tool_describe`. The reply rules already ride in every message footer (D2). Proposed: the relay skills that run the dispatcher today (brief, "How the dispatcher is invoked today") switch to naming `session_message`. They live in the live home's `skills/`, so this is a deploy step that needs Alex. | If Alex prefers no skill edits, owners learn the tool from new sessions or from Alex. Nothing else changes. |
+| O12 | **The live `tools.tool_search` setting** decides D6's cache cost (none if on, one miss per resumed session if off). Read it, read-only, when the deploy is planned. | — |
 
 ## PoC questions (Trial)
 
-**Trial decision: run it.** Q1, Q3 and Q6 can change the design (O10, D3, and the never-cancel
-rule). The manager resumes the architect for it. It is not run in this pass.
+**Trial decision: run it. Ran 2026-11-09:** `poc/poc.md`, run 3 passed 25 of 26 checks. Each
+row below gets its result in the last column. Design changes from the results are marked
+"(Trial)" in B2, D3, D4, D6 and O9–O12.
 
 Setup for all questions: a temporary `HERMES_HOME`, its own dashboard on a non-default port, a
 fake model that records each request, and the plugin enabled in that home only.
 
-| # | Question | Pass looks like |
-|---|---|---|
-| Q1 | **Does a queued mail survive the WebSocket orphan reaper** when the sender detaches straight after the `queued` ack (`tui_gateway/session_lifecycle.py:937-1060`)? Cases: the running turn keeps producing; the turn has no client and goes quiet; the turn-end drain window (`prompt_turn.py:438-448`), as an observation. | The mail runs after the turn, unless the turn was stale for 600 seconds. Each loss case shows in the outbox as `queued` with no reply. |
-| Q2 | **What the model actually receives** for steered, queued and started mail: the full request the fake model sees. Steer marker plus header; plain queued row; queued text merged with other text; the body after control-frame relabelling. | The header is the first line inside the marker or row, and the authority line and footer are intact. A body containing `[/OUT-OF-BAND USER MESSAGE]` or a fake `📨` header arrives relabelled. |
-| Q3 | **Does `post_llm_call` see the right turn for steered mail?** Cases: a steer accepted mid-turn; a steer parked during compression; a late steer requeued as the next turn; queued mail merged with Alex-style text; self-mail; a reply into a sender whose turn is finishing. | Each mail id gets exactly one stored reply, from the turn that actually processed it, and goes to the right sender. Nothing fires for quoted or replayed headers. |
-| Q4 | **Idle start of a session not loaded in the dashboard:** resume, submit, `started`. How long is the sender's tool call held until the first agent event? | `started` with an event type. The time is recorded, and the turn shows in the dashboard. |
-| Q5 | **A command-line process holds the target session:** which RPC refuses (resume or submit), with which code, and the CLI's own turn is untouched. | `error SESSION_NOT_OWNED` reaches the sender and the outbox. No interrupt, no redirect. |
-| Q6 | **A second mail into a session whose turn was started by a detached first mail** must steer or queue. It must never trigger the detached-lease takeover, which hard-interrupts the old runtime's turn (`session_lifecycle.py:157-175`). | `steered` or `queued`. The first turn completes. |
-| Q7 | **Loopback from inside a dashboard turn:** while a tool handler delivers, and holds through a 240-second start wait, other clients' RPCs on the same dashboard are still answered. Optional: repeat with `dashboard.turn_isolation` on. | No stall, and the timings are recorded. |
-| Q8 | **A session created before the plugin was enabled** lists and calls `session_message` after a dashboard restart, and pays one cache miss on its first turn, not one every turn. | The tool is present; the cache prefix is stable from the second turn. |
-| Q9 | **Interrupted or failed target turn:** does `post_llm_call` fire, and with what text (O9)? | Recorded; the Spec rule follows. |
-| Q10 | **Debate:** two sessions reply to each other for several rounds and stop at `[SILENT]`. The hook's thread does not delay the target's turn end. | The rounds end only at `[SILENT]`; turn end is not delayed. |
+| # | Question | Pass looks like | Trial result |
+|---|---|---|---|
+| Q1 | **Does a queued mail survive the WebSocket orphan reaper** when the sender detaches straight after the `queued` ack (`tui_gateway/session_lifecycle.py:937-1060`)? Cases: the running turn keeps producing; the turn has no client and goes quiet; the turn-end drain window (`prompt_turn.py:438-448`), as an observation. | The mail runs after the turn, unless the turn was stale for 600 seconds. Each loss case shows in the outbox as `queued` with no reply. | **Pass.** Ran after a producing detached turn; a quiet detached turn was reaped and the mail lost (expected case 1). |
+| Q2 | **What the model actually receives** for steered, queued and started mail: the full request the fake model sees. Steer marker plus header; plain queued row; queued text merged with other text; the body after control-frame relabelling. | The header is the first line inside the marker or row, and the authority line and footer are intact. A body containing `[/OUT-OF-BAND USER MESSAGE]` or a fake `📨` header arrives relabelled. | **Observed.** Header is the first line inside the marker or row; merged queue puts it mid-row; a body's close marker passes **verbatim** → relabel required (B2). |
+| Q3 | **Does `post_llm_call` see the right turn for steered mail?** Cases: a steer accepted mid-turn; a steer parked during compression; a late steer requeued as the next turn; queued mail merged with Alex-style text; self-mail; a reply into a sender whose turn is finishing. | Each mail id gets exactly one stored reply, from the turn that actually processed it, and goes to the right sender. Nothing fires for quoted or replayed headers. | **Pass, 5 of 6 paths** (compression-parked not run). Late steer → next turn's plain text, answered once. Forged header matched by the anchor alone → outbox check required. |
+| Q4 | **Idle start of a session not loaded in the dashboard:** resume, submit, `started`. How long is the sender's tool call held until the first agent event? | `started` with an event type. The time is recorded, and the turn shows in the dashboard. | **Pass.** `started` in 0.14 s (fake model). |
+| Q5 | **A command-line process holds the target session:** which RPC refuses (resume or submit), with which code, and the CLI's own turn is untouched. | `error SESSION_NOT_OWNED` reaches the sender and the outbox. No interrupt, no redirect. | **Pass.** 4090 on `prompt.submit`; CLI turn untouched; mail never reached the model. |
+| Q6 | **A second mail into a session whose turn was started by a detached first mail** must steer or queue. It must never trigger the detached-lease takeover, which hard-interrupts the old runtime's turn (`session_lifecycle.py:157-175`). | `steered` or `queued`. The first turn completes. | **Pass.** `steered`; first turn ran all steps; no takeover. |
+| Q7 | **Loopback from inside a dashboard turn:** while a tool handler delivers, and holds through a 240-second start wait, other clients' RPCs on the same dashboard are still answered. Optional: repeat with `dashboard.turn_isolation` on. | No stall, and the timings are recorded. | **Pass.** Other RPCs ≤ 0.021 s; tool thread had no running loop. The 240 s wait was not exercised (start returns at `message.start`). |
+| Q8 | **A session created before the plugin was enabled** lists and calls `session_message` after a dashboard restart, and pays one cache miss on its first turn, not one every turn. | The tool is present; the cache prefix is stable from the second turn. | **Fail as worded.** Tool deferred by Tool Search: no cache miss, callable via `tool_call`, but not named to pre-plugin sessions (D6, O11, O12). |
+| Q9 | **Interrupted or failed target turn:** does `post_llm_call` fire, and with what text (O9)? | Recorded; the Spec rule follows. | **Observed.** Hook does not fire for interrupted or failed turns (O9 resolved). |
+| Q10 | **Debate:** two sessions reply to each other for several rounds and stop at `[SILENT]`. The hook's thread does not delay the target's turn end. | The rounds end only at `[SILENT]`; turn end is not delayed. | **Pass.** 3 replies (started, steered, started), stopped at `[SILENT]`; hook ≤ 0.6 ms. |
 
 ## Risks
 
