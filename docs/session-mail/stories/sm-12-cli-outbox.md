@@ -12,6 +12,7 @@
 - **Done when**
   - [ ] `status <id>` shows from, to (title, id and host), sent time, delivery (applied, with `asked: …` when weaker, or `refused`, `error`, `unknown`), and reply: `no reply recorded`, `silent`, `stored`, `sent as message <id>`, `stored, not delivered` (with the reply message's id and reason), or for an `ask` `answered by reply`, each with its time and the text where there is one.
   - [ ] For `unknown` or `error (delivery unknown)`, `status` reads the target's transcript without changing it and adds `found in the target's transcript (<time>)` or `not found in the target's transcript (yet)`, matching only a line that starts with that message's header line 1 and ends `· message <id>):`; the "not found" advice is as written in `ux.md`.
+  - [ ] For a classic CLI or gateway host, a "not found" result also reads the target's live state (read only) and says: still busy, run `status` again after its current turn; idle, sending again will not duplicate it; or its host has exited, a queued message there is lost. It never says "sending again will not duplicate it" while that target is still busy.
   - [ ] `status` of an unknown id exits 1 with a one-line message.
   - [ ] `log` shows the last 24 hours newest first, one line per message, with sender, target, applied mode and reply state; `--since`, `--to` and `--from` narrow or widen it. A reply that was not delivered shows as `reply: <id> not delivered (<reason>)`.
   - [ ] A message lost after handover shows its delivery result with `no reply recorded`, never as answered.

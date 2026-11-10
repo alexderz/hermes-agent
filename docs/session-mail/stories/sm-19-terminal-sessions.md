@@ -14,6 +14,7 @@
   - [ ] The classic CLI prints its existing notice with the first 80 characters of the message, which start `📡 Not Alex · …`: `⏩ Steered: '…'` for a steer; `Queued for the next turn: …` for a queue; `↪ Redirected current turn: '…'` or `⚡ New message detected, interrupting...` for an interrupt; for an idle prompt, the message in the scrollback and a turn starts.
   - [ ] A `steer` into a running CLI turn does not interrupt it (today's injection would).
   - [ ] In the Ink TUI, the message appears as a user row starting with the 📡 header, delivered by the TUI's own backend.
+  - [ ] At an idle classic CLI prompt with half-typed input, the message starts its turn and the half-typed text survives in the prompt (Trial-backed).
   - [ ] Half-typed input or a composer draft is never touched; Ctrl+C, typing and `/steer` work as with any turn.
 - **Out of scope** — new terminal notices or colours.
 
