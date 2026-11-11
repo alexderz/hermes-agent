@@ -7,7 +7,7 @@
 - Trials: `docs/session-mail/poc/poc.md` (round 1), `docs/session-mail/poc/round2/poc.md`
   (round 2)
 - Tickets this LLD covers: Epic `DER-701`. Items I-1 … I-14 below; the manager files them at Groom
-- Date: `2026-11-10` (round 2: security review round 1 and mockup review M-1 folded in)
+- Date: `2026-11-10` (round 3: security review round 2 and the wake-receipt wording folded in)
 
 Alex accepted the Plan and UX on 2026-11-10 with every recommended answer (SM-Q7 to SM-Q17; HLD
 § Open). **Where the HLD and `ux.md` differ, this LLD follows `ux.md`**, because the UX was
@@ -31,6 +31,18 @@ Trial's query counted rows without the `active` column. In round 2, run 3, row 2
 `active = 1 OR compacted = 1` (I-9). The frozen round-2 note is left as written; this LLD and the
 HLD carry the correction, and `ux.md` § "Hermes Mobile" / "Web dashboard" needs the designer to
 drop the "shows twice until the O17 fix" lines.
+
+**Round 3 (security review round 2, on `a37eb15b88`).**
+
+| Finding | Where fixed |
+|---|---|
+| R2-1 blocker: scope fails open outside a live gateway | `session_chat_scope` now reads the session's **stored origin** in any process (new `gateway/chat_scope.py`, B1). It fails closed: a messaging-platform session with no resolvable origin is `shared`, and `NULL` is allowed only for local sources. Used on both sides: host step 4, and the sender's `sender_chat_scope` at insert (B4). B8 treats `NULL` plus a platform source as `shared` |
+| R2-2 the replying model is not told the reply goes to a shared chat | Footer line for shared-chat senders, on send and `ask` footers (B6) |
+| R2-3 ids not tied to a platform; types; fresh reads | Entries are `"<platform>:<id>"` strings, compared against `f"{platform}:{id}"`; non-string entries are rejected with a warning; config read fresh on every call (B1) |
+| R2-4 F10 rationale wrong | The hash now covers the whole framed span, from header line 1 to `📡 End of message <id>`. Lines 2–3 and the footer are model-only and never echoed, so a copy of an echo cannot reproduce it (B4 host step 5, B8, B9) |
+| R2-5 loopback check must parse | `urlsplit(...).hostname` plus `ipaddress.ip_address(...).is_loopback`; hostnames are refused, `localhost` included (B2) |
+| R2-6 `reply` envelopes not bound | The ask waiter stores the target host's pid; a `reply` is accepted only from that peer pid, or from the verified gateway pid for a gateway target (B8 `ask`) |
+| Wake receipt wording (UX review R7-1, mockup review carry-over) | The wake path's `started` sentence names the dashboard (B9) |
 
 **Round 2 (security review round 1, on `643185083e`).** F1 to F9 are fixed below. F10 to F15 are folded in. F16 (commit author metadata) is for the manager.
 
@@ -90,6 +102,7 @@ Paths without a prefix are in **alexderz/hermes-agent** (this repo, branch
 | `tui_gateway/session_auto_continue.py` | `_handle_busy_submit(..., mode: str \| None = None)`: an explicit mode overrides `display.busy_input_mode`; `queued=True` still forces queue |
 | `hermes_cli/cli_tui_mixin.py` | `_tui_enter_while_busy` split into `_route_busy_input(text, images, payload, mode) -> tuple[str, str \| None]` (applied, detail), used by typed input and by the seam |
 | `gateway/run_plugin_injection.py` | `_schedule_plugin_message_injection(..., mode=None, echo=None)`; with a mode it waits for the dispatch result. `_dispatch_plugin_message_injection` posts `echo` (data-class rule, TB-5) and passes the mode on |
+| `gateway/chat_scope.py` (new) | `chat_scope(source, *, plugin_id, home_path)` (the one chat rule) and `session_chat_scope(session_id, *, plugin_id, home_path)` (live entry or stored origin; fail closed). Importable without a runner, so any host process can use it (R2-1) |
 | `gateway/run_busy.py` | The internal-event branch (`:843-849`) honours `event.metadata["hermes_delivery_mode"]` for plugin injections; without it, internal events still queue |
 | `website/docs/developer-guide/plugins/index.md` | Documents `mode`, `echo` and `InjectResult` (compatibility contract: additive keyword fields) |
 | `tests/hermes_cli/test_plugin_inject_modes.py`, `tests/tui_gateway/test_plugin_inject_modes.py`, `tests/gateway/test_plugin_inject_modes.py` | Behaviour tests per host (Verify) |
@@ -127,9 +140,9 @@ Paths without a prefix are in **alexderz/hermes-agent** (this repo, branch
 - `plugins.entries.intercom.settings`:
   - `user_name: Alex`;
   - `dashboard_port` (only if not 9119; the host is always loopback, F8);
-- `plugins.entries.intercom.echo_chats: [<chat id>, …]`: the group or forum chats Alex allows
-  as "private" (TB-5, F1);
-- `plugins.entries.intercom.owner_user_ids: [<Alex's platform user id>, …]`: DMs with these
+- `plugins.entries.intercom.echo_chats: ["telegram:<chat id>", …]`: the group or forum chats
+  Alex allows as "private" (TB-5, F1, R2-3);
+- `plugins.entries.intercom.owner_user_ids: ["telegram:<Alex's user id>", …]`: DMs with these
   users count as private (TB-5).
 
 `echo_chats` and `owner_user_ids` sit at the entry level, next to `allow_gateway_injection`,
@@ -170,15 +183,45 @@ class InjectResult:            # hermes_cli/plugins_injection.py
 **Two read-only `PluginContext` methods** (part of the seam, I-1):
 - `ctx.injection_allowed() -> bool`: the public form of `_gateway_injection_allowed()`, the same
   plugin-profile read. Intercom uses it before waking a session (F2).
-- `ctx.session_chat_scope(session_id) -> "private" | "shared" | None`: the gateway's answer for
-  a gateway session it knows, through `lookup_by_session_id` and the entry's origin source.
-  `None` when no live gateway in this process knows the session (F1).
+- `ctx.session_chat_scope(session_id) -> "private" | "shared" | None` (F1, R2-1). It works **in
+  any process**, gateway or not, so scope follows the session's origin chat, not the process
+  that hosts the session now:
+  1. **Origin.** In the gateway process, the live entry (`lookup_by_session_id`, then
+     `_restored_source`). Otherwise the **stored origin** from `state.db`, opened
+     `SessionDB(read_only=True)`: the session row's `source, user_id, chat_id, chat_type,
+     thread_id, origin_json, transport_profile`, which Hermes keeps along the compression
+     lineage (`hermes_state_gateway.py:255-275`). That gives a `SessionSource` (from
+     `origin_json` when present, else from the columns), re-pinned with
+     `gateway.session_identity.restore_identity(..., transport_profile=<row value>)`, the
+     same step as `_restored_source` (`gateway/authz_mixin.py:380-391`), without a runner.
+     When the row lacks them, the `gateway_routing` entry whose `entry_json.session_id`
+     matches is the fallback (`hermes_state_gateway.py:296-320`).
+  2. **Rule.** `chat_scope(source, plugin_id=…, home_path=…)` (below).
+  3. **Fail closed.** If `sessions.source` is a messaging platform (anything outside
+     `cli, tui, desktop, cron, oneshot, subagent`) and no origin resolves, the answer is
+     `shared`. `None` is returned **only** for local sources.
 
-**The one chat rule** (F1) is defined once, in `gateway/run_plugin_injection.py::_chat_scope(source, plugin_id)`.
+  Both live in a new core module, `gateway/chat_scope.py`, importable without a runner, so the
+  dashboard and CLI processes can call it. `_dispatch_plugin_message_injection` uses the same
+  function.
+
+**The one chat rule** (F1) is defined once, in `gateway/chat_scope.py::chat_scope(source, *, plugin_id, home_path)`.
 A chat is `private` only when:
-- `source.chat_id` is in `plugins.entries.<plugin_id>.echo_chats`; or
-- `source.chat_type == "dm"` **and** `source.user_id` is in
+- `f"{source.platform.value}:{source.chat_id}"` is in `plugins.entries.<plugin_id>.echo_chats`;
+  or
+- `source.chat_type == "dm"` **and** `f"{source.platform.value}:{source.user_id}"` is in
   `plugins.entries.<plugin_id>.owner_user_ids`.
+
+**Entries and reads (R2-3):**
+- Entries are `"<platform>:<id>"` strings, for example `telegram:-1001234567890` and
+  `telegram:123456789`. Ids are per platform, so the same number on another platform never
+  matches.
+- A non-string entry, or one without a `platform:` prefix, is ignored with one warning per
+  value. It fails closed: never `private`.
+- The plugin's own profile config is read **fresh on every call**, under
+  `_plugin_home_scope(home_path)` with `load_config_readonly()`, with no cache, like
+  `_gateway_injection_allowed` (`hermes_cli/plugins.py:622-630`). Removing a chat takes effect
+  without a restart.
 
 Every other chat is `shared`: groups, forums, channels, and DMs with any other allowed user.
 The echo, `session_chat_scope` and `InjectResult.shared_chat` all use this one function.
@@ -266,7 +309,7 @@ The echo, `session_chat_scope` and `InjectResult.shared_chat` all use this one f
   adapter checks:
   0. **Profile check (F9):** return not-hosted unless the session entry's profile, which is the
      runner's home, resolves to `home_path`.
-  1. **Chat rule (F1):** `scope = _chat_scope(source, plugin_id)`.
+  1. **Chat rule (F1):** `scope = chat_scope(source, plugin_id=plugin_id, home_path=home_path)`.
   2. **Echo (SM-Q15 b):** only when `echo` is set **and** `scope == "private"`. It is sent
      **before** `handle_message`, as **plain text with mentions suppressed (F12)**:
      `await adapter.send(source.chat_id, echo, metadata={"thread_id": source.thread_id, "parse_mode": None, "disable_mentions": True})`.
@@ -316,9 +359,12 @@ The echo, `session_chat_scope` and `InjectResult.shared_chat` all use this one f
 #### B2. Wake module (`hermes_cli/dashboard_dispatch.py`, fork only)
 
 - `dispatch(session_id, text, *, url, key_file=None, steer=True, timeout=60.0, start_timeout=240.0)`:
-  0. **Loopback only (F8).** Parse `url` **before** the key file is opened. Unless the host is
-     `127.0.0.1`, `::1`, or `localhost` resolving only to loopback, raise
+  0. **Loopback only (F8, R2-5).** Parse `url` **before** the key file is opened:
+     `host = urllib.parse.urlsplit(url).hostname`, then
+     `ipaddress.ip_address(host).is_loopback`. A hostname (including `localhost`), userinfo
+     tricks, or anything that does not parse as a loopback IP literal raises
      `DispatchError("no-dashboard", sent=False)` with the text "dashboard_url must be loopback".
+     No name is resolved.
      Intercom's setting gives only a port (`dashboard_port`), and it always builds
      `http://127.0.0.1:<port>`. The script's `--url` / `HERMES_DASHBOARD_URL` go through the
      same check;
@@ -391,7 +437,7 @@ Inputs: `sender` (session id or script label), `to`, `message`, `delivery` (defa
 |---|---|---|
 | 0 | Validate: an empty or whitespace-only `message` | `refused` / `empty` (exit 3) |
 | 1 | `address.resolve(to)` (B5) | `refused` / `ambiguous` or `unknown`, with candidates. `to == sender`'s session (after tip resolution) → `refused` / `own-session`. Only the same **session** is refused, never the same process |
-| 2 | `record.insert(...)` with `result` empty | The row exists before delivery (HLD D4) |
+| 2 | `record.insert(...)` with `result` empty | The row exists before delivery (HLD D4). For a session sender it stores `sender_chat_scope = ctx.session_chat_scope(sender)`, computed in whatever process the sender runs (R2-1) |
 | 3 | `find_host(target)` finds a lease | Lease pid == `os.getpid()`: `seam.deliver_local(...)` in-process. Otherwise `inbox._exchange(entry, envelope)` over the socket. A **not-hosted** answer continues to step 5 |
 | 4 | No lease, and the target's source is a messaging platform (`sessions.source` not in the local set `cli, tui, desktop, cron, oneshot, subagent`), or the target has a `gateway_routing` row | The gateway entry → `_exchange`. No gateway entry → `error` / `no-gateway`. **Never** falls through to step 5 |
 | 5 | Live nowhere | **First, consent (F2):** `ctx.injection_allowed()` false → `error` / `injection-off` (exit 4), and `dispatch_sync` is not called. Otherwise `dashboard_dispatch.dispatch_sync(target, framed_text, steer=delivery != "queue")`. If that module is missing (upstream intercom), `error` / `no-dashboard`. `DispatchError` codes map 1:1; `delivery="started"` → `applied="start"` |
@@ -422,10 +468,14 @@ fallback):
    Otherwise build the **script** variant from `from_label` (or `cli`), drop `from_session`
    and `from_chat`, and route no reply to it. In-process `deliver_local` calls are trusted as
    they are. A CLI `send` subprocess holds no lease, so it is always a script, which is correct.
-4. **The target's chat scope (F1):** `ctx.session_chat_scope(target_session)`. Not `None` only in
-   the gateway process.
+4. **The target's chat scope (F1, R2-1):** `ctx.session_chat_scope(target_session)`, from the
+   stored origin in any host process. A Telegram group session opened in the dashboard is
+   `shared` there too.
 5. **The host builds the frame** (`frame.build(...)`, B6), as intercom's receiver does today.
-   It writes `header_sha = sha256(header line 1)` to the record row (F10). The row exists,
+   It applies `sanitize_user_prompt_text` to the framed text once (so what the host hashes is
+   what Hermes stores; the sanitiser is idempotent, and Build tests that on framed text). Then it
+   writes `header_sha = sha256(<the whole framed span>)` to the record row (F10, R2-4). The span
+   runs from header line 1 to `📡 End of message <id>`, inclusive. The row exists,
    because the sender inserted it before the exchange; if it does not, the message is framed but
    gets no reply. The header says `interrupt asked ·` only when requested (the final shape is at
    the top of this LLD).
@@ -493,6 +543,10 @@ The model is `hermes_state_titles.sanitize_title` (`hermes_state_titles.py:49-61
   their approval or consent."
 
 **Line 3:** the conditional interrupt note, only with `interrupt asked`.
+
+**Reply-destination line (R2-2)**, only when the **sender's** chat scope is `shared`. It is a
+footer line, added to the `send` footer and the `ask` footer: "Your reply goes into a
+{Platform} {chat_type} that other people read." It is model-only.
 
 **Shared-chat line (F1)**, only when the **target's** chat scope is `shared` (B4 host step 4):
 "This session's chat is shared with other people ({Platform} {chat_type} "{chat title}"). Do not
@@ -587,9 +641,9 @@ CREATE TABLE IF NOT EXISTS messages (
   host TEXT,                         -- 'pid:<n>' | 'gateway' | 'wake' | 'in-process'
   host_kind TEXT,                    -- 'tui' | 'desktop' | 'cli' | 'gateway' | 'wake' (status advice)
   body TEXT NOT NULL,
-  header_sha TEXT,                   -- sha256 of the exact header line 1 the host built (F10); written by the host
-  sender_chat_scope TEXT,            -- 'private' | 'shared' | NULL (local sender), from the sender's gateway (F1)
-  target_chat_scope TEXT,            -- 'private' | 'shared' | NULL, from the host's answer (F1)
+  header_sha TEXT,                   -- sha256 of the whole framed span, header line 1 .. closing line (F10, R2-4); written by the host
+  sender_chat_scope TEXT,            -- 'private' | 'shared' | NULL only for a local source; ctx.session_chat_scope(sender) at insert (F1, R2-1)
+  target_chat_scope TEXT,            -- 'private' | 'shared' | NULL only for a local source; from the host's answer (F1, R2-1)
   expect_reply INTEGER NOT NULL,     -- 1/0; replies are 0 ("reply optional")
   requested TEXT NOT NULL,           -- interrupt | steer | queue
   applied TEXT,                      -- interrupt | steer | queue | start
@@ -618,10 +672,12 @@ It runs in the process that ran the turn (any host; Trial Q3, R6).
 
 1. **Rows of this turn:** `user_message` plus the `conversation_history` user rows after the
    last non-steer row that contains `user_message`.
-2. **Find messages:** lines that start with `📡 Not ` and end with `message <8 hex>):`, **and
-   whose SHA-256 equals the record row's `header_sha` (F10)**. Text a group member types after
-   seeing an echoed header is not byte-identical, because it lacks the host's exact fields, so
-   it does not match. The message spans from that line to `📡 End of message <id>`.
+2. **Find messages:** lines that start with `📡 Not ` and end with `message <8 hex>):`. The span
+   runs from that line to `📡 End of message <id>`. Keep it only if **the SHA-256 of the whole
+   span equals the record row's `header_sha` (F10, R2-4)**. The echo carries only header line 1
+   and the body. Lines 2–3 and the footer are model-only and never posted, so a copy typed by
+   anyone who saw an echo cannot reproduce the span. (The round-2 reason, "lacks the host's
+   exact fields", was wrong: the echo is header line 1 byte for byte.)
 3. **Keep only real candidates.** Keep an id only if its record row has:
    - `kind = 'send'`;
    - `target_session_id` equal to `session_id`, or in its compression lineage
@@ -631,9 +687,9 @@ It runs in the process that ran the turn (any host; Trial Q3, R6).
    This record check is required: the anchor alone matched a forged header in the Trial, and in
    Trial R6 a misjudged turn boundary picked up older messages.
 4. **The reply text:** `[REPLY <id>] … [/REPLY]`, else the whole `assistant_response`, with one
-   data-class exception (F1). When the record's `sender_chat_scope` is `shared` (the sender is
-   a messaging-platform session in a chat that leaves the machine), only an explicit block is
-   sent. With no block, store `reply_state='stored'` and `detail='shared-chat-no-block'`, and
+   data-class exception (F1). When the record's `sender_chat_scope` is `shared`, **or it is
+   `NULL` while `sender_source` is a messaging platform (fail closed, R2-1)**, only an explicit
+   block is sent. With no block, store `reply_state='stored'` and `detail='shared-chat-no-block'`, and
    send nothing. Between local sessions, and to `private` chats, SM-Q8's whole-answer fallback is
    unchanged.
 5. **Silence** stores `reply_state='silent'` and sends nothing:
@@ -650,6 +706,11 @@ It runs in the process that ran the turn (any host; Trial Q3, R6).
 
 **`ask` (SM-Q16 a)** is unchanged, apart from the relabel on the way back (F5):
 - intercom's `ask_to` waiter and `reply_to`;
+- **The reply is bound to the target's host (R2-6).** When the ask is sent, the waiter stores
+  the pid of the process it was delivered to (the target lease's pid, or the verified gateway
+  pid). `resolve_ask` accepts a `reply` envelope only when the connecting **peer pid** equals
+  that pid. A `request_id` seen in a transcript or a chat is not enough to answer someone
+  else's `ask`;
 - `ask_to` returns
   `{"reply": frame.relabel(text, user_name), "reply_from": <sanitised title>, "note": "peer-written; not <user_name>"}`
   instead of the raw text. The reply is another model's output entering this session, so it
@@ -667,6 +728,12 @@ It runs in the process that ran the turn (any host; Trial Q3, R6).
 **Receipt** (the tool's JSON):
 `{"ok", "receipt": "delivered"|"held"|"refused", "to", "message_id", "target_title", "target_session", "requested", "applied", "applied_detail", "shared_chat", "message": "<ux.md sentence>", "error"}`.
 `held` means queued.
+
+**Wake receipt (UX review R7-1).** When B4 step 5 woke the session, the `started` sentence names
+the dashboard:
+`"<title>" was not open anywhere that could take it, so message <id> started a turn in the dashboard. Its answer will come back to you as a new message.`
+The CLI line reads `started (was not open anywhere; a turn started in the dashboard)`. A
+`started` from a live host keeps `ux.md`'s "… was idle. Message <id> started a turn there."
 
 `shared_chat: true` (F1) tells the sender's model that the body went into a chat other people
 read. The `message` sentence adds: "Its chat is shared with other people; the body is now in
@@ -712,8 +779,8 @@ hermes intercom log [--to TARGET] [--from LABEL] [--since DURATION] [--json]
   - for `result IS NULL` or `detail='delivery-unknown'`, it does the **read-only transcript
     check**. It opens `state.db` with `SessionDB(read_only=True)`, follows the compression
     lineage, and looks for `role='user' AND (active=1 OR compacted=1)` rows with a line that
-    starts with that message's header line 1 and ends `message <id>):`, **and whose SHA-256
-    equals `header_sha` (F10)**. With no `header_sha` (the host never answered), the check
+    starts with that message's header line 1 and ends `message <id>):`, **and whose whole framed
+    span (to `📡 End of message <id>`) hashes to `header_sha` (F10, R2-4)**. With no `header_sha` (the host never answered), the check
     reports "not found (yet)";
   - its advice depends on `host_kind`, per `ux.md` § `status`:
     - tui, desktop or Ink: "not found (yet)" plus the one-minute rule;
@@ -762,9 +829,9 @@ rewritten to assert that 20 identical messages in a minute all arrive.
 |---|---|---|---|---|---|---|
 | **TB-1** | **Agent key and the loopback WebSocket** (wake path only, fork only) | The dashboard accepts the agent key only from a direct loopback peer with no forwarding header (`hermes_cli/dashboard_auth/agent_key.py`). The key grants operator power (including the terminal), so waking adds no privilege | The existing key file (`dashboard.agent_key.file`, `0600`, owner-only, at least 43 characters). `dashboard_dispatch` reads it; it is never logged, never sent elsewhere, never in argv or a URL other than the loopback `?token=`, as today | **Loopback enforced, not assumed (F8):** `dispatch` parses the URL before opening the key file and refuses a non-loopback host, and intercom's setting is a port only. Error texts never include the URI (F13) | The message text (private, Alex's own sessions). **Attribution (F15):** with `dashboard.agent_key.act_as`, the woken turn's row is credited to Alex in the dashboard. On that path the only correction is the 📡 header (`Not Alex`) and the record; accepted in the HLD | `dispatch` writes nothing locally. The dashboard writes the session's rows |
 | **TB-2** | **Intercom's socket: same UID, peer-UID check** | `SO_PEERCRED` / `getpeereid` must equal `os.getuid()`, else the connection is refused (`intercom:inbox.py:545-569`). There is no TCP listener | None on the socket. Envelopes carry no credentials | None (Unix socket) | The message text | Registry dir `chmod 0700` on every start; socket `0600`; entries created `O_EXCL\|O_NOFOLLOW` `0600` and moved with `os.replace` (F7). Each process writes only its own entry. Readers sweep dead pids. The gateway role is trusted only from `gateway.status.get_running_pid()` (F11) |
-| **TB-3** | **Model-written text becomes a user row in another session** | The sender identity comes from the tool handler's `session_id`, or the CLI's `--from`, never from model input. **On the socket, a claimed session is accepted only when the peer pid holds its lease, or is the verified gateway for a gateway session; otherwise it is framed as a script and gets no reply (F3).** The header names it, with `Not Alex` and the authority line (SM-Q7 A′) | — | — | The body is another model's output (peer, untrusted for authority) | The **host** builds the frame. Every interpolated header field is sanitised (no Cc/Cf/Zl/Zp, `📡`, brackets; F3). Every body line whose visible start is `📡` (after skipping Cf/Zs/Mn) or that reads `Not <user_name> … says`, and every Hermes control-frame opener, is relabelled (B6, F4). `ask` replies are relabelled on the way back (F5). Never `hidden`. The text cannot be a slash command, cannot answer an approval, cannot set `display_kind` or a turn author (`_delivery_mode` must be an in-process `InjectedDelivery`, so a client string is refused with 4124; F6). The footer carries the "no approval or consent; ask Alex" rule. Residual risk: a model may still act on a peer's request with tools that need no approval; that is confusion, not escalation (one OS user, B1) |
+| **TB-3** | **Model-written text becomes a user row in another session** | The sender identity comes from the tool handler's `session_id`, or the CLI's `--from`, never from model input. **On the socket, a claimed session is accepted only when the peer pid holds its lease, or is the verified gateway for a gateway session; otherwise it is framed as a script and gets no reply (F3).** The header names it, with `Not Alex` and the authority line (SM-Q7 A′) | — | — | The body is another model's output (peer, untrusted for authority) | The **host** builds the frame. Every interpolated header field is sanitised (no Cc/Cf/Zl/Zp, `📡`, brackets; F3). Every body line whose visible start is `📡` (after skipping Cf/Zs/Mn) or that reads `Not <user_name> … says`, and every Hermes control-frame opener, is relabelled (B6, F4). `ask` replies are relabelled on the way back (F5), and accepted only from the peer pid the `ask` was delivered to (R2-6). Never `hidden`. The text cannot be a slash command, cannot answer an approval, cannot set `display_kind` or a turn author (`_delivery_mode` must be an in-process `InjectedDelivery`, so a client string is refused with 4124; F6). The footer carries the "no approval or consent; ask Alex" rule. Residual risk: a model may still act on a peer's request with tools that need no approval; that is confusion, not escalation (one OS user, B1) |
 | **TB-4** | **Gateway injection consent** | `plugins.entries.intercom.allow_gateway_injection: true` in the **plugin's own profile config** (`PluginContext._gateway_injection_allowed`, read with `_plugin_home_scope`). Without it every non-CLI host refuses (`injection-off`). Authorisation is rechecked at dispatch (`_plugin_injection_authorized`). A plugin event steers or interrupts a gateway turn **only** when the plugin passed `mode` | — | — | **Text typed by a platform user can become a message** from that gateway session to Alex's other sessions. Its header names the platform and chat type (`hermes@<title> (Telegram group) says`), and line 2 says the sender may be relaying other people's words (F1) | `allow_gateway_control=False` on every injected event: no slash commands, approvals or bang input. Without a mode, internal events keep queueing as today. **The same consent covers the wake path:** with `allow_gateway_injection` off, intercom does not call `dispatch_sync` and returns `injection-off` (F2) |
-| **TB-5** | **Messages and replies reaching a chat that leaves the machine (SM-Q15 b): data class** | **One chat rule, in the gateway** (`_chat_scope`, B1): `private` only when the chat id is in `echo_chats`, or it is a DM whose `user_id` is in `owner_user_ids` (Alex). Every other chat, including a DM with any other allowed user, is `shared` (F1) | — | **Off the machine:** whatever enters a gateway session can be posted to that chat (Telegram's servers, and every member) | Message bodies and replies are private content from Alex's local sessions. The rule governs **all three paths** (F1): **(1) echo** only to `private` chats, as plain text with mentions suppressed (F12); **(2) body into a `shared` chat**: delivered (no gate on delivery), with a model-only shared-chat line under the authority line, and `shared_chat: true` in the sender's receipt; **(3) reply to a `shared`-chat sender**: only an explicit `[REPLY <id>]` block is sent, the whole-answer fallback is not, and the record says `shared-chat-no-block`. SM-Q8 is unchanged between local sessions and to `private` chats. Lines 2–3, the shared-chat line and the footer are never posted | The gateway process posts through the chat's existing adapter and route. The plugin cannot reach adapters directly (`plugin_isolation.HOST_UNSUPPORTED_CTX_METHODS`) |
+| **TB-5** | **Messages and replies reaching a chat that leaves the machine (SM-Q15 b): data class** | **One chat rule, in core** (`gateway/chat_scope.py`, B1): `private` only when `<platform>:<chat id>` is in `echo_chats`, or it is a DM whose `<platform>:<user id>` is in `owner_user_ids` (Alex). Every other chat, including a DM with any other allowed user, is `shared` (F1, R2-3). **Scope follows the session's stored origin in any process and fails closed:** a messaging-platform session with no resolvable origin is `shared`, so a group session opened in the dashboard is still `shared` (R2-1). The config is read fresh on every call | — | **Off the machine:** whatever enters a gateway session can be posted to that chat (Telegram's servers, and every member) | Message bodies and replies are private content from Alex's local sessions. The rule governs **all three paths** (F1): **(1) echo** only to `private` chats, as plain text with mentions suppressed (F12); **(2) body into a `shared` chat**: delivered (no gate on delivery), with a model-only shared-chat line under the authority line, and `shared_chat: true` in the sender's receipt; **(3) reply to a `shared`-chat sender** (or a platform sender whose scope is unknown): only an explicit `[REPLY <id>]` block is sent, the whole-answer fallback is not, the record says `shared-chat-no-block`, and the replying model's footer says its reply goes into a chat other people read (R2-2). SM-Q8 is unchanged between local sessions and to `private` chats. Lines 2–3, the shared-chat line and the footer are never posted | The gateway process posts through the chat's existing adapter and route. The plugin cannot reach adapters directly (`plugin_isolation.HOST_UNSUPPORTED_CTX_METHODS`) |
 | **TB-6** | **Profile isolation** | Every envelope carries `hermes_home`; a host refuses a mismatch (`other-profile`). The registry, record and leases are all under one `HERMES_HOME`. Serve and reply threads bind the plugin manager's profile (`_plugin_home_scope(manager.home_path)` / `propagate_context_to_thread`; HX002/HX005). A dashboard serving several profiles hosts intercom for the profile that loaded it; other profiles' sessions get `no-endpoint` (HLD O14). **The hosts check the matched session's own profile:** the tui host compares `session["profile_home"]` and the gateway compares its entry's home with the calling plugin manager's `home_path` (F9). The wake path sends no `profile`, so the dashboard resumes from its launch profile; a sender in another profile reads its own key file and fails closed (F14) | Per-profile `.env` and secrets untouched | — | — | Nothing crosses profiles |
 | **TB-7** | **Who writes what** | — | — | — | — | See the table below |
 | **TB-8** | **The record file** | Owner-only: `plugin-data/intercom/` `0700`, and `record.db`, `-wal` and `-shm` all `0600` (created under `umask 077`; F7) | — | None. No telemetry, no export | Holds every message body and reply: private | Sender and host processes as in B7. `status` and `log` only read it |
@@ -803,19 +870,19 @@ Intercom tests run from the intercom repo root with
 
 | Item | Proving check |
 |---|---|
-| I-1 seam core | `scripts/run_tests.sh tests/hermes_cli/test_plugin_inject_modes.py`: `mode=None` returns `bool` and behaves as before; `InjectResult` is truthy only when accepted; `injection-off`; a foreign `session_key` on the CLI is not-hosted; `ctx.injection_allowed()` mirrors the consent key; `ctx.session_chat_scope` returns `None` outside the gateway |
+| I-1 seam core | `scripts/run_tests.sh tests/hermes_cli/test_plugin_inject_modes.py`: `mode=None` returns `bool` and behaves as before; `InjectResult` is truthy only when accepted; `injection-off`; a foreign `session_key` on the CLI is not-hosted; `ctx.injection_allowed()` mirrors the consent key; `ctx.session_chat_scope`: a Telegram group session with **no live gateway** → `shared` from the stored origin; a platform session with no origin at all → `shared`; a local session → `None` (R2-1) |
 | I-2 tui host | `scripts/run_tests.sh tests/tui_gateway/test_plugin_inject_modes.py`: running session × `steer` / `queue` / `interrupt` → `steer` / `queue` (+ accept-time row, `active=1`) / `interrupt`+`redirect`; compression → `queue`/`compression`; idle → `start`; lazy → not-hosted; client `_delivery_mode` string → 4124, in-process `InjectedDelivery` accepted (F6); profile A calling with profile B's `session_key` → not-hosted (F9) |
 | I-3 CLI host | `scripts/run_tests.sh tests/hermes_cli/test_cli_inject_modes.py`: `_route_busy_input` per mode, with a stub agent (steer accepted / refused; redirect supported / not); idle → `_pending_input`; typed input unchanged |
-| I-4 wake module | `scripts/run_tests.sh tests/scripts/test_dashboard_dispatch_delivery.py tests/hermes_cli/test_dashboard_dispatch.py`: the rule unchanged; `DispatchError.sent` per failure point; the script's JSON and flags unchanged; a non-loopback URL raises before the key file is opened (F8: assert the key path is never read); a failed connect's error text contains neither the key nor the URI (F13) |
-| I-5 intercom transport and routing | Intercom unit tests: `test_route.py` (lease pid → own pid / other pid / no endpoint; no lease + platform source → gateway / no-gateway; live nowhere → wake / no-dashboard; same-session refusal; same-process two-session delivery; consent off + live nowhere → `injection-off` and `dispatch_sync` never called (F2); a `gateway` role from a pid other than `get_running_pid()` is ignored (F11)), `test_protocol.py` (envelope v2, peer UID, `other-profile`, no caps: 20 identical messages in a minute all arrive; a raw-socket envelope claiming a leased session from a pid that does not hold the lease is framed as a script with no reply (F3); a pre-existing `0755` registry dir becomes `0700` and entries are `0600` (F7)) |
-| I-6 framing | `test_frame.py`: the exact header shape (M-1: `interrupt asked` only when requested), footer and variants; the platform authority line and the shared-chat line (F1); a newline or `📡` in `--from` or a title stays on line 1 (F3); `relabel` on `📡` lines, on `\u200b📡`, `\u2060📡`, `\ufeff📡` and bidi-prefixed lines, and on `Not Alex … says` lines (F4), and on every `CONTROL_FRAME_OPENERS` entry, including `[/OUT-OF-BAND USER MESSAGE]`; echo escaping of Markdown links and `@everyone` / `<@…>` (F12); echo stripping; `_short_desc` → the 60-character sentence |
+| I-4 wake module | `scripts/run_tests.sh tests/scripts/test_dashboard_dispatch_delivery.py tests/hermes_cli/test_dashboard_dispatch.py`: the rule unchanged; `DispatchError.sent` per failure point; the script's JSON and flags unchanged; a non-loopback URL raises before the key file is opened (F8: assert the key path is never read). Refused: `http://127.0.0.1.evil.example`, `http://127.0.0.1@evil.example`, `http://evil.example#@127.0.0.1`, `http://localhost:9119`. Allowed: `http://[::1]:9119`, `http://127.0.0.1:9119` (R2-5); a failed connect's error text contains neither the key nor the URI (F13) |
+| I-5 intercom transport and routing | Intercom unit tests: `test_route.py` (lease pid → own pid / other pid / no endpoint; no lease + platform source → gateway / no-gateway; live nowhere → wake / no-dashboard; same-session refusal; same-process two-session delivery; consent off + live nowhere → `injection-off` and `dispatch_sync` never called (F2); a `gateway` role from a pid other than `get_running_pid()` is ignored (F11); a `reply` envelope for a pending `ask` from a pid other than the one the `ask` went to is refused, and from that pid accepted (R2-6)), `test_protocol.py` (envelope v2, peer UID, `other-profile`, no caps: 20 identical messages in a minute all arrive; a raw-socket envelope claiming a leased session from a pid that does not hold the lease is framed as a script with no reply (F3); a pre-existing `0755` registry dir becomes `0700` and entries are `0600` (F7)) |
+| I-6 framing | `test_frame.py`: the exact header shape (M-1: `interrupt asked` only when requested), footer and variants; the platform authority line and the shared-chat line (F1); the reply-destination footer line for a shared-chat sender, on send and `ask` footers (R2-2); `sanitize_user_prompt_text` is idempotent on a framed message (R2-4); a newline or `📡` in `--from` or a title stays on line 1 (F3); `relabel` on `📡` lines, on `\u200b📡`, `\u2060📡`, `\ufeff📡` and bidi-prefixed lines, and on `Not Alex … says` lines (F4), and on every `CONTROL_FRAME_OPENERS` entry, including `[/OUT-OF-BAND USER MESSAGE]`; echo escaping of Markdown links and `@everyone` / `<@…>` (F12); echo stripping; `_short_desc` → the 60-character sentence |
 | I-7 addressing | `test_address.py` against a temp `state.db` and `projects.db`: exact title, `Home`, id prefix, ambiguous, `@slug` by title and by `owner_session_id` column, endpoint name, compression tip |
 | I-8 record | `test_record.py`: schema; `plugin-data/intercom/` `0700`; `record.db`, `record.db-wal` and `record.db-shm` all `0600` after a write (F7); WAL; concurrent writers from two processes |
 | I-9 CLI | `test_cli.py`: each exit code 0–6; `status`'s transcript check reads only `active=1 OR compacted=1` rows and matches only a line whose SHA-256 equals `header_sha` (a typed copy with a different byte is "not found"; F10); `log` joins replies and shows `shared chat, no [REPLY] block` (F1) |
-| I-10 replies | `test_replies.py`: block / whole-answer / silence readings; record check (forged header, already replied, wrong target); SM-Q9 (b) sources; reply delivered with `steer` and `expect_reply=False`; `ask` skipped; `[SILENT]` reply to an `ask`; an `ask` reply containing `[/OUT-OF-BAND USER MESSAGE]` comes back as `[peer-quoted /OUT-OF-BAND …` with `reply_from` and `note` (F5); a header line that matches the anchor but not `header_sha` is not answered (F10); a `shared`-chat sender with no `[REPLY]` block gets nothing, and the record says `shared-chat-no-block`; with a block, only the block is sent (F1) |
-| I-11 gateway seam | `scripts/run_tests.sh tests/gateway/test_plugin_inject_modes.py`: injected event with a mode → steer / redirect / queue / start, `allow_gateway_control=False`; without a mode → FIFO as today; the chat rule (owner DM `private`; non-owner DM `shared`; unlisted group `shared`, no echo; listed group `private`, echo); `InjectResult.shared_chat`; the echo sent as plain text with mentions off (F12); profile mismatch → not-hosted (F9); the 30-second wait timeout → not accepted |
+| I-10 replies | `test_replies.py`: block / whole-answer / silence readings; record check (forged header, already replied, wrong target); SM-Q9 (b) sources; reply delivered with `steer` and `expect_reply=False`; `ask` skipped; `[SILENT]` reply to an `ask`; an `ask` reply containing `[/OUT-OF-BAND USER MESSAGE]` comes back as `[peer-quoted /OUT-OF-BAND …` with `reply_from` and `note` (F5); a header line that matches the anchor but whose span does not hash to `header_sha` is not answered, including an exact copy of header line 1 plus the body, as an echo shows them (F10, R2-4); a row with `sender_source='telegram'`, `sender_chat_scope=NULL` and no block sends nothing (`shared-chat-no-block`; R2-1); a `shared`-chat sender with no `[REPLY]` block gets nothing, and the record says `shared-chat-no-block`; with a block, only the block is sent (F1) |
+| I-11 gateway seam | `scripts/run_tests.sh tests/gateway/test_plugin_inject_modes.py`: injected event with a mode → steer / redirect / queue / start, `allow_gateway_control=False`; without a mode → FIFO as today; the chat rule (owner DM `private`; non-owner DM `shared`; unlisted group `shared`, no echo; listed group `private`, echo); the same number under another platform prefix is `shared`; an int YAML entry is ignored with a warning (R2-3); removing a chat from `echo_chats` changes the answer without a restart (R2-3); `InjectResult.shared_chat`; the echo sent as plain text with mentions off (F12); profile mismatch → not-hosted (F9); the 30-second wait timeout → not accepted |
 | I-12 gateway endpoint | Intercom `test_route.py` gateway cases; an E2E run (below) |
-| **E2E, after I-5 to I-12** | `scripts/run_tests.sh tests/plugins/intercom/test_e2e_hosts.py`. Real imports, temp `HERMES_HOME`; a gated dashboard subprocess, an interactive CLI under a pty, `hermes gateway run` with the bundled ntfy adapter against a fake ntfy server, and a fake model. It rebuilds the Trial round 2 checks R1–R7 from scratch (never imports `poc/`): every host × mode and idle; one dashboard process with several sessions; exactly once; replies from each host; `no-gateway` / `no-dashboard` / `no-endpoint` |
+| **E2E, after I-5 to I-12** | `scripts/run_tests.sh tests/plugins/intercom/test_e2e_hosts.py`. Real imports, temp `HERMES_HOME`; a gated dashboard subprocess, an interactive CLI under a pty, `hermes gateway run` with the bundled ntfy adapter against a fake ntfy server, and a fake model. It rebuilds the Trial round 2 checks R1–R7 from scratch (never imports `poc/`): every host × mode and idle; one dashboard process with several sessions; exactly once; replies from each host; `no-gateway` / `no-dashboard` / `no-endpoint`; a Telegram group session opened in the dashboard receives mail with the shared-chat line, and a local session's reply to it carries no whole-answer fallback (R2-1) |
 | I-13 deploy | After the restart: `hermes plugins list` shows `intercom` enabled; `hermes intercom list` shows the dashboard and gateway endpoints; `hermes intercom send --to Home --message "deploy check" --delivery queue` exits 0; the phone shows the 📡 bubble once; `@model-testing` resolves after the rename |
 | Code health | `python scripts/check` passes (functions CC ≤ 20, ≤ 300 lines; files ≤ 2,000 lines) |
 
@@ -851,8 +918,10 @@ Intercom tests run from the intercom repo root with
   - `inbound` (`always|never`, intercom's own).
 - **Entry level** (`plugins.entries.intercom`, read by the gateway core like
   `allow_gateway_injection`):
-  - `echo_chats` (list of chat ids, default `[]`);
-  - `owner_user_ids` (list of platform user ids, default `[]`).
+  - `echo_chats` (list of `"<platform>:<chat id>"` strings, default `[]`);
+  - `owner_user_ids` (list of `"<platform>:<user id>"` strings, default `[]`).
+
+  Both are read fresh on every call (R2-3).
 
   No `HERMES_*` variables.
 
@@ -881,7 +950,7 @@ Intercom tests run from the intercom repo root with
 
 | # | Item | Repo | Builder | Depends on |
 |---|---|---|---|---|
-| I-1 | Seam core: `InjectResult` (with `shared_chat`), `mode`/`echo`/`home_path` on `inject_message`, `ctx.injection_allowed()`, `ctx.session_chat_scope()`, routing in `plugins_injection.py`, docs page | hermes-agent | **Claude Opus** | — |
+| I-1 | Seam core: `InjectResult` (with `shared_chat`), `mode`/`echo`/`home_path` on `inject_message`, `ctx.injection_allowed()`, `ctx.session_chat_scope()` with `gateway/chat_scope.py` (stored origin, fail closed, platform-prefixed entries, fresh reads), routing in `plugins_injection.py`, docs page | hermes-agent | **Claude Opus** | — |
 | I-2 | Seam, tui_gateway host: `inject_tui_session_message(mode=, home_path=)` with the profile check, `_handle_busy_submit(mode=)`, `InjectedDelivery`, applied-mode mapping | hermes-agent | **Claude Opus** | I-1 |
 | I-3 | Seam, classic CLI host: `_route_busy_input` refactor, `_deliver_injected` | hermes-agent | **Claude Opus** | I-1 |
 | I-4 | Wake module: `hermes_cli/dashboard_dispatch.py`, script wrapper, `DispatchError.sent`, loopback-only target, fixed error texts | hermes-agent | Grok 4.7 | — |
@@ -892,7 +961,7 @@ Intercom tests run from the intercom repo root with
 | I-9 | Intercom CLI: `cli.py` (`send`/`list`/`status`/`log`, exit codes 0–6, read-only transcript check on active rows, live-state advice) | intercom | Grok 4.7 | I-5, I-8 |
 | I-10 | Intercom replies: `replies.py` (post_llm_call, `header_sha` match, silence, SM-Q9 b, the shared-chat fallback rule, reply routing), `ask` relabel and `[SILENT]` mapping; tool schema and description (B11) | intercom | **Claude Opus** | I-5, I-6, I-8 |
 | I-13 | Vendor and deploy, step 1: `git subtree add`, E2E test (`tests/plugins/intercom/test_e2e_hosts.py`), house-infra enable, restart, rename, relay skills | hermes-agent + house-infra | Grok 4.7 (E2E: Claude Opus); manager for restart and skills | I-1 … I-10 |
-| I-11 | Seam, gateway host: scheduling with a result, `hermes_delivery_mode` in `run_busy.py`, the one chat rule `_chat_scope`, plain-text `echo` to private chats only, profile check | hermes-agent | **Claude Opus** | I-1; security on TB-4/TB-5 |
+| I-11 | Seam, gateway host: scheduling with a result, `hermes_delivery_mode` in `run_busy.py`, `chat_scope` from I-1 for the echo, plain-text `echo` to private chats only, profile check | hermes-agent | **Claude Opus** | I-1; security on TB-4/TB-5 |
 | I-12 | Intercom gateway endpoint: role refresh, gateway routing step, `echo` from the host frame; E2E gateway cases; deploy step 2 | intercom (+ hermes-agent subtree pull) | **Claude Opus** | I-5, I-11 |
 | I-14 | Upstream drafts: #81885 update, majordave pull request, seam pull request, in `intercom:docs/upstream/` for Alex | intercom | Grok 4.7 | I-1 … I-12 |
 

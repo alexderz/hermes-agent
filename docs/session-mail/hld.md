@@ -116,6 +116,7 @@ with miyu4u as prior art.
   delivered into shared chats, and replies to shared-chat senders: there, only an explicit
   `[REPLY]` block is sent, never the whole-answer fallback. This is a data-class rule, not a
   delivery gate; SM-Q8 is unchanged between local sessions.
+- **Scope follows the session's origin chat, in any process (security round 2, R2-1).** It is read from the session's stored origin in `state.db` when no live gateway answers, and it fails closed: a messaging-platform session with no resolvable origin is `shared`. Chat and user entries are `"<platform>:<id>"` strings, read fresh on every call.
 - **The seam gains two read-only `ctx` methods**, `injection_allowed()` and
   `session_chat_scope()`, plus `home_path` for a per-session profile check (F2, F1, F9).
 - **Sender binding (F3).** On the socket, a claimed sender session is accepted only from the
