@@ -2,12 +2,12 @@
 
 - Slug: `session-mail` (chunk working name; the shipped plugin is `intercom`)
 - HLD: `docs/session-mail/hld.md` (round 2, with the Trial round 2 changes)
-- UX: `docs/session-mail/ux.md` (round 7, UX review round 7: meets requirements); stories
+- UX: `docs/session-mail/ux.md` (round 7, aligned with LLD round 3 on 2026-11-10); stories
   `docs/session-mail/stories/sm-01` … `sm-22`
 - Trials: `docs/session-mail/poc/poc.md` (round 1), `docs/session-mail/poc/round2/poc.md`
   (round 2)
 - Tickets this LLD covers: Epic `DER-701`. Items I-1 … I-14 below; the manager files them at Groom
-- Date: `2026-11-10` (round 3: security review round 2 and the wake-receipt wording folded in)
+- Date: `2026-11-10` (round 4: security review round 3 notes N1–N4; aligned with `ux.md` and the mockups)
 
 Alex accepted the Plan and UX on 2026-11-10 with every recommended answer (SM-Q7 to SM-Q17; HLD
 § Open). **Where the HLD and `ux.md` differ, this LLD follows `ux.md`**, because the UX was
@@ -29,8 +29,21 @@ Trial's query counted rows without the `active` column. In round 2, run 3, row 2
 (`hermes_state_common.py:640-682`), so a queued message shows **once**. O17 is retracted and has
 **no fix item**. The one consequence is that every transcript read in this design filters on
 `active = 1 OR compacted = 1` (I-9). The frozen round-2 note is left as written; this LLD and the
-HLD carry the correction, and `ux.md` § "Hermes Mobile" / "Web dashboard" needs the designer to
-drop the "shows twice until the O17 fix" lines.
+HLD carry the correction, and `ux.md` now says a queued message shows once (mockups README,
+change 9).
+
+**Round 4 (security review round 3: accepted on trust boundaries).** The notes are folded in:
+
+| Note | Where |
+|---|---|
+| N1 the scope must not depend on `restore_identity` | B1 step 1: the scope reads only the raw `platform`, `chat_id`, `chat_type` and `user_id`; the re-pin is optional |
+| N2 fail closed on errors | B1 step 3: any read error is `shared` unless the source was positively read as local; a missing row is `shared` |
+| N3 the span hash is not a secret | B8 step 2 and the R2-4 row: "cannot be reproduced from the echo alone", not "cannot be forged" |
+| N4 an `ask` that wakes its target | B8 `ask`: after a wake, the waiter binds to the dashboard's lease pid |
+| N5 author email | The manager |
+
+The LLD's wording matches `ux.md`, the stories and the mockups at `eac95661b3` (mockups README,
+changes 1–9, recommendation A).
 
 **Round 3 (security review round 2, on `a37eb15b88`).**
 
@@ -39,7 +52,7 @@ drop the "shows twice until the O17 fix" lines.
 | R2-1 blocker: scope fails open outside a live gateway | `session_chat_scope` now reads the session's **stored origin** in any process (new `gateway/chat_scope.py`, B1). It fails closed: a messaging-platform session with no resolvable origin is `shared`, and `NULL` is allowed only for local sources. Used on both sides: host step 4, and the sender's `sender_chat_scope` at insert (B4). B8 treats `NULL` plus a platform source as `shared` |
 | R2-2 the replying model is not told the reply goes to a shared chat | Footer line for shared-chat senders, on send and `ask` footers (B6) |
 | R2-3 ids not tied to a platform; types; fresh reads | Entries are `"<platform>:<id>"` strings, compared against `f"{platform}:{id}"`; non-string entries are rejected with a warning; config read fresh on every call (B1) |
-| R2-4 F10 rationale wrong | The hash now covers the whole framed span, from header line 1 to `📡 End of message <id>`. Lines 2–3 and the footer are model-only and never echoed, so a copy of an echo cannot reproduce it (B4 host step 5, B8, B9) |
+| R2-4 F10 rationale wrong | The hash now covers the whole framed span, from header line 1 to `📡 End of message <id>`. Lines 2–3 and the footer are model-only and never echoed, so the span cannot be reproduced from the echo alone. It is not a secret: that wording is public (N3) (B4 host step 5, B8, B9) |
 | R2-5 loopback check must parse | `urlsplit(...).hostname` plus `ipaddress.ip_address(...).is_loopback`; hostnames are refused, `localhost` included (B2) |
 | R2-6 `reply` envelopes not bound | The ask waiter stores the target host's pid; a `reply` is accepted only from that peer pid, or from the verified gateway pid for a gateway target (B8 `ask`) |
 | Wake receipt wording (UX review R7-1, mockup review carry-over) | The wake path's `started` sentence names the dashboard (B9) |
@@ -80,8 +93,8 @@ applied mode, so it says what was **asked** for, never what happened. Line 1:
   platform and chat type) for a messaging-platform sender, or `script <label>` for a script.
 - The applied mode is stated exactly in the receipt, the record and the CLI.
 
-This replaces `ux.md`'s "interrupt" label (J9, sm-18). It is a wording change the manager shows
-Alex with the mockups.
+This replaced `ux.md`'s "interrupt" label. `ux.md` (J8, J9, § "Header") and sm-05, sm-08 and
+sm-18 now use it (mockups README, change 1), for Alex to accept with the mockups.
 
 Paths without a prefix are in **alexderz/hermes-agent** (this repo, branch
 `integrate/session-mail`). `intercom:<path>` is **alexderz/hermes-intercom** (fork of
@@ -191,15 +204,22 @@ class InjectResult:            # hermes_cli/plugins_injection.py
      `SessionDB(read_only=True)`: the session row's `source, user_id, chat_id, chat_type,
      thread_id, origin_json, transport_profile`, which Hermes keeps along the compression
      lineage (`hermes_state_gateway.py:255-275`). That gives a `SessionSource` (from
-     `origin_json` when present, else from the columns), re-pinned with
-     `gateway.session_identity.restore_identity(..., transport_profile=<row value>)`, the
-     same step as `_restored_source` (`gateway/authz_mixin.py:380-391`), without a runner.
+     `origin_json` when present, else from the columns).
+     - **The scope reads only the raw `platform`, `chat_id`, `chat_type` and `user_id` (N1).**
+       Re-pinning with `gateway.session_identity.restore_identity(...)`, the step
+       `_restored_source` uses (`gateway/authz_mixin.py:380-391`), is optional here.
+     - With no runner, it returns `None` and pins nothing
+       (`gateway/session_identity.py:163-167`). That `None` never counts as "no origin".
      When the row lacks them, the `gateway_routing` entry whose `entry_json.session_id`
      matches is the fallback (`hermes_state_gateway.py:296-320`).
   2. **Rule.** `chat_scope(source, plugin_id=…, home_path=…)` (below).
   3. **Fail closed.** If `sessions.source` is a messaging platform (anything outside
      `cli, tui, desktop, cron, oneshot, subagent`) and no origin resolves, the answer is
      `shared`. `None` is returned **only** for local sources.
+     - **Errors fail closed too (N2):** any exception while reading the stored origin (database
+       locked or missing, bad `origin_json`) gives `shared`, unless `sessions.source` was
+       positively read as local.
+     - A missing `sessions` row is unknown, so it is `shared`.
 
   Both live in a new core module, `gateway/chat_scope.py`, importable without a runner, so the
   dashboard and CLI processes can call it. `_dispatch_plugin_message_injection` uses the same
@@ -675,9 +695,11 @@ It runs in the process that ran the turn (any host; Trial Q3, R6).
 2. **Find messages:** lines that start with `📡 Not ` and end with `message <8 hex>):`. The span
    runs from that line to `📡 End of message <id>`. Keep it only if **the SHA-256 of the whole
    span equals the record row's `header_sha` (F10, R2-4)**. The echo carries only header line 1
-   and the body. Lines 2–3 and the footer are model-only and never posted, so a copy typed by
-   anyone who saw an echo cannot reproduce the span. (The round-2 reason, "lacks the host's
-   exact fields", was wrong: the echo is header line 1 byte for byte.)
+   and the body. Lines 2–3 and the footer are model-only and never posted, so the span
+   **cannot be reproduced from the echo alone**. It is not a secret (N3): that wording is
+   public, and someone who saw an echo and read the repository could rebuild it. That is
+   acceptable, because echoes go only to `private` chats. (The round-2 reason, "lacks the
+   host's exact fields", was wrong: the echo is header line 1 byte for byte.)
 3. **Keep only real candidates.** Keep an id only if its record row has:
    - `kind = 'send'`;
    - `target_session_id` equal to `session_id`, or in its compression lineage
@@ -707,8 +729,13 @@ It runs in the process that ran the turn (any host; Trial Q3, R6).
 **`ask` (SM-Q16 a)** is unchanged, apart from the relabel on the way back (F5):
 - intercom's `ask_to` waiter and `reply_to`;
 - **The reply is bound to the target's host (R2-6).** When the ask is sent, the waiter stores
-  the pid of the process it was delivered to (the target lease's pid, or the verified gateway
-  pid). `resolve_ask` accepts a `reply` envelope only when the connecting **peer pid** equals
+  the pid of the process it was delivered to: the target lease's pid, or the verified gateway
+  pid.
+  - **After a wake (N4),** that is the dashboard. B4 step 5 returns once the turn has started,
+    so the waiter re-reads the target's lease and stores its pid, which is the dashboard's. If
+    no lease is there yet, it falls back to the pid of the dashboard's own intercom registry
+    entry for the same `hermes_home`.
+  - `resolve_ask` accepts a `reply` envelope only when the connecting **peer pid** equals
   that pid. A `request_id` seen in a transcript or a chat is not enough to answer someone
   else's `ask`;
 - `ask_to` returns
@@ -853,14 +880,15 @@ before Groom (Security gate).
 
 ### Mockups
 
-`docs/session-mail/mockups/`, written by the designer in parallel with this LLD. There is no new
-screen. The surfaces are text in existing user rows and bubbles:
+`docs/session-mail/mockups/` (round 3): three variants, with **recommendation A** ("Not Alex"
+first, `ux.md`'s order and this LLD's final header shape). There is no new screen. The surfaces are text in existing user rows and bubbles:
 - the 📡 header, footer and closing line on the phone, dashboard, desktop, Ink TUI and classic
   CLI;
 - the Telegram echo;
 - the CLI's `send`, `status` and `log` output.
 
-Operator acceptance: pending, through the UX review loop.
+Operator acceptance: pending. The mockups README lists the nine LLD wording changes (1–9) for
+Alex to accept in one pass.
 
 ### Verify
 
@@ -870,11 +898,11 @@ Intercom tests run from the intercom repo root with
 
 | Item | Proving check |
 |---|---|
-| I-1 seam core | `scripts/run_tests.sh tests/hermes_cli/test_plugin_inject_modes.py`: `mode=None` returns `bool` and behaves as before; `InjectResult` is truthy only when accepted; `injection-off`; a foreign `session_key` on the CLI is not-hosted; `ctx.injection_allowed()` mirrors the consent key; `ctx.session_chat_scope`: a Telegram group session with **no live gateway** → `shared` from the stored origin; a platform session with no origin at all → `shared`; a local session → `None` (R2-1) |
+| I-1 seam core | `scripts/run_tests.sh tests/hermes_cli/test_plugin_inject_modes.py`: `mode=None` returns `bool` and behaves as before; `InjectResult` is truthy only when accepted; `injection-off`; a foreign `session_key` on the CLI is not-hosted; `ctx.injection_allowed()` mirrors the consent key; `ctx.session_chat_scope`: a Telegram group session with **no live gateway** → `shared` from the stored origin; a platform session with no origin at all → `shared`; a local session → `None` (R2-1); called with **no runner**, a group row → `shared` and an owner DM row → `private` (N1); a corrupt `origin_json` → `shared`, a missing `sessions` row → `shared` (N2) |
 | I-2 tui host | `scripts/run_tests.sh tests/tui_gateway/test_plugin_inject_modes.py`: running session × `steer` / `queue` / `interrupt` → `steer` / `queue` (+ accept-time row, `active=1`) / `interrupt`+`redirect`; compression → `queue`/`compression`; idle → `start`; lazy → not-hosted; client `_delivery_mode` string → 4124, in-process `InjectedDelivery` accepted (F6); profile A calling with profile B's `session_key` → not-hosted (F9) |
 | I-3 CLI host | `scripts/run_tests.sh tests/hermes_cli/test_cli_inject_modes.py`: `_route_busy_input` per mode, with a stub agent (steer accepted / refused; redirect supported / not); idle → `_pending_input`; typed input unchanged |
 | I-4 wake module | `scripts/run_tests.sh tests/scripts/test_dashboard_dispatch_delivery.py tests/hermes_cli/test_dashboard_dispatch.py`: the rule unchanged; `DispatchError.sent` per failure point; the script's JSON and flags unchanged; a non-loopback URL raises before the key file is opened (F8: assert the key path is never read). Refused: `http://127.0.0.1.evil.example`, `http://127.0.0.1@evil.example`, `http://evil.example#@127.0.0.1`, `http://localhost:9119`. Allowed: `http://[::1]:9119`, `http://127.0.0.1:9119` (R2-5); a failed connect's error text contains neither the key nor the URI (F13) |
-| I-5 intercom transport and routing | Intercom unit tests: `test_route.py` (lease pid → own pid / other pid / no endpoint; no lease + platform source → gateway / no-gateway; live nowhere → wake / no-dashboard; same-session refusal; same-process two-session delivery; consent off + live nowhere → `injection-off` and `dispatch_sync` never called (F2); a `gateway` role from a pid other than `get_running_pid()` is ignored (F11); a `reply` envelope for a pending `ask` from a pid other than the one the `ask` went to is refused, and from that pid accepted (R2-6)), `test_protocol.py` (envelope v2, peer UID, `other-profile`, no caps: 20 identical messages in a minute all arrive; a raw-socket envelope claiming a leased session from a pid that does not hold the lease is framed as a script with no reply (F3); a pre-existing `0755` registry dir becomes `0700` and entries are `0600` (F7)) |
+| I-5 intercom transport and routing | Intercom unit tests: `test_route.py` (lease pid → own pid / other pid / no endpoint; no lease + platform source → gateway / no-gateway; live nowhere → wake / no-dashboard; same-session refusal; same-process two-session delivery; consent off + live nowhere → `injection-off` and `dispatch_sync` never called (F2); a `gateway` role from a pid other than `get_running_pid()` is ignored (F11); a `reply` envelope for a pending `ask` from a pid other than the one the `ask` went to is refused, and from that pid accepted (R2-6); an `ask` delivered through the wake path is answered from the dashboard's pid and accepted (N4)), `test_protocol.py` (envelope v2, peer UID, `other-profile`, no caps: 20 identical messages in a minute all arrive; a raw-socket envelope claiming a leased session from a pid that does not hold the lease is framed as a script with no reply (F3); a pre-existing `0755` registry dir becomes `0700` and entries are `0600` (F7)) |
 | I-6 framing | `test_frame.py`: the exact header shape (M-1: `interrupt asked` only when requested), footer and variants; the platform authority line and the shared-chat line (F1); the reply-destination footer line for a shared-chat sender, on send and `ask` footers (R2-2); `sanitize_user_prompt_text` is idempotent on a framed message (R2-4); a newline or `📡` in `--from` or a title stays on line 1 (F3); `relabel` on `📡` lines, on `\u200b📡`, `\u2060📡`, `\ufeff📡` and bidi-prefixed lines, and on `Not Alex … says` lines (F4), and on every `CONTROL_FRAME_OPENERS` entry, including `[/OUT-OF-BAND USER MESSAGE]`; echo escaping of Markdown links and `@everyone` / `<@…>` (F12); echo stripping; `_short_desc` → the 60-character sentence |
 | I-7 addressing | `test_address.py` against a temp `state.db` and `projects.db`: exact title, `Home`, id prefix, ambiguous, `@slug` by title and by `owner_session_id` column, endpoint name, compression tip |
 | I-8 record | `test_record.py`: schema; `plugin-data/intercom/` `0700`; `record.db`, `record.db-wal` and `record.db-shm` all `0600` after a write (F7); WAL; concurrent writers from two processes |
