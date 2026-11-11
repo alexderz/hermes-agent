@@ -147,8 +147,8 @@ describe('useComposerMetrics — published clearance survives an effect replay',
       return fit
     }
 
-    expect(fitWith(true)).toMatchObject({ stacked: false, foldVoice: true, compactPill: true })
-    expect(fitWith(false)).toMatchObject({ foldVoice: false, compactPill: false })
+    expect(fitWith(true)).toMatchObject({ short: true, stacked: false, foldVoice: true, compactPill: true })
+    expect(fitWith(false)).toMatchObject({ short: false, foldVoice: false, compactPill: false })
   })
 
   it('uses a single control column below the two-touch-target budget', () => {

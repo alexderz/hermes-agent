@@ -1982,10 +1982,12 @@ body.guest-pointer-lock :is(webview, iframe) {
     top: auto;
   }
 
-  /* Composer: one line, the text scrolls inside it (useComposerMetrics keeps the
-     row unstacked here), and no branch strip above it. lib/short-viewport.ts. */
+  /* Composer: never a full-width input row with controls under it. With text the
+     buttons stack in a narrow right column ("+" over Send) and the input gets that
+     column's height, scrolling inside it; no branch strip above. See
+     controlRowGridClass in app/chat/composer/index.tsx and lib/short-viewport.ts. */
   :root {
-    --composer-input-max-height: calc(var(--composer-input-min-height) + 0.25rem);
+    --composer-input-max-height: calc(2 * var(--composer-control-size) + var(--composer-row-gap));
   }
 
   .coding-status-bar {
