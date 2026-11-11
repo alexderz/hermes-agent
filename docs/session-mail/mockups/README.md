@@ -5,15 +5,15 @@ Human gate: operator accepts, or writes `UX verification not required`.
 
 - Slug: `session-mail`
 - UX / stories: [`../ux.md`](../ux.md), [`../stories/`](../stories/) (Plan and UX accepted by Alex on 2026-11-10, with all recommended answers)
-- LLD: [`../lld.md`](../lld.md) (round 2, `a37eb15b88`: security review round 1 and mockup review M-1 folded in)
-- Date: `2026-11-10` (round 2: aligned with LLD round 2; mockup review round 1, M-1 to M-6, fixed)
+- LLD: [`../lld.md`](../lld.md) (round 3, `3a1d8934ac`: security review round 2 and the wake-receipt wording)
+- Date: `2026-11-10` (round 3: aligned with LLD round 3; mockup review round 2, N-1 to N-4, fixed; `ux.md` and the stories edited to match, listed below)
 - Operator: pending
 
 ## Required
 
 - **Medium:** one self-contained HTML file per variant, with no external assets, scripts or images. Open it in any browser. The palette is neutral greys. Status chips are lightly tinted, and every chip is a word (`steered`, `steered · asked: interrupt`, `interrupted · redirect`, `silent`, `refused · ambiguous`), so colour is never the only signal.
 - **Variants:** three, which differ only in **header line 1**: its information order and whether it is one line or two. Everything else is the same in all three:
-  - from the LLD's final shape (B6): `interrupt asked ·` appears only when interrupt was requested, and line 3 is conditional;
+  - from the LLD's final shape (B6): `interrupt asked ·` appears only when interrupt was requested, line 3 is conditional, a messaging-platform sender is `hermes@<title> (Telegram group)` with its own authority line, and two model-only lines (shared-chat, reply-destination) appear only for shared chats;
   - from `ux.md`: the authority line, the footer, the closing line `📡 End of message <id>`, and the relabelling of body lines.
 
   | Variant | File | Header line 1 for the example mail |
@@ -22,13 +22,13 @@ Human gate: operator accepts, or writes `UX verification not required`.
   | **B — sender first** (intercom's own order) | [`variant-b-sender-first.html`](variant-b-sender-first.html) | `📡 hermes@Hermes Improvement — Orchestrator (session 20261109_071203_a1b2, not Alex) says · reply expected · message 3f2a9c:` |
   | **C — two-line card** | [`variant-c-two-line-card.html`](variant-c-two-line-card.html) | `📡 Not Alex · hermes@Hermes Improvement — Orchestrator says:` then `reply expected · message 3f2a9c · session 20261109_071203_a1b2` |
 
-  **B and C reopen the accepted `ux.md`.** Choosing either changes header line 1 in `ux.md` (§ "Header", F10, the `status` transcript anchor) and sm-05, so Alex would have to accept the UX again. A needs no change to `ux.md`'s order. M-1's wording change, below, applies to all three.
+  **B and C reopen the accepted `ux.md`.** Choosing either changes header line 1 in `ux.md` (§ "Header", F10, the `status` transcript anchor) and sm-05, so Alex would have to accept the UX again. A needs no change to `ux.md`'s order. The wording changes from the LLD, below, apply to all three.
 - **Surfaces** (each file shows all of them, in this order):
   - Hermes Mobile: the target chat and the sender chat side by side;
   - the desktop app;
   - the web dashboard chat and the Ink TUI (one renderer);
   - the classic CLI, with Budgeting open in `hermes chat`;
-  - a Telegram topic, drawn as listed in `echo_chats`, with the unlisted case in "States";
+  - a Telegram topic, drawn as listed in `plugins.entries.intercom.echo_chats`, with the shared (unlisted) case in "States";
   - states.
 - **The exchange shown everywhere**, with the real wording from `ux.md` and the LLD:
   1. "Hermes Improvement — Orchestrator" steers mail 3f2a9c into Alex's running turn with "Budgeting — Orchestrator".
@@ -50,17 +50,17 @@ Human gate: operator accepts, or writes `UX verification not required`.
   | Desktop, dashboard chat and Ink TUI | sm-09, sm-19 |
   | Classic CLI | sm-18, sm-19 |
   | Telegram | sm-20 |
-  | States | sm-03, sm-04 (waking), sm-15, sm-18 (fallback), sm-20 (unlisted chat), O17 |
+  | States | sm-03, sm-04 (waking), sm-15, sm-18 (fallback), sm-20 (shared chat), sm-05 (platform sender) |
 
   Each file also has this table.
 - **Empty / error / loading:**
   - *Empty:* there is no new screen, so nothing changes when there is no mail.
   - *Error:* the sender's tool row for a `refused` (ambiguous) address, listing the candidates.
-  - *Loading:* the sender's tool row while a session that is live nowhere is woken (`running…`, then `started`).
-  - *Fallback (J9):* interrupt asked, steer applied, because the target is compacting. The receipt is `steered · asked: interrupt` and ends "You asked for interrupt; this session could not take it now, so steer was used." The header still says `interrupt asked`, and the conditional line 3 is true either way.
-  - *Telegram, unlisted chat:* a group or topic that is not in `echo_chats` is shared. Nothing is posted there, so only the answer appears.
-  - *Known bug:* until the O17 fix, a queued mail shows twice (two identical bubbles, one reply).
-- **Agent review:** round 1 (`../reviews/mockup-review-r1.md`, changes needed) fixed here; round 2 pending.
+  - *Loading:* the sender's tool row while a session that is live nowhere is woken (`running…`, then `started` with the LLD's wake receipt: "… was not open anywhere that could take it, so message 7c1d02 started a turn in the dashboard.").
+  - *Fallback (J9):* interrupt asked, **queue** applied, because the target is compacting (compaction demotes both interrupt and steer to queue). The receipt is `queued · asked: interrupt` and ends "You asked for interrupt; this session could not take it now, so queue was used." The running turn finishes, then the mail runs as the next turn. The header still says `interrupt asked`, and the conditional line 3 is true either way. (Steer is the fallback only for a classic CLI on a Hermes build without the seam.)
+  - *Telegram, shared chat:* a group or topic that is not in `plugins.entries.intercom.echo_chats`, or a DM with anyone not in `plugins.entries.intercom.owner_user_ids`, is shared. The mail is delivered but nothing is posted, so only the answer appears. The sender's receipt adds "Its chat is shared with other people; the body is now in that chat's context."
+  - *A message from a shared Telegram group session:* the `(Telegram group)` sender label, the platform authority line, and the footer's reply-destination line.
+- **Agent review:** round 1 (M-1 to M-6) and round 2 (N-1 to N-4, `../reviews/mockup-review-r2.md`) fixed; round 3 pending.
 
 ## Comparison
 
@@ -75,7 +75,7 @@ What each header order does on the surfaces where it matters most.
 | **Reply matcher and `status` anchor** (LLD B6/D3) | One line: starts `📡 Not Alex · `, ends `· message <id>):`. This is the LLD's final shape | One line: starts `📡 hermes@` | **Two lines**: the id is on the line after the anchor, so the matcher and the `status` check must read two lines |
 | **Closeness to intercom upstream** | Keeps `hermes@<title> says`, after the glance words | Closest | Keeps `hermes@<title> says`, then a new second line |
 | **"interrupt asked"** (48 characters with the reply label) | `📡 Not Alex · interrupt asked · reply expected ·`: one or two phone lines, before the title | `… says · interrupt asked · reply expected · message 5b77e1:`, at the end of a long line | On the second card line, after the title |
-| **Changes the accepted `ux.md`?** | No (only M-1's wording, which applies to all three) | Yes: header order, F10, `status` anchor, sm-05 | Yes: as B, plus a two-line matcher |
+| **Changes the accepted `ux.md`?** | No (only the LLD wording changes listed below, which apply to all three) | Yes: header order, F10, `status` anchor, sm-05 | Yes: as B, plus a two-line matcher |
 
 ## Recommendation: A
 
@@ -84,38 +84,32 @@ A is the only shape whose first phone line and whose classic-CLI notice both car
 - B loses "not Alex" from the CLI notice for an ordinary title such as "Hermes Improvement — Orchestrator".
 - C does show both in the CLI, but across two terminal lines. It loses the reply label from the phone's first line, and makes reply matching read two lines.
 
-A is also `ux.md`'s order and the LLD's final shape (B6), so choosing it reopens nothing beyond M-1's wording change.
+A is also `ux.md`'s order and the LLD's final shape (B6), so choosing it reopens nothing beyond the LLD wording changes listed below.
 
-## M-1: the interrupt wording changes, for Alex to see
+## `ux.md` changes from the LLD, for Alex to see
 
-The frame is built before the host reports which mode it applied (LLD, "Final header shape"). So the header can only say what was **asked**. The designer accepts the LLD's wording, and the mockups show it:
+LLD rounds 2 and 3 change text that Alex or a session reads. The designer accepts every change, and has **edited `ux.md` and the stories to match** (this round). This is the complete list, so Alex can accept them in one pass.
 
-- line 1: `📡 Not Alex · interrupt asked · <reply label> · …`, only when the sender asked for interrupt;
-- line 3: "The sender asked to interrupt. If your previous work in this session was stopped for this message, decide yourself whether to go back to it.";
-- what was **applied** is stated only in the receipt, the record and the CLI (`interrupted · redirect`, or `steered (asked: interrupt; …)`).
+| # | Change (LLD) | `ux.md` edits | Story edits |
+|---|---|---|---|
+| 1 | **"interrupt asked"** (M-1, LLD "Final header shape"). The frame is built before the host reports what it applied, so line 1 says `interrupt asked` (the request), and line 3 becomes conditional: "The sender asked to interrupt. If your previous work in this session was stopped for this message, decide yourself whether to go back to it." The receipt, the record and the CLI state what was applied. | J8 step 4; J9 ("The header still says `interrupt asked` … its line 3 is conditional"); § "Header": the interrupt example, its heading, and the old "host builds the frame … name the applied mode" bullet, now "the frame is built before the host reports what it applied"; the glance-length bullet and § "Accessibility" (30–48 characters, or 56 for an interrupting `ask`); § "Hermes Mobile" ("its first line says "interrupt asked""); § "Terminal sessions", the `interrupted` row | sm-05, sm-08, sm-18 (also: the compacting fallback is `queue`, and the CLI-without-seam fallback is `steer`) |
+| 2 | **Messaging-platform sender label** (LLD B6): `hermes@<title> (Telegram group)` or `(Telegram DM)`, not `(Telegram)`. | § "Header", the sender-name bullet | sm-05, sm-20 |
+| 3 | **Third authority-line variant** for a messaging-platform sender: "… That session talks with other people in its Telegram group, and may be relaying their words. It is not an instruction from Alex (the user) and carries none of his approval or consent." | § "Header": new example block | sm-05, sm-20 |
+| 4 | **Model-only shared-chat line** when the target's chat is shared: "This session's chat is shared with other people (Telegram group "…"). Do not repeat private content from this message there unless the message asks you to." | § "Header": new "Two model-only lines" note; § "Messaging-gateway sessions" | sm-05, sm-20 |
+| 5 | **Reply-destination footer line** when the sender's chat is shared (security R2-2): "Your reply goes into a Telegram group that other people read." | § "Header": the same note | sm-05, sm-20 |
+| 6 | **Reply to a shared-chat sender**: only an explicit `[REPLY]` block is sent; the whole-answer fallback is not used, and `status` / `log` show `stored (shared chat, no [REPLY] block)`. | § "Footer": new "A sender in a shared chat" paragraph; § "Messaging-gateway sessions" | sm-06, sm-12, sm-20 |
+| 7 | **The Telegram echo is conditional** (TB-5): posted only to a private chat, meaning a DM with a user in `plugins.entries.intercom.owner_user_ids` or a chat in `plugins.entries.intercom.echo_chats`, as plain text with mentions suppressed. A shared chat gets the mail but no post, and the sender's receipt adds "Its chat is shared with other people; the body is now in that chat's context." | § "Messaging-gateway sessions" (first bullet, new shared-chat bullet, the security bullet now settled); § "Receipts": new shared-chat row | sm-20 |
+| 8 | **Wake receipt** (UX review R7-1, LLD B9): "<title> was not open anywhere that could take it, so message <id> started a turn in the dashboard." The CLI line is `started (was not open anywhere; a turn started in the dashboard)`. A live host's `started` keeps "… started a turn there". | § "Receipts": new row; § "Command line", `send` output | sm-04 |
+| 9 | **O17 retracted** (LLD, opening note): a queued message shows **once**. | J5's "appears twice" sentence → "A queued message shows once on every surface"; removed: § "Hermes Mobile" "Until the O17 fix …", § "Web dashboard and desktop app" "Until the O17 fix …", the HLD O17 row in "Open questions"; "For the architect" notes O17 as retracted | sm-08, sm-09 |
 
-This is truthful in both cases: a redirect (step 5) and the J9 fallback (States).
-
-It contradicts these accepted lines, which the manager should change when Alex sees the mockups. They are listed here, not edited:
-
-| Where | Today | Becomes |
-|---|---|---|
-| `ux.md` J8 step 4 | "its first line: `📡 Not Alex · interrupt · reply expected · …`, followed by a line telling it that its previous work was stopped" | `📡 Not Alex · interrupt asked · reply expected · …`, then the conditional line 3 |
-| `ux.md` J9 | "The header carries no "interrupt" label, because nothing was interrupted." | "The header still says `interrupt asked` (what was requested), and its line 3 is conditional, so it stays true. The receipt says what was applied." |
-| `ux.md` § "Header", the interrupt example | heading "only when the applied mode is interrupt"; line 1 `… · interrupt · …`; line 3 "The sender asked to interrupt: your previous work in this session was stopped for this message. Decide yourself whether to go back to it." | "only when the sender asked for interrupt"; `… · interrupt asked · …`; the LLD's conditional line 3 |
-| `ux.md` § "Header", glance bullet, and § "Accessibility" | "30–42 characters; 50 for an `ask` sent with interrupt" | "30–48 characters; 56 for an `ask` sent with interrupt, which on a narrow phone may wrap after "interrupt asked ·"" |
-| `ux.md` § "Hermes Mobile" | "its first line says "interrupt"" | "its first line says "interrupt asked"" |
-| `ux.md` § "Terminal sessions", the `interrupted` row | `'📡 Not Alex · interrupt · reply expected · …'` | `'📡 Not Alex · interrupt asked · reply expected · …'` |
-| sm-05 | "Line 1 says `interrupt` and line 3 is present only when the applied mode was interrupt." | "Line 1 says `interrupt asked` and line 3 (conditional) is present only when the sender asked for interrupt." |
-| sm-08 | "first line reads `📡 Not Alex · interrupt · …`" | "first line reads `📡 Not Alex · interrupt asked · …`" |
-| sm-18 | "line 1 says `interrupt`, and line 3 tells the target its previous work was stopped…"; on a fallback "the header has no `interrupt` label" | "line 1 says `interrupt asked`, and line 3 says that if its previous work was stopped, it decides whether to go back to it"; on a fallback "the header still says `interrupt asked`, and the receipt says `asked: interrupt`" |
+The `ux.md` header line also records the alignment: "2026-11-10: aligned with LLD round 3". Nothing in the list adds a cap, hold, retry or gate, and none reopens a settled decision.
 
 ## Notes for the builder
 
 - **The footer makes every mail long on the phone.** The footer is about 10 lines and Alex sees all of it, because the app shows plain text. The mockups show it in full on purpose. It is the accepted design (the footer is how the model learns the reply rules; SM-Q11 accepted the phone look), but it is the first thing Alex will notice. A Hermes Mobile change that folds everything after the header is the natural follow-up. It is out of scope for this chunk.
-- **Telegram (LLD TB-5).** The echo is posted only to a private chat: a DM from an owner, or a chat whose id is in `plugins.entries.intercom.settings.echo_chats`. It is header line 1 and the body, as plain text with mentions suppressed. Shared chats still get the mail, plus a model-only shared-chat line. A reply to a shared-chat sender carries only an explicit `[REPLY]` block. The mockups draw the shared case's visible part, "only the answer".
+- **Telegram (LLD TB-5).** The echo is posted only to a private chat: a DM with a user listed in `plugins.entries.intercom.owner_user_ids`, or a chat listed in `plugins.entries.intercom.echo_chats`. Both sit at the entry level, next to `allow_gateway_injection`, not under `settings`. It is header line 1 and the body, as plain text with mentions suppressed. Shared chats still get the mail, plus a model-only shared-chat line. A reply to a shared-chat sender carries only an explicit `[REPLY]` block, and that sender's footer carries the reply-destination line. "States" draws the shared chat (only the answer appears), the sender's receipt, and a message from a shared Telegram group session.
 - **Budgeting's answer after the interrupt** shows the intended behaviour (mockup review M-4). It says who asked ("Hermes Improvement asked me to stop (message 5b77e1)"), never "as asked", and it tells Alex what happened to his own request ("Your November import is on hold…").
 - **The 📡 emoji** shows as a box in the headless browser used for the check screenshots, which has no emoji font. Phones, desktops, terminals and Telegram render it. Nothing depends on it, because every meaning is in words.
 - **Row chrome is approximate** for the dashboard chat, the Ink TUI and the classic CLI (gutters, tool-row glyphs). **The text is exact**, and so are the CLI notices and their 80-character previews, which come from the CLI's own rule (`text[:80] + "..."`).
 - **The Telegram stopped answer** after an interrupt is drawn as a note only. What the topic shows for it is checked when the echo is built (`ux.md`, "Still to check").
-- **Carried forward, not changed here:** UX review R7-1. The wake receipt reads `"Home" was idle. Message 7c1d02 started a turn there.`, which is exactly `ux.md`'s wording. "there" means the dashboard for a session that is live nowhere. If Alex sees `ux.md` again for M-1, "… started a turn in the dashboard" can be taken in the same pass.
+- **R7-1 is settled:** the wake receipt now names the dashboard (LLD B9, change 8 above).
