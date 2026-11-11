@@ -81,6 +81,8 @@ function composerFit(composer: HTMLElement, width: number): ComposerFit {
 }
 
 interface UseComposerMetricsResult extends ComposerFit {
+  /** Short viewport (phone keyboard up): the composer keeps one row of chrome. */
+  short: boolean
   stacked: boolean
 }
 
@@ -269,7 +271,8 @@ export function useComposerMetrics({
     minimal: fit.minimal,
     // A short viewport never grows the input onto its own row: wrapped text
     // scrolls inside the one-line input instead of pushing the transcript away.
-    stacked: (expanded && !short) || fit.tight,
+    short,
+    stacked: !short && (expanded || fit.tight),
     tight: fit.tight,
     singleColumn: fit.singleColumn
   }
