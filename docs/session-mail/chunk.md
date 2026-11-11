@@ -1,13 +1,14 @@
-# Chunk — session-mail: session-to-session messaging, built on intercom
+# Chunk — session-mail: session-to-session messaging, built on intercom (gateway only)
 
 - Slug: `session-mail` (working name; the shipped plugin is `intercom`)
 - Type: Epic
 - Track: Hermes Improvement (`PROJECT.md`, fork work on `alexderz/hermes-agent`); n/a as a
   tracker id
-- HLD: `docs/session-mail/hld.md` (round 2)
-- LLD: n/a until Spec (`docs/session-mail/lld.md`)
+- HLD: `docs/session-mail/hld.md` (round 3, gateway only)
+- LLD: `docs/session-mail/lld.md` (round 5, gateway only)
 - Groom: `.agents/design/session-mail/groom.md` (frozen)
-- project-main: `integrate/session-mail` in **each** repo below
+- project-main: `integrate/session-mail-023` (hermes-agent) and `integrate/session-mail`
+  (intercom)
 - Land path: merge-and-delete after explicit Review (local, serialized);
   push item branches and project-main; no internal PRs
 
@@ -17,77 +18,70 @@ Epic: `DER-701`.
 
 | Repo | Holds | project-main | Item branches | Trunk |
 |---|---|---|---|---|
-| `alexderz/hermes-agent` (this repo) | The core seam (HLD P1); the wake module from `scripts/dashboard_dispatch.py` (P5); the vendored plugin `plugins/intercom` (P6); the design docs | `integrate/session-mail` | `der-701/<item>`, cut from project-main | project-main fast-forwarded into `alex/v0.22.0-mobile-fixes`, then deployed with `git pull --ff-only` (rule 19). The seam is listed in `PROJECT.md` as a fork patch |
-| `alexderz/hermes-intercom` (fork of `majordave/hermes-intercom`) | The plugin source: transport changes (P2), our additions (P3), the gateway endpoint (P4), the upstream drafts in `docs/` (P7) | `integrate/session-mail` (created at Groom from `ae90a2a`) | `der-701/<item>`, cut from project-main | project-main merged into the fork's `main` after Review. The upstream pull request to majordave is drafted, never opened by an agent |
+| `alexderz/hermes-agent` (this repo) | The `plugin_api.json` listing PR (G-1); the vendored plugin `plugins/intercom` (G-12); the owner E2E test; the design docs | `integrate/session-mail-023` (cut from `alex/v0.23.1-canary-1110`) | `der-701/<item>`, cut from project-main | A feature branch onto `alex/v0.23.1-canary-1110`, fast-forwarded and deployed with `git pull --ff-only` (rule 19). Nothing goes onto `alex/v0.22.0-mobile-fixes`. The listing is recorded in `PROJECT.md` as the only fork patch |
+| `alexderz/hermes-intercom` (fork of `majordave/hermes-intercom`) | The plugin source (G-2 … G-11) and the upstream drafts in `docs/upstream/` (G-13) | `integrate/session-mail` (created at Groom from `ae90a2a`) | `der-701/<item>`, cut from project-main | project-main merged into the fork's `main` after Review. The upstream pull requests are drafted, never opened by an agent |
 
-**Order inside an item that spans both repos:**
+**Order for anything touching intercom:**
 1. The intercom change lands on intercom's project-main first.
-2. Hermes-agent's project-main then takes it with `git subtree pull --prefix plugins/intercom
-   <intercom remote> integrate/session-mail`. There is no `--squash`, so authorship survives.
+2. hermes-agent takes it with `git subtree add` (first time) or `git subtree pull --prefix
+   plugins/intercom <intercom remote> integrate/session-mail`. There is no `--squash`.
 3. A fix is never made in `plugins/intercom` alone.
 
-How intercom reaches the install is SM-Q14. The design follows its recommendation (subtree);
-see HLD O6.
+**Commits in the `wt/v023` worktree** run with an isolated `HERMES_HOME`, or with hooks off: the
+lefthook setup otherwise provisions into the account's real home.
 
 ## Required
 
 - **Why this slice, why now:**
-  - Alex widened the scope to every kind of session, chose three delivery modes, and chose
-    our intercom fork as the base (brief decisions 1, 3, 9, 11).
-  - The dispatch fix and the queue-aware reapers are already on project-main (`3d4d482eb9`).
-  - Intercom already has the transport and the tool; what it lacks is the seam, multi-session
-    hosts, the modes, addressing, the record and replies.
-  - The slice covers every host Alex named, in the HLD's build order, so the most-used targets
-    (dashboard chats, terminals) work first.
-- **Done:** Trunk: both project-mains on trunk; tickets landed+verified against the brief's
-  "Verify later" list:
-  - delivery modes on each host;
-  - a CLI `steer` that does not interrupt;
-  - many sessions per process with no cross-delivery;
-  - exactly-once routing;
-  - waking a session that is live nowhere;
+  - On the live v0.23 install, every chat surface Alex uses runs in the gateway owner (SM-Q20).
+  - Trial round 3 proved that intercom, as a client of that owner, can deliver every mode (plus
+    idle and cold start) and route replies back with the owner's existing verbs.
+  - So the slice is one plugin plus a listing-only core PR, with no behaviour patch (this
+    replaces settled decision 11).
+- **Done:** Trunk: both project-mains on trunk; tickets landed and verified against LLD § Verify:
+  - every mode, plus idle and cold start, on Webapp, desktop, Ink TUI, classic CLI and messaging
+    sessions (the owner E2E);
+  - admin-dashboard chats refused `not-addressable`;
   - replies, `[SILENT]` and debates;
-  - the SM-Q9 senders;
-  - the Telegram topic post (SM-Q15);
+  - SM-Q9 senders;
+  - the private-chat echo, or its documented fallback (O21);
+  - the chat rule;
   - addressing;
   - the record and the CLI;
   - no caps or retries;
-  - no-seam behaviour;
   - intercom's tests;
-  - the tool list;
-  - the phone;
-  - the upstream drafts in `docs/`, with nothing posted.
+  - `boundary_lint` clean;
+  - the relay skills on `hermes intercom send`;
+  - the upstream drafts in `docs/upstream/`, with nothing posted.
 
-  Deployed with the announced dashboard and gateway restarts, enabled through house-infra.
-- **Children:** none filed yet. Planned items (the manager files them at Groom), in build order:
-  1. **Seam, tui_gateway and CLI hosts** (hermes-agent): `inject_message(mode=…)`, applied mode
-     returned, `mode=None` unchanged, tests.
-  2. **Wake module** (hermes-agent): the dispatcher rule moved into an importable module; the
-     script becomes a wrapper with identical flags.
-  3. **Intercom transport** (intercom): lease-`pid` routing, many sessions per process, the seam
-     with feature detection, same-session refusal, caps removed, the A′ frame and relabel rule.
-  4. **Intercom additions** (intercom): addressing, the `delivery` argument and receipt, the
-     record, automatic replies, `hermes intercom send|status|list`.
-  5. **Vendor and deploy, step 1** (hermes-agent and house-infra): subtree, enable, dashboard
-     restart, relay-skill edit by the manager.
-  6. **Seam, gateway host** (hermes-agent), and **gateway endpoint** (intercom): endpoint role,
-     `lookup_by_session_id` routing, silence, the SM-Q15 post. Then the gateway restart.
-  7. **Upstream drafts** (intercom `docs/`): #81885 update, intercom pull request, seam pull
-     request, for Alex.
+  Deployed with one announced gateway restart, enabled through house-infra.
+- **Children:** none filed yet. The planned items are LLD G-1 … G-13 (the manager files them at
+  Groom):
+  1. G-1, the listing PR (Claude Opus);
+  2. G-2, the owner client (Claude Opus);
+  3. G-3, the send path (Claude Opus);
+  4. G-4, addressing (Grok 4.7);
+  5. G-5, chat scope (Claude Opus);
+  6. G-6, the echo (Claude Opus);
+  7. G-7, framing (Grok 4.7);
+  8. G-8, the record (Grok 4.7);
+  9. G-9, replies and `ask` (Claude Opus);
+  10. G-10, the CLI, tool schema, caps and legacy path (Grok 4.7);
+  11. G-11, relays (Grok 4.7; the manager edits the skills);
+  12. G-12, vendor and deploy (Grok 4.7; the manager restarts);
+  13. G-13, upstream drafts (Grok 4.7).
 - **Wave view:** not kept here; manager posts one Epic comment only on
   reshape (item added or canceled, blocker set)
 - **Blocked by:**
-  - SM-Q14 (deploy method, asked of Alex elsewhere) for item 5;
-  - security's Spec review of HLD B4 for item 6;
-  - Trial round 2 (HLD, PoC questions) before Spec is accepted.
-  - DER-686 does not block (addressing falls back to the title rule).
+  - security's re-check of the round-5 trust boundaries (LLD § Removed security fixes);
+  - Alex's acceptance of the LLD (SM-Q18) and of the UX deltas.
+  - DER-686 does not block.
 - **Blocks:** none
 
 ## Optional
 
 - **Risks only this chunk carries:**
-  - drift between `plugins/intercom` and alexderz/hermes-intercom (rule above);
-  - the seam is a core fork patch that must be re-applied at the v0.23 rebase (HLD O16);
-  - untrusted gateway text steering Alex's sessions (HLD B4);
-  - processes started before the deploy cannot receive mail until restarted.
+  - upstream may decline the listings (the fork then carries them as its only patch);
+  - the gateway restart stops every chat at once;
+  - drift between `plugins/intercom` and alexderz/hermes-intercom.
 - **Operator timezone for after-act:** US Central.
