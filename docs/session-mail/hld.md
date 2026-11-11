@@ -8,9 +8,7 @@
   "Scope addition", "Delivery modes" and "Build on intercom".
 - Date: `2026-11-09` (HLD round 2; round 1 is in git at `f72a12780b`)
 
-Alex has not answered SM-Q7 to SM-Q11, SM-Q15 or SM-Q16. SM-Q14 is answered (2026-11-10: subtree vendoring, "your plan is good"). This HLD is
-designed on the recommended answers. Each place where a different answer changes the shape is
-listed under [Open](#open).
+**Alex accepted the Plan and UX on 2026-11-10 with every recommended answer** (SM-Q7 to SM-Q11, SM-Q14 to SM-Q17; SM-Q17 is the Plan acceptance), recorded under [Open](#open). The detailed design is `docs/session-mail/lld.md`.
 
 Paths without a prefix are relative to the Hermes repository root, on `integrate/session-mail`.
 That branch carries v0.22.0, the fork patches, and the dispatch fix with the queue-aware
@@ -464,16 +462,18 @@ candidates. The switch-over to DER-686 is by column presence, with no flag.
 
 ## Open
 
+SM-Q17 (Plan acceptance) answered by Alex on 2026-11-10: accepted. The LLD follows `ux.md` where it differs from this HLD (see the LLD's opening note).
+
 | # | Item | If the answer differs |
 |---|---|---|
-| O1 | **SM-Q7:** A′ in intercom's `📡` form | "Intercom's frame unchanged": drop the authority line and "not Alex", which is weaker. C adds a core frame patch (steered mail only) and a Mobile follow-up |
-| O2 | **SM-Q8:** reply block, whole answer as fallback | 1: no block parsing. 3: no reply hook, so replies cost tool calls |
-| O3 | **SM-Q9 (b):** store-only for `cron`/`subagent`/`oneshot` | (a): every sender is woken. (c): `ended_at`, not advised |
-| O4 | **SM-Q10:** rename "Model Master" | Alias map: a config setting and one resolver step |
-| O5 | **SM-Q11:** the phone look is acceptable for v1 | A Mobile change would be a new chunk |
+| O1 | **SM-Q7 answered (Alex, 2026-11-10): A′.** The intercom header names the sender session, says "not Alex", and carries one authority line. No core frame patch | — |
+| O2 | **SM-Q8 answered (2026-11-10): option 2.** A `[REPLY <id>]` block, with the whole answer as fallback | — |
+| O3 | **SM-Q9 answered (2026-11-10): (b).** Replies to `cron`, `oneshot` and `subagent` senders are stored only | — |
+| O4 | **SM-Q10 answered (2026-11-10):** rename "Model Master" to "Model Testing — Orchestrator" at deploy (a step, not code) | — |
+| O5 | **SM-Q11 answered (2026-11-10):** the phone look is accepted for v1 | — |
 | O6 | **SM-Q14 answered (Alex, 2026-11-10):** vendor with `git subtree` as `plugins/intercom`; `alexderz/hermes-intercom` stays the repo shared upstream. Alternatives kept for the record: | A **git submodule**: the install checkout needs `--recurse-submodules`, and the pull and deploy steps change. **Installing from the intercom repo** as a user plugin breaks rule 19 (a side repo). Either way P1 and P5 stay in hermes-agent |
-| O7 | **SM-Q15 (b):** post the mail into the Telegram chat or topic | (a): answer only, with no B4c data-class review. With (b), security decides at Spec whether group chats are excluded. That is a data boundary, not a delivery gate |
-| O8 | **SM-Q16 (a):** `ask`/`reply` unchanged; automatic replies only for `send` | (b): a cross-process waiter. (c): drop `ask` and break intercom's tests |
+| O7 | **SM-Q15 answered (2026-11-10): (b).** Post header line 1 and the body into the Telegram topic, subject to security's data-class review for group chats. LLD TB-5 proposes: DMs, plus chats listed in `settings.echo_chats` | — |
+| O8 | **SM-Q16 answered (2026-11-10): (a).** `ask`/`reply` unchanged; automatic replies for `send` only | — |
 | O9 | **Seam upstream shape:** the truthy result object, and whether upstream wants steering of plugin events in the gateway behind a separate consent key | A separate key adds one config line, set by house-infra |
 | O10 | **Gateway endpoint role timing:** `has_gateway_message_injector` checked at refresh | If the signal is unreliable, the gateway runner would need to announce itself, which is a core hook |
 | O11 | **Relay skills:** settled; the manager edits them at deploy | — |
@@ -482,7 +482,7 @@ candidates. The switch-over to DER-686 is by column presence, with no flag.
 | O14 | **Multi-profile dashboard:** the socket serves the profile that loaded intercom; other profiles' sessions get `no-endpoint` | Serving every profile from one socket is cross-profile scope, so it would need a decision |
 | O15 | **One restart shared with DER-686** | — |
 | O16 | **v0.23 rebase:** miyu4u's unified-gateway transport may replace the socket lookup for tui sessions; P1 must be re-applied on v0.23's injection code | — |
-| O17 | **Queued prompts are written twice in the dashboard (Trial round 2, existing Hermes bug).** The accept-time row is not adopted when the queued turn runs (`tui_gateway/session_workdir.py:727`), so any queued prompt, Alex's own or mail, appears twice in the transcript and on the phone. It also shows in the first Trial's plain queued text. Proposed: a separate small fork fix with an upstream report, outside the intercom plugin. Reply capture is safe because the record check sends one reply per mail | If left unfixed, queued mail shows twice on the phone |
+| O17 | **Retracted (LLD, 2026-11-10).** The "queued prompt written twice" finding was wrong. The drain deactivates the accept-time row (`tui_gateway/session_auto_continue.py:350-375`): in round 2, run 3, the early row is `active=0` and the replacement `active=1`. Transcript readers use `active = 1 OR compacted = 1` (`hermes_state_common.py:640-682`), so a queued message shows once. No fix item | — |
 | O18 | **A CLI with a session open but no turn yet has no lease** (Trial R2: the lease appears at the first turn). Mail to it goes to step 3, so the dashboard would resume that session while the CLI has it open, and the CLI's next turn could then be refused 4090 | Proposed: accept for v1 (rare: the session must already exist and be idle in a fresh CLI); Spec checks whether the CLI writes its lease at resume |
 
 ## PoC questions (Trial round 2)
