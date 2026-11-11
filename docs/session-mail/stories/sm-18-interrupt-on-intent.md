@@ -11,8 +11,8 @@
 - **So that** wrong work stops as soon as possible, and I never believe I stopped something I did not
 - **Done when**
   - [ ] Into a running turn on the dashboard, a classic CLI or the gateway, a v0.22 agent's turn is redirected and the message runs now (Trial round 2, R1). Only a media payload or an older agent falls back to a hard interrupt: the turn is stopped and the message is the next turn. Receipt: `interrupted`.
-  - [ ] The delivered message's line 1 says `interrupt`, and line 3 tells the target its previous work was stopped at a peer's request and that it decides whether to go back to it.
-  - [ ] Where interrupt is not possible now (the session is compacting, or it is a classic CLI on a Hermes build without the seam), `steer` is applied, else `queue`; the receipt says "asked: interrupt", and the header has no `interrupt` label.
+  - [ ] The delivered message's line 1 says `interrupt asked` (the request; the frame is built before the host reports what it applied), and line 3 says: "The sender asked to interrupt. If your previous work in this session was stopped for this message, decide yourself whether to go back to it."
+  - [ ] Where interrupt is not possible now, the strongest weaker mode is applied: `queue` for a dashboard, desktop or Ink TUI session that is compacting (compaction demotes both interrupt and steer); `steer` for a classic CLI on a Hermes build without the seam. The receipt says "asked: interrupt"; the header still says `interrupt asked`, and its conditional line 3 stays true.
   - [ ] Alex sees the surface's usual redirect: a classic CLI prints "↪ Redirected current turn" (or, in the hard-interrupt fallback only, "⚡ New message detected, interrupting…"); the dashboard, desktop and phone show the stopped answer, the message, then the new answer.
   - [ ] Nothing is retried after a fallback.
 - **Out of scope** — interrupting a turn the sender's own session is running (own-session messages are refused).
