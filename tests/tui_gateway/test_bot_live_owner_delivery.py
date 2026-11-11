@@ -32,6 +32,7 @@ def test_refused_input_reports_a_failed_terminal_outcome():
         "_record_turn_marker": lambda *args, **kwargs: "marker",
         "_prepare_turn_input": lambda *args: None,
         "_release_turn_scopes": noop, "_post_turn_housekeeping": noop,
+        "_requeue_leftover_steer": noop,  # fork (alex/dispatch-steer-queue)
         "_clear_inflight_turn": noop,
         # Hosted room member sessions drop their bot_room slot at turn end (#106847); a canonical chat is not one.
         "_release_hosted_room_turn_slot": noop,

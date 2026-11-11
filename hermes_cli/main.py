@@ -1318,10 +1318,18 @@ def _stamp_resumed_session_cwd(session_id: str) -> None:
     from agent.session_source import CLI_FAMILY_SOURCES
 
     # Read-only first: most resumes already have a cwd, so no writer is opened for them.
+    # _session_db swallows body errors (a None reader included), so eligibility is a flag that
+    # only a successful read can set; a failed read must not fall through to the write.
+    eligible = False
     with _session_db() as ro:
         session = ro.get_session(session_id) or {}
-        if not session or session.get("cwd") or session.get("source") not in CLI_FAMILY_SOURCES:
-            return
+        source = session.get("source")
+        # 0.23 gateway rows the CLI made are labelled ``local`` with ``created_source='cli'``.
+        if source == "local":
+            source = session.get("created_source") or source
+        eligible = bool(session) and not session.get("cwd") and source in CLI_FAMILY_SOURCES
+    if not eligible:
+        return
     try:
         from hermes_state_registry import acquire
 
