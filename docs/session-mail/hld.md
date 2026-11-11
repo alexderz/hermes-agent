@@ -5,7 +5,7 @@
 - Brief: `docs/session-mail/brief.md` (round 6, Refine pass round 5). Alex's words and decisions
   are in the Hermes Improvement vault, `requests/2026-11-09-session-mail-brief.md`.
 - Base: `integrate/session-mail-023` (v0.23.1 canary, `alex/v0.23.1-canary-1110`)
-- Date: `2026-11-11` (HLD round 3, gateway only; round 2 is in git at `9aa6dbc600`, round 1 at
+- Date: `2026-11-11` (HLD round 3, gateway only, with security review round 5 folded in; round 2 is in git at `9aa6dbc600`, round 1 at
   `f72a12780b`)
 
 Alex accepted the Plan and UX on 2026-11-10 with every recommended answer (SM-Q7 to SM-Q17).
@@ -101,7 +101,7 @@ client of v0.23's owner, as this design is.
 |---|---|---|---|
 | L | **Listing PRs** | alexderz/hermes-agent `hermes_cli/data/plugin_api.json` (+ regenerated `public-api.md`, a behaviour test) | Publishing `connect_gateway`, the gateway client errors, `discover_gateway_endpoint`, `CONTROL_FRAME_OPENERS`, `sanitize_user_prompt_text`. No behaviour change |
 | C | **Owner client** | `intercom:client.py` | Discovery and attach; the verb sequence per mode; error mapping |
-| S | **Send path** | `intercom:route.py`, `address.py`, `scope.py`, `frame.py`, `record.py` | Addressing, the chat rule, consent for messaging targets, framing and the hash, the record |
+| S | **Send path** | `intercom:route.py`, `address.py`, `scope.py`, `frame.py`, `record.py` | Addressing, the chat rule, consent for every delivery, framing and the hash, the record |
 | R | **Replies and `ask`** | `intercom:replies.py` | `post_llm_call` in the owner, silence, SM-Q9 (b), the in-process `ask` waiter |
 | E | **Echo** | `intercom:echo.py` | SM-Q15 (b) through `ctx.post_message` from the target's own turn, private chats only |
 | U | **CLI and tool** | `intercom:cli.py`, `__init__.py` | `hermes intercom send\|list\|status\|log`; the tool schema |
@@ -111,17 +111,20 @@ client of v0.23's owner, as this design is.
 **What survives of intercom's transport:** the tool, its `send` / `ask` / `reply` / `list`
 vocabulary, its frame style and echo stripping. **Not** its socket and registry: on an install
 with an owner they are not used for delivery, the CLI, `ask` or cross-profile refusal. They stay
-only as the legacy path when no owner is discoverable (older Hermes, upstream users), which keeps
-intercom's 17 tests and its upstream behaviour.
+only as the legacy path on a Hermes **build** that cannot host an owner client (older Hermes,
+upstream users). The choice is by capability (are the owner-client names importable?), never by
+whether an owner is up right now; an owner that is down is `no-owner` / `owner-restarting`. On an
+old build the legacy inbox starts only in a classic CLI process, never in a multi-session host.
+This keeps intercom's 17 tests and its upstream behaviour (LLD B12).
 
 ### Sketch
 
 ```
  sender: tool call in an owner session (session_id known)  |  `hermes intercom send` (script)
-   │ resolve → chat scopes → consent (messaging targets) → record row → frame + span hash
+   │ resolve → chat scopes → consent (every delivery) → record row → frame + span hash
    ▼
  owner client (connect_gateway; ticket from the same-UID control socket)
-   session.resume ──► running?  no → prompt.submit                         = start (cold ok)
+   session.resume{omit_messages} ──► running?  no → prompt.submit                         = start (cold ok)
                        yes → steer:     session.steer, else prompt.submit{queued}
                              queue:     prompt.submit{queued}
                              interrupt: session.redirect, else session.interrupt + submit
@@ -148,8 +151,10 @@ intercom's 17 tests and its upstream behaviour.
   profile, and the owner authorises every verb. Admin-dashboard chats are refused.
 - **TB-3, model text into another session:** the A′ frame, the relabel rule, field cleaning, the
   sender from the session (the CLI only as a script), never hidden.
-- **TB-4, messaging targets:** the existing `allow_gateway_injection` consent; relayed text is
-  labelled.
+- **TB-4, consent and operator power:** the existing `allow_gateway_injection` consent, required
+  for every delivery; relayed text is labelled. The owner admits operator input without
+  re-checking a chat's current platform authorisation, so intercom can start a turn in any stored
+  chat of the profile, as Alex can from the Webapp (O23).
 - **TB-5, content leaving the machine:** one chat rule in the plugin. Echo to private chats only;
   a shared chat gets a model-only line; a reply to a shared sender is the explicit block only.
 - **TB-6, profiles:** the ticket is profile-bound and session references carry the profile.
@@ -221,6 +226,7 @@ re-check.
 | O20 | Listing vs `ctx` wrapper upstream | Designed on listing (LLD G-1); a `ctx.owner_client()` wrapper is the fallback if upstream prefers it |
 | O21 | Echo hooks: do `pre_llm_call` / `post_tool_call` run bound to the target messaging session in the owner, and does `ctx.post_message` post there? | Verify in G-6's E2E. If not, the echo is dropped for v1 (SM-Q15 falls back to (a)), with no core patch |
 | O22 | The exact `sessions.source` strings for owner-local sessions (scope rule B4) | Verify in G-2's E2E |
+| O23 | **Operator power (security R5-2):** intercom can start a turn in any stored chat of the profile, including one whose user has since been removed from an allowlist or unpaired; the answer goes to that person. v0.22's seam re-checked this; v0.23 publishes no predicate for it | **For Alex to accept with the LLD (SM-Q18).** Mitigated by the chat rule (such a chat is `shared`, no echo). If not accepted: a thin read-only core predicate plus its listing (a small core addition, not a host behaviour change) |
 
 ## Risks
 
