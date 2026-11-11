@@ -10,6 +10,7 @@ Human gate: operator accepts, or writes `UX verification not required`.
 - Stories: [`stories/`](stories/)
 - Date: `2026-11-09` (round 5: re-designed on the intercom base); `2026-11-10`: aligned with LLD round 3 (interrupt asked, shared chats, wake receipt, O17 retracted). The changes Alex must see are listed in `mockups/README.md` § "`ux.md` changes from the LLD"
 - Agent review (requirements only): rounds 1–4 agreed on the earlier base; round 5 pending
+- `2026-11-11`: gateway-only alignment (HLD round 3, LLD round 5): the cold-start receipt, the echo timing, the `not-addressable` receipt, and Hermes Mobile replaced by the Webapp in a phone browser (SM-Q22). Edits listed in `mockups/README.md` § "Gateway-only alignment"
 - Operator: pending
 
 This design follows Alex's settled decisions 1–12 (brief) and assumes the brief's recommended answers to the open questions:
@@ -18,8 +19,8 @@ This design follows Alex's settled decisions 1–12 (brief) and assumes the brie
 - **SM-Q8 → 2.** For `send`, the footer asks for a `[REPLY <id>] … [/REPLY]` block; only the block goes back, with the whole final answer as the fallback.
 - **SM-Q9 → (b).** A reply to a sender whose source is `cron`, `subagent` or `oneshot` is stored and wakes nothing. Every other sender is woken (a Telegram sender in its own topic).
 - **SM-Q10 → rename.** "Model Master" becomes "Model Testing — Orchestrator", so `@model-testing` works.
-- **SM-Q11 → accept.** On the phone a message is a bubble in Alex's colour whose first line is the 📡 header.
-- **SM-Q15 → (b).** A message to a Telegram session is also posted into its topic, before the turn starts.
+- **SM-Q11 → accept** (now for the Webapp: SM-Q22 dropped Hermes Mobile). On the phone, in the Webapp, a message is a user row like Alex's own, whose first line is the 📡 header.
+- **SM-Q15 → (b).** A message to a Telegram session is also posted into its topic, as the turn that carries it runs (before its answer), in private chats only.
 - **SM-Q16 → (a).** `send`, `ask` and `reply` stay. Automatic replies are for `send`; an `ask` is answered once, with intercom's explicit `reply`.
 
 "Open questions" at the end lists every place where a different answer changes what a person or a session sees.
@@ -31,7 +32,7 @@ This design follows Alex's settled decisions 1–12 (brief) and assumes the brie
 | Person | Where they are | What they need | What they will not tolerate |
 |---|---|---|---|
 | **Sessions** (the model in each Hermes session; main users) | Inside a turn, on any host. They read the `intercom` tool description, its receipts, and the messages delivered to them. | Send to a session by name, pick how hard to push (steer by default), know at once what happened. Tell a message from Alex's words. Know how to answer, and how to say nothing. | Vague receipts. Polling for a reply. A message that reads like Alex's own order. Being interrupted for no reason. |
-| **Alex** (owner) | Hermes Mobile first; the web dashboard chat, the desktop app, terminals (classic CLI and Ink TUI) and Telegram topics. | See at a glance that a row came from another session, which one, and whether a reply is expected. Steer or stop any turn a message started. Know when a message interrupted work. | A message that looks like he typed it. Messages held back while he is active. Interrupts that were not meant. Losing his own draft. |
+| **Alex** (owner) | The Webapp in a phone browser first; the Webapp or desktop app on a computer, terminals (classic CLI and Ink TUI) and Telegram topics. Hermes Mobile is out of scope (SM-Q22). | See at a glance that a row came from another session, which one, and whether a reply is expected. Steer or stop any turn a message started. Know when a message interrupted work. | A message that looks like he typed it. Messages held back while he is active. Interrupts that were not meant. Losing his own draft. |
 | **Cron jobs and scripts** | A shell, with `hermes intercom`. | One command to send, a one-line result, exit codes they can branch on, and a way to read the reply later. | A turn started just to send. Output that needs reading by eye. |
 
 ## Journeys
@@ -60,10 +61,10 @@ This design follows Alex's settled decisions 1–12 (brief) and assumes the brie
 
 **J6. Any mode into an idle or unloaded session: a turn starts.**
 - Idle on its host (a terminal at its prompt, a dashboard chat, a Telegram topic): the host starts the turn there.
-- Live nowhere (no process has it open): the sender wakes it in the dashboard, the way `dashboard_dispatch` does, and the turn runs there, where Alex can open, steer or stop it from the phone.
+- Not open (cold): the gateway reopens it and the turn runs there, in the gateway owner, where Alex can open, steer or stop it from the Webapp on his phone. The receipt says so: `"<title>" was not open, so the gateway reopened it and message <id> started a turn there.`
 - Receipt: applied `started`. Waking a session that is live nowhere can hold the sender's call for a few seconds while the agent is built.
 
-**J7. Alex sees a message arrive on his phone mid-conversation.** A message is steered into his running turn with Budgeting. When the turn ends (within about 30 seconds, the app's refresh), it shows as its own bubble, before the final answer, starting `📡 Not Alex · reply expected · hermes@Hermes Improvement — Orchestrator says …`. The answer serves Alex first; the part for the message is in a `[REPLY 3f2a9c]` block he can see too. Nothing was held back while he was active.
+**J7. Alex sees a message arrive on his phone mid-conversation** (the Webapp in a phone browser). A message is steered into his running turn with Budgeting. It shows as its own user row, before the final answer, starting `📡 Not Alex · reply expected · hermes@Hermes Improvement — Orchestrator says …`. The answer serves Alex first; the part for the message is in a `[REPLY 3f2a9c]` block he can see too. Nothing was held back while he was active.
 
 **J8. Interrupt, meant: stop work that is wrong.**
 1. The orchestrator learns that Budgeting is importing with a format it just found to be wrong. It sends `intercom(action="send", to="@budgeting", delivery="interrupt", message="Stop the import: the March export uses the new column order, so every amount since March is shifted. Re-run from the raw files once you have the new mapping.")`.
@@ -80,7 +81,7 @@ The host applies the strongest mode it supports: steer, else queue. The receipt 
 
 **J10. A message to a terminal session (classic CLI or Ink TUI).** Alex has "Hermes Improvement — Orchestrator" open in `hermes chat` in a terminal. The message goes to that terminal's process (found through the session's lease), which delivers it like typed input in the requested mode. What the person at the terminal sees is in "Terminal sessions" below. One exception (HLD O18): a terminal session has a lease only after its first turn in that process. A session just resumed in a fresh `hermes chat`, with no turn run yet, looks "live nowhere", so the message takes the wake path: the dashboard resumes the session and runs the turn there, not in the terminal (see F13).
 
-**J11. A message to a Telegram session.** The target is a gateway chat in a Telegram topic. The gateway first posts the header line and the body into the topic as a bot message (SM-Q15 b), then runs the turn; its answer appears in the topic as usual. If the target was idle, the turn starts in that chat.
+**J11. A message to a Telegram session.** The target is a gateway chat in a Telegram topic. As the turn that carries the message runs, and before its answer, the header line and the body are posted into the topic as a bot message (SM-Q15 b; private chats only); then its answer appears in the topic as usual. If the target was idle, the turn starts in that chat.
 
 **J12. `ask`: wait for an explicit answer.**
 1. A session calls `intercom(action="ask", to="Home", message="Is the deploy window tonight still 22:00?", timeout=600)`. Its tool call waits.
@@ -98,6 +99,7 @@ The host applies the strongest mode it supports: steer, else queue. The receipt 
 - *The host runs Hermes without the seam* (`no-seam`, an older build): a classic CLI still gets intercom's own delivery (steer or start; interrupt falls back), but a dashboard, Ink TUI or gateway session is refused with a clear error: "Not delivered: "<title>" is open in a Hermes process that cannot take messages for this kind of session (it needs the injection seam). Nothing was sent." Nothing is parked for later, so it cannot land in the wrong session. CLI exit 4.
 - *The target is held in a way its host refuses* (for example, the waking path finds it just opened in a terminal and the dashboard refuses with 4090). The receipt names the host's reason. CLI exit 4.
 - *Intercom may not inject into this host* (`injection-off`): a dashboard, desktop, Ink TUI or gateway process whose config does not set `plugins.entries.intercom.allow_gateway_injection: true` (an upstream install, or before house-infra applies it). Hermes then refuses every plugin injection there, so nothing is queued either: "Not delivered: "<title>" is open in a Hermes process where intercom may not inject messages (allow_gateway_injection is off). Nothing was sent." CLI exit 4. A classic CLI target is not affected.
+- *The target is a chat in the admin dashboard* (`not-addressable`): `hermes dashboard` is kept as an admin panel, and intercom cannot reach the chats it holds. The receipt reads `"<title>" is open in the admin dashboard, which intercom cannot reach. Nothing was sent.` CLI exit 4.
 
 **F4. No host can be reached.** CLI exit 5 in each case, and the record stores it:
 - the target is live nowhere and no dashboard answers, so it cannot be woken (`no-dashboard`);
@@ -134,8 +136,8 @@ The host applies the strongest mode it supports: steer, else queue. The receipt 
 | [`sm-05`](stories/sm-05-read-as-peer.md) | A target reads a message as a peer's request, not as Alex's words |
 | [`sm-06`](stories/sm-06-automatic-reply.md) | The answer to a `send` goes back automatically, and only the part for that message |
 | [`sm-07`](stories/sm-07-silent-ends-exchange.md) | A debate runs uncapped and ends when one side answers `[SILENT]` |
-| [`sm-08`](stories/sm-08-mail-on-phone.md) | Alex sees on Hermes Mobile that a row is a message, from which session, and whether a reply is expected |
-| [`sm-09`](stories/sm-09-mail-on-dashboard-desktop.md) | Alex sees the same in the web dashboard chat and the desktop app |
+| [`sm-08`](stories/sm-08-mail-on-phone.md) | Alex sees in the Webapp on his phone that a row is a message, from which session, and whether a reply is expected |
+| [`sm-09`](stories/sm-09-mail-on-dashboard-desktop.md) | Alex sees the same in the desktop app (and the Webapp on a computer); admin-dashboard chats are not addressable |
 | [`sm-10`](stories/sm-10-alex-keeps-control.md) | Alex can steer or stop any turn a message started, and his draft is never lost |
 | [`sm-11`](stories/sm-11-cli-send.md) | A cron job or script sends with `hermes intercom send`, a one-line result and exit codes |
 | [`sm-12`](stories/sm-12-cli-outbox.md) | Alex or a script reads who sent what, and the reply, from the record |
@@ -217,11 +219,12 @@ Intercom's receipt is kept for compatibility: `ok`, `receipt` (`delivered`, `hel
 | any of the above, weaker than asked | Same sentence, then `You asked for <requested>; this session could not take it now, so <applied> was used.` |
 | any, `expect_reply=false` | Same first sentence, then `No answer was asked for.` |
 | any, unwakeable sender (SM-Q9 b) | Same first sentence, then `Its answer will be stored in the record, not sent to you, because this session is a <source>.` (`cron run`, `oneshot` or `subagent`, the one that applies) |
-| `started`, woken (the session was live nowhere) | `"Budgeting — Orchestrator" was not open anywhere that could take it, so message 3f2a9c started a turn in the dashboard. Its answer will come back to you as a new message.` (LLD B9; the live-host `started` above keeps "started a turn there") |
+| `started`, cold start (the session was not open) | `"Budgeting — Orchestrator" was not open, so the gateway reopened it and message 3f2a9c started a turn there. Its answer will come back to you as a new message.` (LLD B9; a live, idle target's `started` keeps "… was idle. Message <id> started a turn there.") |
 | any, target in a shared chat | Same first sentence, then `Its chat is shared with other people; the body is now in that chat's context.` |
 | any, `ask` | Intercom's: the call returns the reply, or its timeout result. A reply of `[SILENT]` returns at once as `"<title>" replied that it has nothing to add.` |
 | `refused` (ambiguous / unknown / empty / own session) | `Nothing was sent.` then the reason, and the candidate lines where there are any: title, id, host, last active |
 | `error` (`no-seam`, or the host refused) | `Not delivered: "<title>" is open in a Hermes process that cannot take this message (<reason>). Nothing was sent.` |
+| `error` (`not-addressable`) | `"<title>" is open in the admin dashboard, which intercom cannot reach. Nothing was sent.` |
 | `error` (`injection-off`) | `Not delivered: "<title>" is open in a Hermes process where intercom may not inject messages (allow_gateway_injection is off). Nothing was sent.` |
 | `error` (`no-dashboard`) | `Not delivered: the session is not open anywhere and no dashboard is running to wake it. You may send again later.` |
 | `error` (`no-endpoint`) | `Not delivered: "<title>" is open in a Hermes process started before intercom was enabled. It can receive messages after its next start.` |
@@ -319,23 +322,22 @@ The closing line is the message's last line. Anything after it in the same row i
 
 **Several messages in one turn.** Each has its own id, footer and closing line, so the model can write one `[REPLY <id>]` block each. Each block goes to its own sender. A `send` with no block of its own gets the whole final answer, unless that answer is silent. An `ask` is never answered from the final answer.
 
-### Hermes Mobile (Alex's main surface)
+### The Webapp in a phone browser (Alex's main surface; replaces Hermes Mobile, SM-Q22)
 
-No app change in this chunk.
-- A message is a user bubble in his colour with the double tick. Its first wrapped line is `📡 Not Alex · reply expected · hermes@…`. Text is plain, so `📡` and `[REPLY …]` show as typed.
-- Steered messages show as their own bubble where they landed (unless joined with his own steer, F10); queued and started ones as the next bubble, then the answer. All appear 0–30 seconds after the turn they joined ends.
-- An interrupt looks like any redirect: the stopped answer, then the message bubble (its first line says "interrupt asked"), then the new answer (SM-Q11).
-- The sender's transcript shows the `intercom` tool row with the target and the receipt; a reply arrives later as a 📡 bubble.
-- Control: turns run where the session is hosted. For dashboard and woken sessions, Alex opens, steers and stops them as usual. A stopped turn sends no reply (F11).
+The Webapp is the desktop workspace served by the gateway at the main hostname, so it shows the desktop app's chat view. On a phone (narrower than 768 px) the session sidebar becomes a slide-over sheet and the chat is one column. No UI code changes.
+- A message is a **user row**: the same full-width card as Alex's own messages, with the text plain. Its first wrapped line is `📡 Not Alex · reply expected · hermes@…`, so `📡` and `[REPLY …]` show as typed. There is no delivery tick (that was Hermes Mobile).
+- Steered messages show as their own row where they landed, with the message text, not Hermes's steer wrapper (unless joined with his own steer, F10). Queued and started ones show as the next row, then the answer. Whether a row from another sender appears live while the chat is open, or on the next transcript load, is checked in the E2E.
+- The target's answer is unboxed assistant text, with any `[REPLY <id>]` block visible in it.
+- An interrupt looks like any redirect: the stopped answer, then the message row (its first line says "interrupt asked"), then the new answer.
+- The sender's chat shows the `intercom` tool row with the target and the receipt; a reply arrives later as a 📡 row.
+- The header never starts with `Message from`, so the chat view does not fold it, or the answer after it, as a Bot Mode delivery (U1).
+- Control: every addressable session runs in the gateway owner, so Alex opens, steers and stops a message's turn from the Webapp as with any turn. A stopped turn sends no reply (F11).
 - No colour is added; "Not Alex" is in words.
 
-### Web dashboard and desktop app
+### Desktop app, and chats in the admin dashboard
 
-Both show the dashboard's sessions; no page, tab or badge is added, and no UI code changes.
-- A message is a user row (dashboard terminal chat) or user bubble (desktop) whose first line is the 📡 header, except in a joined row (F10). Steered messages show the message text, not Hermes's steer wrapper.
-- The header never starts with `Message from`, so the desktop does not fold it, or the answer after it, as a Bot Mode delivery (U1).
-- An interrupt looks like any redirect.
-- Whether the dashboard chat shows a delivered message live while open, or on the next transcript load, is checked in the Trial.
+- **Desktop app:** the same chat view as the Webapp, wider. A message is a user card whose first line is the 📡 header, except in a joined row (F10).
+- **Chats in the admin dashboard** (`hermes dashboard`, kept as an admin panel) are not addressable. A message to one is refused with `not-addressable` (see "Receipts"), so nothing ever appears there.
 
 ### Terminal sessions (classic CLI and Ink TUI)
 
@@ -357,8 +359,8 @@ The person's half-typed input stays in the prompt (for an idle prompt this is ch
 ### Messaging-gateway sessions (Telegram topics)
 
 SM-Q15 (b):
-- **Before the turn starts**, the gateway posts one bot message into the target's topic, **only if that chat is private** (LLD TB-5): a DM with a user listed in `plugins.entries.intercom.owner_user_ids`, or a group or topic listed in `plugins.entries.intercom.echo_chats` (house-infra sets both). The post is header line 1 and the body, as plain text with mentions suppressed. Lines 2–3 and the footer are for the model and are not posted. So Alex sees, in the topic: `📡 Not Alex · reply expected · hermes@Hermes Improvement — Orchestrator says (…):` and the body.
-- Then the turn runs, and its answer is posted as usual. The `[REPLY <id>]` block is visible in it.
+- **As the turn that carries the message runs** (before its answer; LLD B6), one bot message is posted into the target's topic, **only if that chat is private** (LLD TB-5): a DM with a user listed in `plugins.entries.intercom.owner_user_ids`, or a group or topic listed in `plugins.entries.intercom.echo_chats` (house-infra sets both). The post is header line 1 and the body, as plain text with mentions suppressed. Lines 2–3 and the footer are for the model and are not posted. So Alex sees, in the topic: `📡 Not Alex · reply expected · hermes@Hermes Improvement — Orchestrator says (…):` and the body. The post comes from the target's own turn: for a queued or started message as that turn begins, for a steered message at the first tool step after the steer lands.
+- Then the turn's answer is posted as usual. The `[REPLY <id>]` block is visible in it.
 - An idle topic starts a turn. A busy one gets the requested mode or the strongest weaker one the gateway supports (J9); the topic shows the same bot message either way.
 - Alex can type in the topic at any time; his message follows the gateway's usual busy rule.
 - A reply to a Telegram sender is delivered into its own topic, and starts a turn there if it is idle. If that chat is shared, only an explicit `[REPLY]` block is sent.
@@ -380,7 +382,7 @@ hermes intercom log [--to TARGET] [--from LABEL] [--since DURATION] [--json]   #
 
 **`send`**
 - `--to` takes the tool's addresses. `--delivery` defaults to `steer`, with the same fallback. Its `--help` text carries Alex's sentence word for word: "Only use interrupt when you intend to stop what the other session is doing right now (it is wrong, or the work is obsolete). Otherwise use steer (default) or queue." `--from` names the script in the header (`script <label>`); the default is `cli`. `--no-reply` marks the note "no reply needed".
-- Output, one line on standard output: `message 7c1d02 → "Hermes Improvement — Orchestrator": <applied> (<reason>)`, with `asked: <requested>` in the reason when the applied mode is weaker. For example `steered (into its running turn)`, `queued (asked: steer; busy and not steerable, runs after its current turn)`, `interrupted (redirected its running turn)`, `started (was idle; a turn started)`, or for a woken session `started (was not open anywhere; a turn started in the dashboard)`.
+- Output, one line on standard output: `message 7c1d02 → "Hermes Improvement — Orchestrator": <applied> (<reason>)`, with `asked: <requested>` in the reason when the applied mode is weaker. For example `steered (into its running turn)`, `queued (asked: steer; busy and not steerable, runs after its current turn)`, `interrupted (redirected its running turn)`, `started (was idle; a turn started)`, or for a woken session `started (was not open; the gateway reopened it and a turn started there)`.
 - Refusals and errors go to standard error in the receipts' words. `--json` prints the receipt object, on success and failure.
 
 **Exit codes** (the same with `--json`):
@@ -391,7 +393,7 @@ hermes intercom log [--to TARGET] [--from LABEL] [--since DURATION] [--json]   #
 | 1 | `status`: no message with that id | — |
 | 2 | Usage error: missing `--to`, neither or both of `--message` and `--file`, an unknown `--delivery` | no |
 | 3 | Refused: ambiguous or unknown address (candidates on standard error), empty or whitespace-only body, or your own session | yes, as `refused` |
-| 4 | The target's host cannot take it (`no-seam`, `injection-off`, or it refused, for example 4090) | yes, as `error` |
+| 4 | The target's host cannot take it (`not-addressable`, `no-seam`, `injection-off`, or it refused, for example 4090) | yes, as `error` |
 | 5 | Not delivered: `no-dashboard`, `no-endpoint`, `no-gateway` or `not-reachable` | yes, as `error` |
 | 6 | Delivery unknown: handed over, no answer; run `status` before sending again | yes, as `error` (delivery unknown) |
 
@@ -449,7 +451,7 @@ The shared record is the architect's [`comparables.md`](comparables.md). What th
 
 ## Not this
 
-- No dashboard "Mail" tab, inbox page or badge; no Hermes Mobile, desktop, terminal UI or Telegram client change. Every surface uses the user-row look it already has.
+- No dashboard "Mail" tab, inbox page or badge; no Webapp, desktop, terminal UI or Telegram client change. Every surface uses the user-row look it already has. Hermes Mobile is out of scope (SM-Q22).
 - No caps, holds, rate limits, duplicate filters, approval gates, retries, give-up timers or "pending" states (settled 3 and 5). Interrupt is a sender's choice, not a gate.
 - No polling for replies and no `inbox` action: replies to `send` arrive as messages; `ask` waits in its own call.
 - No hidden messages (`display_kind: "hidden"`); no system-prompt section; no core steer-frame patch (SM-Q7 C).
@@ -481,7 +483,7 @@ Where a different answer from Alex changes what a person or a session sees:
 | **SM-Q8** | Which text is the reply to a `send` that shares a turn | 2: `[REPLY <id>]` block, whole answer as fallback | **1:** footer line 2 goes; Alex's whole answers are mailed to every sender in the turn. **3:** the footer says to answer with `send`; every reply adds a tool row. |
 | **SM-Q9** | Whether a reply wakes a cron run, oneshot or subagent | (b) | **(a):** the "stored … wakes no one" texts go; replies start turns in finished cron transcripts. **(c):** owner sessions closed in a terminal stop getting replies. |
 | **SM-Q10** | `@model-testing` before DER-686 | Rename | **Refuse:** `@model-testing` is `refused` (unknown). **Alias map:** the header keeps "Model Master". |
-| **SM-Q11** | "Looks like a bubble you typed" on the phone, and an interrupt looking like any redirect | Accept for v1 | **No:** needs a Mobile change outside this chunk. |
+| **SM-Q11** | "Looks like a row you typed" in the Webapp on the phone, and an interrupt looking like any redirect | Accept for v1 (carried over from Hermes Mobile to the Webapp, SM-Q22) | **No:** needs a Webapp change outside this chunk. |
 | **SM-Q15** | Telegram: show the message in the topic | (b) | **(a):** the topic shows only the answer, out of nowhere; sm-20 shrinks to "the answer appears in the topic". |
 | **SM-Q16** | `ask` / `reply` next to automatic replies | (a) | **(b):** an automatic reply would also resolve a waiting `ask`; the `ask` footer would change to the `send` one. **(c):** `ask`, `reply`, `waiting for your reply` and sm-21 go away. |
 | **HLD O18** | A terminal session with no turn yet has no lease | Accept for v1 | **Fix in Spec (lease at resume):** F13 goes away, and such a message is delivered in the terminal like any other. |
@@ -493,10 +495,11 @@ Where a different answer from Alex changes what a person or a session sees:
 ### Still to check (the Trial; nothing here changes the design)
 
 - The desktop shows a steered message as a user bubble starting with the 📡 header.
-- Whether the dashboard chat and the Ink TUI show a delivered message live, and what note (if any) the TUI shows for a steer or queue it did not type.
+- Whether the Webapp (and desktop) chat view and the Ink TUI show a delivered message live, and what note (if any) the TUI shows for a steer or queue it did not type.
 - The classic CLI prints its existing notices for a message delivered through the seam, in every mode.
 - An idle classic CLI with half-typed input at its prompt: the message starts its turn and the half-typed text survives in the prompt.
 - On Telegram: what the topic shows for an interrupted answer, and the SM-Q15 post itself (not run in Trial round 2).
+- The echo hooks (HLD O21): whether they fire bound to the target session for messaging chats. If not, the echo is dropped for v1 and SM-Q15 falls back to (a), answer only.
 - The Ink TUI host (not run in Trial round 2; expected to match the dashboard, which runs the same code).
 - How long waking a session holds the sender's call with a real model (the fake model took 0.14 seconds).
 - Whether a message steered into a turn that is then stopped is lost or answered in the next turn.

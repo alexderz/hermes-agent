@@ -12,8 +12,8 @@
 - **Done when**
   - [ ] With no `delivery`, a message into a running turn is `steered`: the turn carries on, and the transcript has a user row where it landed, starting with the 📡 header and ending with `📡 End of message <id>` (the header is the row's first line unless Hermes joined it with other text; `ux.md` F10).
   - [ ] A steer the host refuses (for example while compacting) is `queued`, runs after the current turn, and the receipt says "asked: steer".
-  - [ ] An idle target starts a turn in every mode, on its own host (a terminal, a dashboard chat, a Telegram topic).
-  - [ ] A target that is live nowhere is woken in the dashboard and returns `started`; the turn runs where Hermes Mobile can open it. Its receipt names the dashboard: `"<title>" was not open anywhere that could take it, so message <id> started a turn in the dashboard.`
+  - [ ] An idle target starts a turn in every mode, on its own host (a terminal, a Webapp or desktop chat, a Telegram topic).
+  - [ ] A target that is not open (cold) is reopened by the gateway and returns `started`; the turn runs in the gateway owner, where Alex can open it from the Webapp. Its receipt says: `"<title>" was not open, so the gateway reopened it and message <id> started a turn there.`
   - [ ] Only `delivery="interrupt"` ever stops or redirects a running turn.
   - [ ] Each message is delivered once, by the process named in the target's lease (or by the gateway for an idle gateway session).
   - [ ] A message is delivered at once whether or not Alex is active in the target (no hold), and never as `display_kind: "hidden"`.
