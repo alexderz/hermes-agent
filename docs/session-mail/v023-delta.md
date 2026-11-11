@@ -132,6 +132,45 @@ clone at `ae90a2a`.
   - `post_llm_call` for authority-run turns;
   - the reply route back.
 
+## Trial round 3 (2026-11-11): answers
+
+The full note is `poc/round3/poc.md`. Run 6 passed 20 of 24; run 7, 6 of 6.
+
+- **Hosts.** The owner hosts owner-attached (Ink/Desktop), classic CLI and messaging sessions.
+  A standalone `hermes dashboard` hosts **its own** chats in-process (legacy `tui_gateway`). The
+  live canary runs that layout: `hermes-dashboard.service` runs agent turns itself, next to
+  `hermes-gateway.service`. **Live has two hosts.**
+- **D-1 (b) works for every owner-hosted kind** from inside the owner, with the owner's existing
+  verbs: steer, redirect (as interrupt), queue, idle start, and a cold start after an owner
+  restart.
+  - The owner refuses dashboard-hosted chats (`runtime_coordination_required`).
+  - Those are reached through the dashboard: its own `ctx.inject_message` (queue/start), or its
+    agent-key `/api/ws` (steer/queue).
+  - The published `ctx.inject_message` in the owner returns `True` but never runs a message
+    addressed by session id, and is queue-only anyway.
+- **Replies:** `post_llm_call` fires in the hosting process. Replies from the owner's hook
+  reached senders of other owner-hosted kinds.
+- **Core patch:** **no behaviour change** for owner-hosted sessions. Only `plugin_api.json`
+  listings (or a `ctx` wrapper) are needed for `hermes_cli.gateway_client:connect_gateway` and
+  `hermes_cli.gateway_runtime:discover_gateway_endpoint`, plus the framing helpers (or an
+  in-plugin copy).
+
+**Recommendations:**
+- **D-1:** option (b), intercom as a client of the owner with its existing verbs; no behaviour
+  patch. Settled decision 11's core seam is replaced by listing PRs. For dashboard-hosted chats:
+  keep the fork's agent-key dashboard route **or** move the dashboard under the owner
+  (**new question for Alex, SM-Q18**).
+- **D-2:** wake = owner `session.resume` + `prompt.submit` (cold start proven). Dashboard-only
+  sessions use the dashboard route.
+- **D-3:** route by host. Try the owner verbs; on `runtime_coordination_required`, use the
+  dashboard route. Owner sessions have no lease; dashboard sessions have the dashboard's lease.
+  Lease-pid routing, per-process sockets, F3's peer-pid binding and F11's gateway pid are
+  replaced by the owner's own authorisation (actor plus session ref) and the dashboard's agent
+  key.
+- **D-4:** listing PRs for `connect_gateway` and `discover_gateway_endpoint` (or one `ctx`
+  method), each with docs and a behaviour test. Use stdlib `contextvars` instead of
+  `tools.thread_context`. Copy or list the three framing helpers.
+
 ## Verdict
 
 **The shape changes.** Alex's decisions all still hold:

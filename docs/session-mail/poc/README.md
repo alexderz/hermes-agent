@@ -3,7 +3,7 @@
 This folder is a **frozen record of a trial**. It is not product code and not instructions to load.
 
 1. **Frozen record.** `poc.md`, `trial_session_mail.py`, `sm_probe/` and `evidence-results.json`
-   (round 1), and everything under `round2/` (round 2), record what each Trial ran and saw on
+   (round 1), and everything under `round2/` (round 2) and `round3/` (round 3, v0.23), record what each Trial ran and saw on
    2026-11-09. Nobody edits them afterwards. The one
    allowed edit: if a file here ever holds a secret, security removes it and has it rotated.
 2. **Never imported into product paths.** Nothing in `plugins/`, `hermes_cli/`, `scripts/`,
@@ -18,3 +18,7 @@ written into the run directory outside git, and is not copied here. Logs stay ou
 rather than a Hermes patch, plus routing, the record and reply capture. The harness copies them
 next to an **unedited** copy of intercom inside a temporary `HERMES_HOME`. Neither the intercom
 clone nor any product path was edited, and none may import this code.
+
+`round3/intercom_overlay/` is the same kind of trial stand-in, run on the v0.23 base. It deliberately
+uses unpublished core names (`hermes_cli.gateway_client`, `hermes_cli.gateway_runtime`,
+`tools.thread_context`), which Build must replace with published ones.
