@@ -1970,6 +1970,19 @@ body.guest-pointer-lock :is(webview, iframe) {
   mask-image: linear-gradient(to bottom, #000 55%, transparent);
 }
 
+/* Short viewports (a phone with the on-screen keyboard up: the Webapp sets
+   interactive-widget=resizes-content, so the layout height shrinks with it; or a
+   landscape phone): a pinned prompt of up to four lines plus its touch action row
+   would take most of what is left, and the composer the user is typing in gets
+   squeezed out of view. Let the prompt scroll with the transcript instead. With
+   `top: auto` useStickyPromptClip reads a zero sticky offset and clips nothing. */
+@media (max-height: 520px) {
+  [data-slot='aui_user-message-root'] {
+    position: relative;
+    top: auto;
+  }
+}
+
 /* Stick-to-bottom owns scrollTop while following. Once escaped, native anchoring
    is safe and keeps sticky human edits from shoving the viewport; data-editing
    enables that path before React swaps in the inline editor. */
