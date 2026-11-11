@@ -159,7 +159,7 @@ The full note is `poc/round3/poc.md`. Run 6 passed 20 of 24; run 7, 6 of 6.
 - **D-1:** option (b), intercom as a client of the owner with its existing verbs; no behaviour
   patch. Settled decision 11's core seam is replaced by listing PRs. For dashboard-hosted chats:
   keep the fork's agent-key dashboard route **or** move the dashboard under the owner
-  (**new question for Alex, SM-Q18**).
+  (**new question for Alex, SM-Q20**).
 - **D-2:** wake = owner `session.resume` + `prompt.submit` (cold start proven). Dashboard-only
   sessions use the dashboard route.
 - **D-3:** route by host. Try the owner verbs; on `runtime_coordination_required`, use the
