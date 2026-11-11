@@ -1231,7 +1231,10 @@ def _run_prompt_submit(
                     # A steer the turn never consumed becomes a queued prompt BEFORE ``running`` is released,
                     # so the WS orphan reaper (which spares a detached idle session only while it holds a
                     # queued prompt) cannot pop the session in the post-turn housekeeping window and drop it.
-                    _requeue_leftover_steer(session, st.result)
+                    try:  # fork: a failed requeue must never leave the session busy
+                        _requeue_leftover_steer(session, st.result)
+                    except Exception:  # health: allow broad-except -- release must always run; logged with traceback
+                        logger.exception("requeue of a leftover steer failed; releasing the turn anyway")
                     session["running"] = False
                     session["last_active"] = time.time()
                     session.pop("_queued_prompt_stale_logged", None)  # a later stuck queue is logged again

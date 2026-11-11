@@ -1,5 +1,6 @@
 """GatewaySessionStore: main's ``_session_db`` facade over gateway verbs (scripted gateway, no live one)."""
 import asyncio
+import os
 import types
 from contextlib import asynccontextmanager
 
@@ -507,7 +508,8 @@ def test_row_cwd_is_mains_stamp_while_the_tools_run_in_terminal_cwd(store, monke
     assert [p for m, p in client.calls if m == "session.create"][-1]["row_cwd"] == ""
     monkeypatch.setattr(gss, "session_store", lambda: db)
     gss.create_titled_session("Fresh Named")
-    assert [p for m, p in client.calls if m == "session.create"][-1]["row_cwd"] == ""
+    # Fork (alex/cli-session-cwd): --create-if-missing stamps the launch dir so the session groups.
+    assert [p for m, p in client.calls if m == "session.create"][-1]["row_cwd"] == os.getcwd()
     monkeypatch.setenv("TERMINAL_ENV", "docker")  # main stamps no host cwd for a remote backend
     db.create({"toolsets": ["file"]})
     assert [p for m, p in client.calls if m == "session.create"][-1]["row_cwd"] == ""
