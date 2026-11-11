@@ -10,7 +10,7 @@
 - **I want** a message to that session to show in the topic before the answer
 - **So that** the answer does not appear out of nowhere, and I can see who asked what
 - **Done when**
-  - [ ] Before the turn starts, the gateway posts one bot message into the target's topic only if that chat is private: a DM with a user in `plugins.entries.intercom.owner_user_ids`, or a chat in `plugins.entries.intercom.echo_chats`. The post is header line 1 (`📡 Not Alex · … hermes@<title> says (…):`) and the body, as plain text with mentions suppressed; lines 2–3, the shared-chat line and the footer are never posted.
+  - [ ] As the turn that carries the message runs, and before its answer, one bot message is posted into the target's topic, from that turn (as a queued or started turn begins; at the first tool step after a steer), only if that chat is private: a DM with a user in `plugins.entries.intercom.owner_user_ids`, or a chat in `plugins.entries.intercom.echo_chats`. The post is header line 1 (`📡 Not Alex · … hermes@<title> says (…):`) and the body, as plain text with mentions suppressed; lines 2–3, the shared-chat line and the footer are never posted.
   - [ ] A shared chat (any other group, topic or DM) gets the message delivered but nothing posted, so only the answer appears; the sender's receipt adds "Its chat is shared with other people; the body is now in that chat's context."
   - [ ] An idle topic starts a turn in that chat; a busy one gets the requested mode or the strongest weaker one the gateway supports; the receipt says which.
   - [ ] The turn's answer is posted in the topic as usual, with any `[REPLY <id>]` block visible.
@@ -22,4 +22,4 @@
 
 ## Optional
 
-- Notes: Security decides at Spec whether group chats are left out of the post (HLD O7); if so, a group chat shows only the answer.
+- Notes: If the echo hooks do not fire for messaging chats (HLD O21), the echo is dropped for v1 and the topic shows only the answer (SM-Q15 a).
