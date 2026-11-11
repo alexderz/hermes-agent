@@ -8,6 +8,10 @@
     <link rel="icon" type="image/png" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="shortcut icon" href="/apple-touch-icon.png" />
+    <!-- Webapp: "Install app" / "Add to Home screen" opens standalone, without the browser bar. -->
+    <link rel="manifest" href="/assets/manifest.webmanifest" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
     <title>Hermes</title>
     <script>
       // Pre-paint the themed background before the app bundle loads. Without
