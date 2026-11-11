@@ -10,6 +10,7 @@ import {
 } from '@/app/chat/surface-vars'
 import { useResizeObserver } from '@/hooks/use-resize-observer'
 import { hostHas } from '@/lib/host-capabilities'
+import { useShortViewport } from '@/lib/short-viewport'
 
 import {
   COMPOSER_COMPACT_PILL_PX,
@@ -99,6 +100,9 @@ export function useComposerMetrics({
 }: UseComposerMetricsArgs): UseComposerMetricsResult {
   const [expanded, setExpanded] = useState(false)
   const [fit, setFit] = useState<ComposerFit>(ROOMY)
+  // Keyboard up on a phone: keep the composer to one row (the input scrolls inside
+  // its one-line cap, see styles.css) and fold the voice button into the menu.
+  const short = useShortViewport()
 
   // Edge signals, not the live text: these only re-render when emptiness / the
   // presence of a non-trailing newline actually flips, so typing within a line
@@ -260,10 +264,12 @@ export function useComposerMetrics({
   // is always compact by the time the row stacks, and the voice controls are
   // always folded before minimal drops them.
   return {
-    compactPill: fit.compactPill || fit.tight,
-    foldVoice: fit.foldVoice || fit.minimal,
+    compactPill: fit.compactPill || fit.tight || short,
+    foldVoice: fit.foldVoice || fit.minimal || short,
     minimal: fit.minimal,
-    stacked: expanded || fit.tight,
+    // A short viewport never grows the input onto its own row: wrapped text
+    // scrolls inside the one-line input instead of pushing the transcript away.
+    stacked: (expanded && !short) || fit.tight,
     tight: fit.tight,
     singleColumn: fit.singleColumn
   }

@@ -1981,6 +1981,16 @@ body.guest-pointer-lock :is(webview, iframe) {
     position: relative;
     top: auto;
   }
+
+  /* Composer: one line, the text scrolls inside it (useComposerMetrics keeps the
+     row unstacked here), and no branch strip above it. lib/short-viewport.ts. */
+  :root {
+    --composer-input-max-height: calc(var(--composer-input-min-height) + 0.25rem);
+  }
+
+  .coding-status-bar {
+    display: none;
+  }
 }
 
 /* Stick-to-bottom owns scrollTop while following. Once escaped, native anchoring
