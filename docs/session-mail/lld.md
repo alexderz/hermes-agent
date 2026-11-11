@@ -26,11 +26,13 @@ On drain, `tui_gateway` writes a fresh row and **deactivates** the accept-time r
 (`tui_gateway/session_auto_continue.py:350-375`, `_replace_queued_user_row_for_turn`). The
 Trial's query counted rows without the `active` column. In round 2, run 3, row 25 has
 `active=0` and row 33 has `active=1`. Transcript readers use `active = 1 OR compacted = 1`
-(`hermes_state_common.py:640-682`), so a queued message shows **once**. O17 is retracted and has
+(`hermes_state_common.py:816`), so a queued message shows **once**. O17 is retracted and has
 **no fix item**. The one consequence is that every transcript read in this design filters on
 `active = 1 OR compacted = 1` (I-9). The frozen round-2 note is left as written; this LLD and the
 HLD carry the correction, and `ux.md` now says a queued message shows once (mockups README,
 change 9).
+
+**v0.23 base (2026-11-11).** This LLD was written against v0.22. `docs/session-mail/v023-delta.md` checks it against `integrate/session-mail-023`. Moved paths and lines are updated here. The process and transport layer (B1 per-host table, B2 wake path, B3/B4 routing) changes on v0.23 and is **open** (HLD O19, delta D-1 to D-4); it is not rewritten yet.
 
 **Round 4 (security review round 3: accepted on trust boundaries).** The notes are folded in:
 
@@ -109,14 +111,14 @@ Paths without a prefix are in **alexderz/hermes-agent** (this repo, branch
 
 | Path | Change |
 |---|---|
-| `hermes_cli/plugins.py` | `PluginContext.inject_message(content, role="user", *, session_key=None, origin=None, mode=None, echo=None)`; `PluginManager.inject_tui_message` and `inject_gateway_message` forward `mode`/`echo` |
+| `hermes_cli/plugins_context.py` (v0.23; `hermes_cli/plugins.py` on v0.22) | `PluginContext.inject_message(content, role="user", *, session_key=None, origin=None, mode=None, echo=None)`; `PluginManager.inject_tui_message` and `inject_gateway_message` forward `mode`/`echo` |
 | `hermes_cli/plugins_injection.py` | `InjectResult` (new), `inject_plugin_message` routing with `mode`, the CLI branch through the CLI host routine |
 | `tui_gateway/plugin_inject.py` | `inject_tui_session_message(..., mode=None)`: with a mode, it delivers through the busy-submit or idle-submit path and returns `InjectResult` |
 | `tui_gateway/session_auto_continue.py` | `_handle_busy_submit(..., mode: str \| None = None)`: an explicit mode overrides `display.busy_input_mode`; `queued=True` still forces queue |
 | `hermes_cli/cli_tui_mixin.py` | `_tui_enter_while_busy` split into `_route_busy_input(text, images, payload, mode) -> tuple[str, str \| None]` (applied, detail), used by typed input and by the seam |
 | `gateway/run_plugin_injection.py` | `_schedule_plugin_message_injection(..., mode=None, echo=None)`; with a mode it waits for the dispatch result. `_dispatch_plugin_message_injection` posts `echo` (data-class rule, TB-5) and passes the mode on |
 | `gateway/chat_scope.py` (new) | `chat_scope(source, *, plugin_id, home_path)` (the one chat rule) and `session_chat_scope(session_id, *, plugin_id, home_path)` (live entry or stored origin; fail closed). Importable without a runner, so any host process can use it (R2-1) |
-| `gateway/run_busy.py` | The internal-event branch (`:843-849`) honours `event.metadata["hermes_delivery_mode"]` for plugin injections; without it, internal events still queue |
+| `gateway/run_busy.py` | The internal-event branch (`:985`) honours `event.metadata["hermes_delivery_mode"]` for plugin injections; without it, internal events still queue |
 | `website/docs/developer-guide/plugins/index.md` | Documents `mode`, `echo` and `InjectResult` (compatibility contract: additive keyword fields) |
 | `tests/hermes_cli/test_plugin_inject_modes.py`, `tests/tui_gateway/test_plugin_inject_modes.py`, `tests/gateway/test_plugin_inject_modes.py` | Behaviour tests per host (Verify) |
 
@@ -203,15 +205,15 @@ class InjectResult:            # hermes_cli/plugins_injection.py
      `_restored_source`). Otherwise the **stored origin** from `state.db`, opened
      `SessionDB(read_only=True)`: the session row's `source, user_id, chat_id, chat_type,
      thread_id, origin_json, transport_profile`, which Hermes keeps along the compression
-     lineage (`hermes_state_gateway.py:255-275`). That gives a `SessionSource` (from
+     lineage (`hermes_state_gateway.py:318`). That gives a `SessionSource` (from
      `origin_json` when present, else from the columns).
      - **The scope reads only the raw `platform`, `chat_id`, `chat_type` and `user_id` (N1).**
        Re-pinning with `gateway.session_identity.restore_identity(...)`, the step
-       `_restored_source` uses (`gateway/authz_mixin.py:380-391`), is optional here.
+       `_restored_source` uses (`gateway/authz_mixin.py:462`), is optional here.
      - With no runner, it returns `None` and pins nothing
-       (`gateway/session_identity.py:163-167`). That `None` never counts as "no origin".
+       (`gateway/session_identity.py:161-167`). That `None` never counts as "no origin".
      When the row lacks them, the `gateway_routing` entry whose `entry_json.session_id`
-     matches is the fallback (`hermes_state_gateway.py:296-320`).
+     matches is the fallback (`hermes_state_gateway.py:362`).
   2. **Rule.** `chat_scope(source, plugin_id=…, home_path=…)` (below).
   3. **Fail closed.** If `sessions.source` is a messaging platform (anything outside
      `cli, tui, desktop, cron, oneshot, subagent`) and no origin resolves, the answer is
@@ -240,7 +242,7 @@ A chat is `private` only when:
   value. It fails closed: never `private`.
 - The plugin's own profile config is read **fresh on every call**, under
   `_plugin_home_scope(home_path)` with `load_config_readonly()`, with no cache, like
-  `_gateway_injection_allowed` (`hermes_cli/plugins.py:622-630`). Removing a chat takes effect
+  `_gateway_injection_allowed` (`hermes_cli/plugins_context.py:431-439`). Removing a chat takes effect
   without a restart.
 
 Every other chat is `shared`: groups, forums, channels, and DMs with any other allowed user.
@@ -271,7 +273,7 @@ The echo, `session_chat_scope` and `InjectResult.shared_chat` all use this one f
   with no transport bound, so the session's own transport is used.
   - **`InjectedDelivery` (F6)** is a frozen dataclass in `tui_gateway/plugin_inject.py`
     (`mode: str`), which JSON cannot build. That is the same mechanism as `DeliveryAuthor` for
-    `_turn_author` (`tui_gateway/methods_prompt.py:757-760`).
+    `_turn_author` (`tui_gateway/methods_prompt.py:844-848`).
     - `prompt.submit` refuses with 4124 any `_delivery_mode` that is not an `InjectedDelivery`
       instance, so a client-sent string such as `"interrupt"` is refused;
     - it passes `.mode` to `_handle_busy_submit(..., mode=…)`;
@@ -300,7 +302,7 @@ The echo, `session_chat_scope` and `InjectResult.shared_chat` all use this one f
 
 **B1.2 Classic CLI host** (`hermes_cli/cli_tui_mixin.py`):
 - Factor `_route_busy_input(text, images, payload, mode) -> (applied, detail)` out of
-  `_tui_enter_while_busy` (`:1505-1551`). That method becomes
+  `_tui_enter_while_busy` (`:1475`, which on v0.23 already takes `mode=None`). That method becomes
   `self._route_busy_input(text, images, payload, self.busy_input_mode)` and keeps printing the
   same notices.
 - The seam calls `cli._deliver_injected(text, mode)`:
@@ -341,7 +343,7 @@ The echo, `session_chat_scope` and `InjectResult.shared_chat` all use this one f
      The busy handler writes the applied mode into that dict.
   5. Return `InjectResult(True, applied, detail, shared_chat=(scope == "shared"))`, with
      `applied="start"` when the session was not running.
-- **Busy branch.** In `gateway/run_busy.py`, the internal-event branch (`:843-849`) becomes:
+- **Busy branch.** In `gateway/run_busy.py`, the internal-event branch (`:985`) becomes:
   - `getattr(event, "internal", False) and not event.metadata.get("hermes_delivery_mode")` →
     FIFO queue, as today;
   - `hermes_delivery_mode` set → run the same path typed text uses, with `effective_mode`
@@ -551,7 +553,7 @@ The wording is exactly as in `ux.md` § "Header", § "Footer" and § "Variants".
 - collapse whitespace;
 - empty → `unknown`.
 
-The model is `hermes_state_titles.sanitize_title` (`hermes_state_titles.py:49-61`). A newline in
+The model is `hermes_state_titles.sanitize_title` (`hermes_state_titles.py:62`). A newline in
 `--from` therefore stays on line 1 and can never add a line.
 
 **Line 2:** the authority line. It has three variants:
@@ -614,7 +616,7 @@ U+200B, U+2060, U+FEFF, bidi controls and a leading variation selector, so a
 (`Not <user_name> … says`) is relabelled too.
 
 `_CONTROL_FRAME_RE` is built from `agent.prompt_builder.CONTROL_FRAME_OPENERS`, as
-`gateway/hosted_room_discussion.py:44-47` builds it. That covers `[/OUT-OF-BAND USER MESSAGE]`
+`gateway/hosted_room_discussion.py:48` builds it. That covers `[/OUT-OF-BAND USER MESSAGE]`
 (Trial Q2), `[CONTEXT COMPACTION`, `System note:` and the rest. If the import fails (upstream or
 an older build), a literal fallback tuple equal to today's list is used.
 
@@ -637,7 +639,7 @@ drops leading lines matching `^\s*📡 Not .*says \(` or the legacy `📡 hermes
 Short transactions; `busy_timeout` 5000 ms.
 
 **File modes (F7)**, the way `hermes_state._secure_state_db_files` does it
-(`hermes_state.py:243-298`):
+(`hermes_state.py:247`):
 - `plugin-data/intercom/` is created `0700`, with a `chmod` on every open;
 - the first open runs under `os.umask(0o077)` (save and restore). It creates `record.db`
   `O_EXCL` `0600` before connecting, then `chmod 0600` on `record.db-wal` and `record.db-shm`
@@ -717,7 +719,7 @@ It runs in the process that ran the turn (any host; Trial Q3, R6).
 5. **Silence** stores `reply_state='silent'` and sends nothing:
    - the block is empty or `[SILENT]`;
    - with no block: an empty answer, or `[SILENT]` as the whole answer or its first or last line
-     (cron's reading, `cron/scheduler.py:526` `SILENT_MARKER`).
+     (cron's reading, `cron/scheduler.py:542` `SILENT_MARKER`).
 6. **Otherwise store, then deliver.** `reply_state='stored'`. Then, if the sender is a session
    and its `sender_source` is not in `{cron, subagent, oneshot}` (SM-Q9 b), start a daemon
    thread with `propagate_context_to_thread`:
@@ -835,8 +837,9 @@ rewritten to assert that 20 identical messages in a minute all arrive.
 
 - The tool's `description` is `ux.md` § "Tool description" exactly. Its **first sentence is
   exactly** `Message another Hermes session; never send an empty message.` (60 characters).
-  `tools/tool_search_catalog.py::_short_desc` clips the catalog line to the first sentence,
-  at most 60 characters on a word boundary, so the whole sentence survives.
+  `tools/tool_search_catalog.py::_short_desc` clips the catalog line to the first sentence, at
+  most `CATALOG_SUMMARY_MAX_CHARS` (80 on v0.23, `:217`; 60 on v0.22) on a word boundary, so the
+  whole 60-character sentence survives on both.
 - **Parameters:**
   - `action` (`list|send|ask|reply`, required);
   - `to`;
@@ -846,7 +849,7 @@ rewritten to assert that 20 identical messages in a minute all arrive.
   - `timeout`;
   - `request_id`.
 - The handler is **synchronous** (`is_async=False`). The wake path can take up to about 420
-  seconds, over `model_tools._run_async`'s 300-second limit (`model_tools.py:94-135`). The
+  seconds, over `model_tools._run_async`'s 300-second limit (`model_tools.py:95`). The
   sender comes from the handler's `session_id` keyword, never from model input.
 - Verify with a unit test: `_short_desc(SCHEMA["description"]) == "Message another Hermes session; never send an empty message."`
 
