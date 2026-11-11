@@ -108,6 +108,24 @@ with miyu4u as prior art.
   `git subtree` (SM-Q14).
 - O11 and footer naming `session_message` → the footer names `intercom`.
 
+**Shape changes from security review round 1 (LLD round 2, 2026-11-10).** Details are in
+`lld.md`:
+- **One chat rule in the gateway (F1).** A chat is `private` only when it is listed in
+  `echo_chats`, or it is a DM with a user in `owner_user_ids`; everything else is `shared`.
+  The rule governs the echo (private chats only), a model-only shared-chat line for bodies
+  delivered into shared chats, and replies to shared-chat senders: there, only an explicit
+  `[REPLY]` block is sent, never the whole-answer fallback. This is a data-class rule, not a
+  delivery gate; SM-Q8 is unchanged between local sessions.
+- **The seam gains two read-only `ctx` methods**, `injection_allowed()` and
+  `session_chat_scope()`, plus `home_path` for a per-session profile check (F2, F1, F9).
+- **Sender binding (F3).** On the socket, a claimed sender session is accepted only from the
+  process that holds its lease, or from the verified gateway; otherwise the message is framed as
+  a script and gets no reply.
+- **Header (mockup review M-1).** Line 1 says `interrupt asked` (what was requested), not
+  `interrupt`, because the frame is built before the host applies the mode.
+- **Wake path.** Loopback only, with a port setting (F8), and the same `allow_gateway_injection`
+  consent as live hosts (F2).
+
 Still holds from round 1 and the Trial (`poc/poc.md`):
 - the A′ reasoning (the outer frame is true; the content is a peer's);
 - relabelling control-frame openers in bodies (Trial Q2);
@@ -472,7 +490,7 @@ SM-Q17 (Plan acceptance) answered by Alex on 2026-11-10: accepted. The LLD follo
 | O4 | **SM-Q10 answered (2026-11-10):** rename "Model Master" to "Model Testing — Orchestrator" at deploy (a step, not code) | — |
 | O5 | **SM-Q11 answered (2026-11-10):** the phone look is accepted for v1 | — |
 | O6 | **SM-Q14 answered (Alex, 2026-11-10):** vendor with `git subtree` as `plugins/intercom`; `alexderz/hermes-intercom` stays the repo shared upstream. Alternatives kept for the record: | A **git submodule**: the install checkout needs `--recurse-submodules`, and the pull and deploy steps change. **Installing from the intercom repo** as a user plugin breaks rule 19 (a side repo). Either way P1 and P5 stay in hermes-agent |
-| O7 | **SM-Q15 answered (2026-11-10): (b).** Post header line 1 and the body into the Telegram topic, subject to security's data-class review for group chats. LLD TB-5 proposes: DMs, plus chats listed in `settings.echo_chats` | — |
+| O7 | **SM-Q15 answered (2026-11-10): (b),** with security's data-class rule (LLD TB-5, F1). Echo only to `private` chats (listed in `echo_chats`, or a DM with an owner user id); shared chats get a model-only shared-chat line, and replies to shared-chat senders send only an explicit `[REPLY]` block | — |
 | O8 | **SM-Q16 answered (2026-11-10): (a).** `ask`/`reply` unchanged; automatic replies for `send` only | — |
 | O9 | **Seam upstream shape:** the truthy result object, and whether upstream wants steering of plugin events in the gateway behind a separate consent key | A separate key adds one config line, set by house-infra |
 | O10 | **Gateway endpoint role timing:** `has_gateway_message_injector` checked at refresh | If the signal is unreliable, the gateway runner would need to announce itself, which is a core hook |
