@@ -96,16 +96,19 @@ def _plain(text: str) -> str:
 
 
 def _session_base_dir(task_id) -> str | None:
-    """The session's working directory on this host: the anchor the file tools resolve relative paths
-    against (the session's own terminal cwd record, a registered workspace, then ``TERMINAL_CWD``),
-    else this process's cwd on a local backend. A sandboxed or remote terminal's cwd is not a host
-    folder, so only absolute paths work there."""
-    import os
-    from tools.file_tools_paths import _authoritative_workspace_root, _terminal_env_type_for_task
+    """The session's working directory on this host, in the terminal tool's order
+    (``tools/terminal_tool.py`` ``_get_or_create_env``: a registered cwd override, then the session's
+    recorded cwd, then the configured ``TERMINAL_CWD``), or None, so a relative path is refused. Never
+    this process's own cwd: one gateway serves many sessions and profiles, so its launch folder is
+    nobody's workspace. A sandboxed or remote terminal's cwd is not a host folder, so only absolute
+    paths work there."""
+    from tools.file_tools_paths import _configured_terminal_cwd, _sentinel_free_abs_cwd, _terminal_env_type_for_task
+    from tools.terminal_tool import get_session_cwd, resolve_task_overrides
     key = task_id or "default"
     if _terminal_env_type_for_task(key) != "local":
         return None
-    return _authoritative_workspace_root(key) or os.getcwd()
+    session_cwd = resolve_task_overrides(key).get("cwd") or get_session_cwd(key)
+    return _sentinel_free_abs_cwd(session_cwd) if session_cwd else _configured_terminal_cwd()
 
 
 def ask_secret_file(questions, spec, interactive: bool, task_id=None) -> str:
