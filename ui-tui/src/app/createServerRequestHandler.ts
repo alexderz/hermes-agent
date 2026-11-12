@@ -27,6 +27,13 @@ const PROMPT_METHODS = new Set([
   'vault.unlock_prompt'
 ])
 
+/** The file a `secret` request will be saved to (`metadata.destination.kind === 'file'`), else null (`.env`). */
+const secretFilePath = (metadata: unknown): null | string => {
+  const dest = (metadata as { destination?: Record<string, unknown> } | null | undefined)?.destination
+
+  return dest && dest.kind === 'file' ? str(dest.path) || '(unknown path)' : null
+}
+
 const strList = (v: unknown): null | string[] =>
   Array.isArray(v) && v.length > 0 ? v.filter((c): c is string => typeof c === 'string') : null
 
@@ -127,11 +134,24 @@ export function createServerRequestHandler(ctx: ServerRequestHandlerContext): (r
 
         return true
 
-      case 'secret':
+      case 'secret': {
+        // A `clarify(secret_file=...)` card: this masked prompt shows only the agent's text, not the file's
+        // destination, so it never opens here. It is not answered either: the gateway sends it to every
+        // viewer and the first answer (even a skip) settles it for all, so the Webapp or desktop app,
+        // which draw the destination, answer it; otherwise it ends at its own timeout.
+        const filePath = secretFilePath(p.metadata)
+
+        if (filePath !== null) {
+          setStatus(t('session.status.secretFileElsewhere', filePath))
+
+          return true
+        }
+
         patchOverlayState({ secret: { envVar: str(p.env_var), prompt: str(p.prompt), requestId: request.id } })
         open(request, t('session.status.secretInputNeeded'))
 
         return true
+      }
 
       case 'vault.unlock_prompt':
         patchOverlayState({
