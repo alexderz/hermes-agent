@@ -83,17 +83,19 @@ _FALLBACK_CONTROL_FRAME_OPENERS = (
 )
 
 # Leading lines a sending model echoed from a frame it was shown.
+# ``Not`` and ``hermes@`` are anchored to the marker, so the ``.*`` runs once.
 _ECHO_HEADER_RE = re.compile(r"^\s*📡\s*(?:Not\b.*\bsays\s*\(|hermes@.*says:)")
 
 _ZWSP = "\u200b"
 _AT_BROADCAST_RE = re.compile(r"@(everyone|here)\b", re.IGNORECASE)
 _ANGLE_MENTION_RE = re.compile(r"<(?=[@!#])")
 _MD_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^()]*(?:\([^()]*\)[^()]*)*)\)")
-# The label stops at the next tag, so a nested anchor peels from the inside on
-# a later pass. Nothing in the pattern crosses a tag or scans to the end of a
-# body that has no ``</a>`` (that form backtracks cubically).
-_HTML_ANCHOR_RE = re.compile(
-    r"<a\s[^>]*?href\s*=\s*([\"'])([^\"'<>]*)\1[^>]*>([^<]*)</a>",
+# Possessive classes stop at the next ``<`` or ``>``, so a missing ``>`` fails
+# once. ``href`` is read from the attributes that matched. The label stops at
+# the next tag, and a nested anchor peels from the inside on a later pass.
+_HTML_ANCHOR_RE = re.compile(r"<a\b([^<>]*+)>([^<]*+)</a>", re.IGNORECASE)
+_HREF_RE = re.compile(
+    r"""href\s*=\s*(["'])([^"'<>]*)\1""",
     re.IGNORECASE,
 )
 # The label is atomic: a missing ``>`` fails once, instead of re-scanning.
@@ -211,6 +213,13 @@ def _compile_control_re(openers: tuple[str, ...]) -> re.Pattern[str]:
 _CONTROL_FRAME_RE = _compile_control_re(_resolve_openers())
 
 
+# ``\bsays\b`` is applied after ``Not <user>``, from that match's end. One
+# ``.*`` between them retries every earlier ``Not`` on a line that never says
+# ``says``, which is quadratic. ``search(text, pos)`` keeps ``\b`` looking at
+# the character before ``pos``.
+_SAYS_RE = re.compile(r"\bsays\b")
+
+
 def relabel(body: str, user_name: str) -> str:
     """Mark body lines that could pass for a header or a Hermes control frame.
 
@@ -218,11 +227,12 @@ def relabel(body: str, user_name: str) -> str:
     prefixed with ``[quoted]``. A ``[`` that opens a control frame becomes
     ``[peer-quoted ``. Invisible prefixes (Cf, Zs, Mn) do not hide either.
     """
-    not_user = re.compile(rf"Not\s+{re.escape(user_name)}\b.*\bsays\b")
+    not_user = re.compile(rf"Not\s+{re.escape(user_name)}\b")
     lines = []
     for line in str(body or "").splitlines():
         head = _visible_start(line)
-        if head.startswith("📡") or not_user.search(head):
+        found = not_user.search(head)
+        if head.startswith("📡") or (found and _SAYS_RE.search(head, found.end())):
             line = "[quoted] " + line
         lines.append(line)
     return _CONTROL_FRAME_RE.sub("[peer-quoted ", "\n".join(lines))
@@ -529,16 +539,24 @@ def _footer_bullets(message_id: str, *, reply_mode: str, kind: str, user_name: s
     return bullets
 
 
+def _anchor_label(match: re.Match[str]) -> str:
+    """``label (url)`` when the tag has an href, otherwise the tag unchanged."""
+    href = _HREF_RE.search(match.group(1))
+    if not href:
+        return match.group(0)
+    return f"{match.group(2)} ({href.group(2)})"
+
+
 def _rewrite_links(text: str) -> str:
     """One layer of HTML anchors, markdown links and Slack ``<url|label>`` links.
 
     Each becomes ``label (url)``. A nested link leaves the outer layer in
-    place; the caller repeats this until the text settles. A form that cannot
-    close (no ``</a>``, no ``](``, no ``>``) is skipped: the pattern could not
-    match, and scanning it is what a hostile body uses to stall the hook.
+    place; the caller repeats this until the text settles. Skipping a body
+    with no closer is a fast path. The patterns stay linear when the closer
+    is present.
     """
     if "</a" in text.lower():
-        text = _HTML_ANCHOR_RE.sub(lambda m: f"{m.group(3)} ({m.group(2)})", text)
+        text = _HTML_ANCHOR_RE.sub(_anchor_label, text)
     if "](" in text:
         text = _MD_LINK_RE.sub(lambda m: f"{m.group(1)} ({m.group(2)})", text)
     if ">" in text and "|" in text:
