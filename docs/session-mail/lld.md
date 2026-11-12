@@ -9,7 +9,18 @@
   - **`poc/round3/poc.md` (round 3, v0.23: the base of this design)**.
 - Base: `integrate/session-mail-023`, from `alex/v0.23.1-canary-1110`
 - Tickets this LLD covers: Epic `DER-701`. Items G-1 … G-13 below; the manager files them at Groom
-- Date: `2026-11-11` (round 6: security review round 5 folded in; round 5: gateway only, SM-Q20)
+- Date: `2026-11-11` (round 7: security notes N6-1, N6-2 and the steered-echo gap GW-4; round 6: security review round 5 folded in; round 5: gateway only, SM-Q20)
+
+## Round 7: security round 6 notes and the steered-echo gap
+
+Security round 6 accepted the trust boundaries at `6ccea9121f`. R5-2 / O23 is Alex's decision
+with the LLD (SM-Q18).
+
+| Item | Where |
+|---|---|
+| **N6-1:** the capability check fails safe on an in-between build | B12 states it; G-10's simulated old build makes the names **absent** (the import fails), the only legacy trigger |
+| **N6-2:** keep the escaper list beside the escapers | B6: `frame.ECHO_ESCAPERS` is the one list; a platform missing from it gets no echo plus one warning; G-6 tests the warning |
+| **GW-4 (UX "For the architect" 1):** a steered message whose turn ends without another tool step is never echoed | **Fixed in the plugin** (B6): the steered echo is posted from `pre_api_request`, which fires before every model request, including the one that writes the final answer. A steer too late for any request becomes a later turn and is echoed by `pre_llm_call`. No core change; `pre_api_request` is a documented hook registered through `ctx` |
 
 ## Round 6: security review round 5 (on `b8e1f2ed38`)
 
@@ -97,7 +108,7 @@ but it is more code to upstream. Recommended: the listing.
 
 | Path | Change |
 |---|---|
-| `intercom:plugin.yaml` | Version 0.3.0. `provides_tools: [intercom]`, `provides_hooks: [post_llm_call, pre_llm_call, post_tool_call]`. On a v0.23 build `pre_llm_call` is only the echo hook; the legacy drain is registered only on an old build (B12) |
+| `intercom:plugin.yaml` | Version 0.3.0. `provides_tools: [intercom]`, `provides_hooks: [post_llm_call, pre_llm_call, pre_api_request]`. On a v0.23 build `pre_llm_call` is only the echo hook; the legacy drain is registered only on an old build (B12) |
 | `intercom:__init__.py` | Tool schema and description (B11). `register()` wires the client, hooks and CLI command. The legacy inbox is set up only on a build without the owner-client names, and only in a classic CLI process (B12) |
 | `intercom:client.py` (new) | **The owner client** (B1): discovery, attach, the verbs per mode, the error mapping |
 | `intercom:route.py` (new) | The send path (B2) |
@@ -332,8 +343,30 @@ So it is an **invariant: every submitted `text` starts with `📡`**, after
   chat with it. So the echo is posted **from the target's own turn**, by an intercom hook that
   runs for that turn and sees the message:
   - **queued or started** messages: `pre_llm_call` of the turn whose prompt carries the header;
-  - **steered** messages: the first `post_tool_call` of the running turn after the steer row
-    appears.
+  - **steered** messages: the first `pre_api_request` of the running turn whose
+    `request_messages` carry the steer row (GW-4).
+- **Why `pre_api_request` for steers (GW-4).** The turn puts a steer into its transcript only
+  where the next model request will read it:
+  - the pre-request drain inserts the steer row after the newest tool result
+    (`agent/turn_iteration_prep.py:284`);
+  - the post-tool drain adds it to the final tool result (`agent_runtime_helpers.py:3668`).
+
+  `pre_api_request` fires before every provider attempt of the turn, the final-answer request
+  included (`website/docs/user-guide/features/hooks.md`, "API-request observer hooks"). So the
+  echo is posted **before the model reads the steer**, whether its next step is a tool call or
+  the answer. `post_tool_call` missed the second case.
+- **A steer that lands after the last request was sent** is handed back by the turn finalizer
+  and becomes a later turn (`agent/turn_finalizer.py:845`, `gateway/run_busy.py:211`). Its
+  echo is then the queued case: that turn's `pre_llm_call`. G-6 verifies this.
+- **What the hook reads:** only the user rows after the newest assistant row of
+  `request_messages`. Only enough to find a `📡` header and hash its span (B8 step 2). Nothing
+  from the request is kept, logged or returned. The sanitised `request` envelope is not used,
+  because the hash needs the exact text.
+- **Once per message:** retries and later requests fire the hook again, so the post is claimed
+  with `UPDATE messages SET echoed_at = ? WHERE id = ? AND echoed_at IS NULL` and made only when
+  one row changed. The same claim guards `pre_llm_call`.
+- **Never blocks the request:** the hook schedules `ctx.post_message` and returns; a failed post
+  is logged only.
 - **Only when** the target's scope is `private` (B4) and the record row's `header_sha` matches the
   span (B8 step 2), so a typed lookalike never triggers a post.
 - **Escaping per renderer (N3).** `post_message` sends with the adapter's default formatting; it
@@ -341,6 +374,10 @@ So it is an **invariant: every submitted `text` starts with `📡`**, after
   escapes for **the target platform's renderer** (Telegram HTML or MarkdownV2 as the adapter is
   configured, Discord and Slack mention forms, ntfy plain). It covers link text, `@everyone`,
   `@here` and `<@…>` / `<!…>` / `<#…>`. A platform with no escaper gets **no echo**.
+- **One list (N6-2):** `frame.ECHO_ESCAPERS` maps platform → escaper and sits beside the
+  escapers. It is the only list of echo-capable platforms. A private chat on a platform missing
+  from it gets no echo and **one warning** per message ("no echo escaper for <platform>"), never
+  an unescaped post. Adding an `echo_chats` entry for a new platform therefore needs an escaper.
 - **The body is never mirrored by the owner (N4):** a shared chat receives only the turn's
   answer. G-6's E2E asserts it.
 - **Timing changes** from "before the turn starts" to "as the turn that carries it runs" (before
@@ -374,7 +411,8 @@ CREATE TABLE IF NOT EXISTS messages (
   sender_chat_scope TEXT, target_chat_scope TEXT,
   expect_reply INTEGER NOT NULL, requested TEXT NOT NULL, applied TEXT, applied_detail TEXT,
   result TEXT, detail TEXT, reply TEXT, reply_state TEXT,
-  created_at REAL NOT NULL, delivered_at REAL, replied_at REAL
+  created_at REAL NOT NULL, delivered_at REAL, replied_at REAL,
+  echoed_at REAL                     -- set once by the echo claim (B6)
 );
 ```
 
@@ -491,6 +529,10 @@ Said plainly:
     `no-seam` (exit 4, the UX code).
   - **Hooks:** the legacy drain hook is registered only on the legacy build, together with the
     inbox. B6's echo `pre_llm_call` is a separate hook and never drains anything.
+  - **An in-between build fails safe (N6-1).** `hermes_cli/gateway_client.py` already exists at
+    this base. A build that has the names but no working owner takes the owner path and answers
+    `no-owner` (exit 5). It loses availability, never isolation. Only absent names select the
+    legacy path.
   - This keeps intercom's 17 tests and its upstream behaviour on old builds.
 
 ### Removed security fixes, and what replaces each (for security's re-check)
@@ -551,11 +593,11 @@ Operator acceptance: pending.
 | G-3 send path | `test_route.py`: steps 0–7; `injection-off` for **every** target kind without consent (R5-3); the CLI frames as a script; own-session refused; a stored messaging chat whose user is not on the current allowlist is still delivered (operator power pinned, R5-2 b); every submitted `text` starts with `📡` (N2) |
 | G-4 addressing | `test_address.py`: title, `Home`, `local-…` and v0.22 id prefixes, ambiguous, `@slug` both ways, compression tip |
 | G-5 chat scope | `test_scope.py`: owner DM private, non-owner DM shared, unlisted group shared, listed group private, other-platform prefix shared, int entry ignored, corrupt `origin_json` shared, missing row shared, local `None`, fresh read |
-| G-6 echo | `test_echo.py`, plus the E2E with fake ntfy: an echo is posted in a private chat from the target's own turn, never in a shared chat, never for a lookalike (O21); the escaping cases (link text, `@everyone`, `<@…>`) through the real ntfy adapter, and per-platform escaper unit tests for the platforms in `echo_chats` (N3); after a delivery into an unlisted group, the fake server received only the turn's answer (N4) |
+| G-6 echo | `test_echo.py`, plus the E2E with fake ntfy: an echo is posted in a private chat from the target's own turn, never in a shared chat, never for a lookalike (O21); the escaping cases (link text, `@everyone`, `<@…>`) through the real ntfy adapter, and per-platform escaper unit tests for the platforms in `echo_chats` (N3); after a delivery into an unlisted group, the fake server received only the turn's answer (N4); a private chat on a platform missing from `ECHO_ESCAPERS` gets no post and one warning (N6-2). **Steered echo (GW-4):** a steer whose turn's next step is the final answer is echoed once, before that answer; a steer that lands during the final request is echoed by the later turn's `pre_llm_call`; retries never post twice |
 | G-7 framing | `test_frame.py`: the exact header and variants, relabel cases (F4), cleaning (a newline in `--from` stays on line 1), echo escaping (F12), `_short_desc` → the 60-character sentence; every variant's text starts with `📡` after `sanitize_user_prompt_text` (N2) |
 | G-8 record | `test_record.py`: schema, modes on all three files, two writers |
 | G-9 replies and `ask` | `test_replies.py`: block / whole / silence, the record check, the shared-sender rule, SM-Q9 (b), reply via the owner client, in-process `ask` accepted only from the target's `reply` call, `[SILENT]` on `ask` |
-| G-10 CLI | `test_cli.py`: exit codes 0–6; `list` through `session.list`; `status` through `prompt.receipt` and the hashed transcript check. **Legacy path (R5-1):** on a build that publishes the owner names, with discovery returning `None`, `starting` or `draining`, `inbox.start()` is never called and no drain hook is registered; on a simulated old build it starts only where a `HermesCLI` instance exists |
+| G-10 CLI | `test_cli.py`: exit codes 0–6; `list` through `session.list`; `status` through `prompt.receipt` and the hashed transcript check. **Legacy path (R5-1):** on a build that publishes the owner names, with discovery returning `None`, `starting` or `draining`, `inbox.start()` is never called and no drain hook is registered; on a simulated old build, where importing the names **fails** (N6-1), it starts only where a `HermesCLI` instance exists |
 | G-11 relays | The relay skill text uses `hermes intercom send`; `scripts/dashboard_dispatch.py` is unchanged |
 | G-12 deploy | After the gateway restart: `hermes plugins list` shows intercom enabled in the owner; `hermes intercom send --to Home --message "deploy check" --delivery queue` exits 0; a message to an admin-dashboard chat exits 4 `not-addressable` |
 | Code health | `python scripts/check` (and lefthook, which needs ruff 0.15.22 in the build environment) |
@@ -612,7 +654,7 @@ There is no `dashboard_port` and no `HERMES_*` variable.
 | G-3 | Send path `route.py` (B2), consent for every delivery | intercom | **Claude Opus** | G-2, G-4, G-5, G-7, G-8 |
 | G-4 | Addressing `address.py` (B3) | intercom | Grok 4.7 | — |
 | G-5 | Chat scope `scope.py` (B4) | intercom | **Claude Opus** | — |
-| G-6 | Echo `echo.py` (B6), O21 verification | intercom | **Claude Opus** | G-5, G-7, G-9 |
+| G-6 | Echo `echo.py` (B6: `pre_llm_call` and the steered `pre_api_request` hook, the once-only claim), O21 verification | intercom | **Claude Opus** | G-5, G-7, G-9 |
 | G-7 | Framing `frame.py` (B5) | intercom | Grok 4.7 | G-1 (L-2) |
 | G-8 | Record `record.py` (B7) | intercom | Grok 4.7 | — |
 | G-9 | Replies and in-process `ask` `replies.py` (B8) | intercom | **Claude Opus** | G-3 |

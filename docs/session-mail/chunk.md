@@ -5,7 +5,7 @@
 - Track: Hermes Improvement (`PROJECT.md`, fork work on `alexderz/hermes-agent`); n/a as a
   tracker id
 - HLD: `docs/session-mail/hld.md` (round 3, gateway only)
-- LLD: `docs/session-mail/lld.md` (round 5, gateway only)
+- LLD: `docs/session-mail/lld.md` (round 7, gateway only: security rounds 5 and 6, the steered echo)
 - Groom: `.agents/design/session-mail/groom.md` (frozen)
 - project-main: `integrate/session-mail-023` (hermes-agent) and `integrate/session-mail`
   (intercom)
@@ -62,19 +62,20 @@ lefthook setup otherwise provisions into the account's real home.
   3. G-3, the send path (Claude Opus);
   4. G-4, addressing (Grok 4.7);
   5. G-5, chat scope (Claude Opus);
-  6. G-6, the echo (Claude Opus);
+  6. G-6, the echo, including the steered echo before a final answer (Claude Opus);
   7. G-7, framing (Grok 4.7);
   8. G-8, the record (Grok 4.7);
   9. G-9, replies and `ask` (Claude Opus);
-  10. G-10, the CLI, tool schema, caps and legacy path (Grok 4.7);
+  10. G-10, the CLI, tool schema, caps and the capability-selected legacy path (Grok 4.7);
   11. G-11, relays (Grok 4.7; the manager edits the skills);
   12. G-12, vendor and deploy (Grok 4.7; the manager restarts);
   13. G-13, upstream drafts (Grok 4.7).
 - **Wave view:** not kept here; manager posts one Epic comment only on
   reshape (item added or canceled, blocker set)
 - **Blocked by:**
-  - security's re-check of the round-5 trust boundaries (LLD § Removed security fixes);
-  - Alex's acceptance of the LLD (SM-Q18) and of the UX deltas.
+  - Alex's acceptance of the LLD (SM-Q18), including the operator power (HLD O23), and of the
+    UX deltas. Security accepted the trust boundaries at `6ccea9121f` (round 6); if Alex
+    declines O23, the fallback predicate needs a short security re-check.
   - DER-686 does not block.
 - **Blocks:** none
 

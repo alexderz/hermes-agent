@@ -5,7 +5,7 @@
 - Brief: `docs/session-mail/brief.md` (round 6, Refine pass round 5). Alex's words and decisions
   are in the Hermes Improvement vault, `requests/2026-11-09-session-mail-brief.md`.
 - Base: `integrate/session-mail-023` (v0.23.1 canary, `alex/v0.23.1-canary-1110`)
-- Date: `2026-11-11` (HLD round 3, gateway only, with security review round 5 folded in; round 2 is in git at `9aa6dbc600`, round 1 at
+- Date: `2026-11-11` (HLD round 3, gateway only, with security review round 5 and the steered-echo fix (GW-4) folded in; round 2 is in git at `9aa6dbc600`, round 1 at
   `f72a12780b`)
 
 Alex accepted the Plan and UX on 2026-11-10 with every recommended answer (SM-Q7 to SM-Q17).
@@ -131,7 +131,7 @@ This keeps intercom's 17 tests and its upstream behaviour (LLD B12).
    admin-dashboard chat → runtime_coordination_required → not-addressable
    ▼
  owner runs the turn (Webapp / desktop / Ink / CLI / messaging)
-   pre_llm_call / post_tool_call (intercom) → echo via ctx.post_message (private chats only)
+   pre_llm_call / pre_api_request (intercom) → echo via ctx.post_message (private chats only)
    post_llm_call (intercom) → reply / silent → owner client back to the sender (steer)
 ```
 
@@ -224,7 +224,7 @@ re-check.
 | SM-Q20 | Keep the standalone dashboard as a host, or the gateway only | **Answered (Alex, 2026-11-11): gateway only.** The admin dashboard stays for administration; its chats are not addressable |
 | SM-Q22 | Hermes Mobile | **Answered (Alex, 2026-11-11): dropped**, out of scope |
 | O20 | Listing vs `ctx` wrapper upstream | Designed on listing (LLD G-1); a `ctx.owner_client()` wrapper is the fallback if upstream prefers it |
-| O21 | Echo hooks: do `pre_llm_call` / `post_tool_call` run bound to the target messaging session in the owner, and does `ctx.post_message` post there? | Verify in G-6's E2E. If not, the echo is dropped for v1 (SM-Q15 falls back to (a)), with no core patch |
+| O21 | Echo hooks: do `pre_llm_call` / `pre_api_request` (the steered echo, so a steer followed by the final answer is still echoed: GW-4) run bound to the target messaging session in the owner, and does `ctx.post_message` post there? | Verify in G-6's E2E. If not, the echo is dropped for v1 (SM-Q15 falls back to (a)), with no core patch |
 | O22 | The exact `sessions.source` strings for owner-local sessions (scope rule B4) | Verify in G-2's E2E |
 | O23 | **Operator power (security R5-2):** intercom can start a turn in any stored chat of the profile, including one whose user has since been removed from an allowlist or unpaired; the answer goes to that person. v0.22's seam re-checked this; v0.23 publishes no predicate for it | **For Alex to accept with the LLD (SM-Q18).** Mitigated by the chat rule (such a chat is `shared`, no echo). If not accepted: a thin read-only core predicate plus its listing (a small core addition, not a host behaviour change) |
 
