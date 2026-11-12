@@ -95,6 +95,13 @@ _SLACK_PIPE_RE = re.compile(
     r"<((?:https?|mailto|tel):[^|>\s]+)\|([^>\n]+)>",
     re.IGNORECASE,
 )
+# A ``<https://…>`` (with or without ``|label``) that the Slack adapter protects
+# and Slack then renders. Split after the rewrite, so a layer the patterns
+# cannot see still cannot be a link.
+_SLACK_ANGLE_URL_RE = re.compile(r"<(?=(?:https?|mailto|tel):)", re.IGNORECASE)
+# One pass peels one layer. Deeper nesting takes another pass; the cap stops a
+# rewrite that never settles, and the joiner split below covers what remains.
+_MAX_LINK_PASSES = 16
 
 _PLATFORM_NAMES = {
     "telegram": "Telegram",
@@ -537,17 +544,34 @@ def _footer_bullets(message_id: str, *, reply_mode: str, kind: str, user_name: s
     return bullets
 
 
+def _rewrite_links(text: str) -> str:
+    """One layer of HTML anchors, markdown links and Slack ``<url|label>`` links.
+
+    Each becomes ``label (url)``. A nested link leaves the outer layer in
+    place; the caller repeats this until the text settles.
+    """
+    text = _HTML_ANCHOR_RE.sub(lambda m: f"{m.group(3)} ({m.group(2)})", text)
+    text = _MD_LINK_RE.sub(lambda m: f"{m.group(1)} ({m.group(2)})", text)
+    return _SLACK_PIPE_RE.sub(lambda m: f"{m.group(2)} ({m.group(1)})", text)
+
+
 def _neutralise(text: str) -> str:
     """Break link text and mention forms so a renderer cannot act on them.
 
     Markdown links, HTML anchors and Slack ``<url|label>`` links become
-    ``label (url)``, so the label cannot hide a different target. ``@everyone``
-    and ``@here`` gain a zero-width space, and ``<@``, ``<!`` and ``<#`` are
-    split the same way.
+    ``label (url)``, so the label cannot hide a different target. Nesting is
+    peeled until none of those forms remain. A leftover ``](`` or
+    ``<https://…`` is split, because that is what Telegram, Discord and Slack
+    join into a link. ``@everyone`` and ``@here`` gain a zero-width space, and
+    ``<@``, ``<!`` and ``<#`` are split the same way.
     """
-    text = _HTML_ANCHOR_RE.sub(lambda m: f"{m.group(3)} ({m.group(2)})", text)
-    text = _MD_LINK_RE.sub(lambda m: f"{m.group(1)} ({m.group(2)})", text)
-    text = _SLACK_PIPE_RE.sub(lambda m: f"{m.group(2)} ({m.group(1)})", text)
+    for _ in range(_MAX_LINK_PASSES):
+        rewritten = _rewrite_links(text)
+        if rewritten == text:
+            break
+        text = rewritten
+    text = text.replace("](", "]" + _ZWSP + "(")
+    text = _SLACK_ANGLE_URL_RE.sub("<" + _ZWSP, text)
     text = _AT_BROADCAST_RE.sub(lambda m: "@" + _ZWSP + m.group(1), text)
     text = _ANGLE_MENTION_RE.sub("<" + _ZWSP, text)
     return text
