@@ -56,7 +56,7 @@ hostname (served by the gateway), desktop, Ink TUI, classic CLI and messaging.
 | **Alex** | Watches and steers mailed turns where they run (Webapp, desktop, terminal, Telegram); reads the record with `hermes intercom log` / `status`; approves the gateway restart |
 | **Agent sessions in the owner** | The `intercom` tool; they receive messages as user rows and answer with their final answer |
 | **Scripts and cron jobs** | `hermes intercom send …` (a client of the owner; always a script sender) |
-| **The manager** | Edits the relay skills at deploy, renames "Model Master", schedules the restart |
+| **The manager** | Edits the relay skills at deploy, schedules the restart |
 
 ## UX / stories
 
@@ -176,7 +176,13 @@ re-check.
   runs by default; receipts carry the target's session id, the address to use for follow-ups.
 - **Senders whose run is over** (SM-Q9 b): replies to `cron`, `oneshot` and `subagent` senders
   are stored only.
-- **Addressing** (decision 2): titles, `@slug`, ids, `Home`, compression tip. No endpoint names.
+- **Addressing** (decision 2): ids, exact titles, `Home`, compression tip. No endpoint names.
+  - **`@<project>` only with DER-686's project feature** (Alex, 2026-11-11: "we can't rely on
+    naming"): its plugin enabled in the profile and `projects.owner_session_id` present, checked
+    at `register()` and on every call.
+  - Without it, the tool never mentions `@project`, and `@…` is refused
+    `project-addressing-unavailable`. A project with no owner set is `no-owner-set`.
+  - No title convention (`<name> — Orchestrator`) is used (LLD B3).
 - **Modes** (decision 3): the owner verbs per LLD B1; `interrupt` normally applies as redirect.
 - **No caps** (decision 5).
 - **`ask` / `reply`** (SM-Q16 a): unchanged in meaning; the waiter is resolved in the owner.
@@ -218,7 +224,7 @@ re-check.
 
 | # | Item | Status |
 |---|---|---|
-| O1–O8 | SM-Q7, SM-Q8, SM-Q9, SM-Q10, SM-Q11, SM-Q14, SM-Q15, SM-Q16 | **Answered** 2026-11-10 (as recommended). SM-Q11 is moot since SM-Q22 |
+| O1–O8 | SM-Q7, SM-Q8, SM-Q9, SM-Q10, SM-Q11, SM-Q14, SM-Q15, SM-Q16 | **Answered** 2026-11-10 (as recommended). SM-Q11 is moot since SM-Q22. **SM-Q10 is withdrawn** (2026-11-11): titles no longer find owners, so "Model Master" needs no rename |
 | O9, O10, O14, O16, O18 | Seam upstream shape; gateway endpoint role timing; multi-profile dashboard socket; re-applying the seam at the v0.23 rebase; a CLI without a lease | **Closed by SM-Q20:** there is no seam, no endpoint role, no lease routing, and every session is owner-hosted |
 | O11 | Relay skills | **Settled:** the manager edits them at deploy to `hermes intercom send` (LLD G-11) |
 | O12 | The live `tools.tool_search` setting (cache cost of the new tool) | Open; read at deploy planning |
@@ -232,6 +238,7 @@ re-check.
 | O21 | Echo hooks: do `pre_llm_call` / `pre_api_request` (the steered echo, so a steer followed by the final answer is still echoed: GW-4) run bound to the target messaging session in the owner, and does `ctx.post_message` post there? | Verify in G-6's E2E. If not, the echo is dropped for v1 (SM-Q15 falls back to (a)), with no core patch |
 | O22 | The exact `sessions.source` strings for owner-local sessions (scope rule B4) | Verify in G-2's E2E |
 | O23 | **Operator power (security R5-2):** intercom can start a turn in any stored chat of the profile, including one whose user has since been removed from an allowlist or unpaired; the answer goes to that person. v0.22's seam re-checked this; v0.23 publishes no predicate for it | **Accepted by Alex (SM-Q23 (a), 2026-11-11).** Mitigated by the chat rule (such a chat is `shared`, no echo). No core predicate |
+| O24 | **DER-686 dependency** (project-centric UI): `@<project>` needs its projects plugin and `projects.owner_session_id` | **Not blocking.** At launch DER-686 is not built on v0.23, so `@project` is not offered; sessions address by id (from `list`), exact title or `Home`. When DER-686 ships, house-infra sets `settings.project_plugin` to its plugin id, and the next gateway restart offers `@project` |
 
 ## Risks
 
