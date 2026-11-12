@@ -1501,6 +1501,11 @@ button,
 /* Touch: the pinned prompt clamps to two lines (four on desktop); its buttons sit
    in the bubble's right gutter (TouchUserBubble), so it adds no row below. */
 @media (pointer: coarse) {
+  /* The composer's git branch strip is noise on a phone. */
+  .coding-status-bar {
+    display: none;
+  }
+
   .sticky-human-clamp {
     max-height: calc(2 * var(--human-msg-line-height) * var(--conversation-text-font-size) + 0.15rem);
   }

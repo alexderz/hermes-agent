@@ -1,3 +1,4 @@
+import { useStore } from '@nanostores/react'
 import { DropdownMenu as DropdownMenuPrimitive } from 'radix-ui'
 import * as React from 'react'
 
@@ -10,6 +11,7 @@ import {
   menuMotionClass,
   menuSurfaceClass
 } from '@/components/ui/menu'
+import { $touchPointer } from '@/lib/touch-interaction'
 import { cn } from '@/lib/utils'
 
 // Shared class tokens for edge-to-edge menus (use with `p-0` content): rows go
@@ -196,6 +198,7 @@ function DropdownMenuSearch({
   onValueChange?: (value: string) => void
 }) {
   const hoverSubmenus = React.useContext(HoverSubmenusContext)
+  const touchPointer = useStore($touchPointer)
 
   return (
     <div
@@ -203,7 +206,9 @@ function DropdownMenuSearch({
       data-slot="dropdown-menu-search"
     >
       <input
-        autoFocus
+        // Touch: no autofocus. Focusing raises the on-screen keyboard, which
+        // resizes the page under the menu; tap the field to search.
+        autoFocus={!touchPointer}
         className={cn(
           'h-4 w-full bg-transparent text-xs leading-none text-foreground placeholder:text-(--ui-text-tertiary) focus:outline-hidden',
           className

@@ -87,6 +87,7 @@ import { useStatusDrawer } from './hooks/use-status-drawer'
 import { useSessionStatusPresence } from './hooks/use-status-presence'
 import { shouldConvertPasteToAttachment } from './large-paste'
 import { ActionBadges } from './micro-actions'
+import { $composerModelMenuOpen } from './model-pill'
 import { chipTypedPathOnSpace, pathifyRefs } from './path-refs'
 import { PreparedImageRecovery } from './prepared-image-recovery'
 import { renderComposerQueueSlot, useComposerQueueScopeKey } from './queue-slot'
@@ -427,6 +428,7 @@ export function ChatBar({
 
   const hasComposerPayload = hasText || attachments.length > 0
   const shortLayout: ShortComposerLayout = short ? (hasText ? 'column' : 'row') : null
+  const modelMenuOpen = useStore($composerModelMenuOpen)
   const { cardWaiting } = useCardWaitingSubmit(sessionId ?? null, busy, hasComposerPayload)
 
   const { busyAction, canSteer, canSubmit } = deriveBusySubmitState({
@@ -1162,8 +1164,9 @@ export function ChatBar({
       foldVoice={foldVoice}
       hasComposerPayload={hasComposerPayload}
       hideModelPill={guidedChat}
-      // Short viewport: Send only (no model pill, no voice row); the model is in Settings.
-      minimal={minimal || chatOnboardingSolo || short}
+      // Short viewport: Send only (no model pill, no voice row), except while the
+      // model menu is open (its search raises the keyboard; see $composerModelMenuOpen).
+      minimal={minimal || chatOnboardingSolo || (short && !modelMenuOpen)}
       onDictate={dictate}
       onQueue={() => {
         // Queueing clears the draft too, so the list over it closes with it.

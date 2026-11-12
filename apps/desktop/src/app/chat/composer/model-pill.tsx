@@ -23,6 +23,12 @@ import { RICH_INPUT_SLOT } from './rich-editor'
 import { useComposerScope } from './scope'
 import type { ChatBarState } from './types'
 
+/** True while a composer model menu is open. The short-viewport composer hides
+ *  the model pill; while its menu is open it must stay mounted, or the keyboard
+ *  that a search field raises (shrinking the viewport) unmounts the pill and
+ *  closes the menu mid-pick. */
+export const $composerModelMenuOpen = atom(false)
+
 // `shrink` (not `shrink-0`) with a truncating label: the pill is the one
 // control in the row that can give width back continuously, so it absorbs the
 // squeeze between collapse stages instead of pushing Send past the edge.
@@ -69,6 +75,7 @@ export function ModelPill({
   const modelSource = useStore($currentModelSource)
   const runtimeId = useStore(view.$runtimeId)
   const [open, setOpen] = useState(false)
+  useEffect(() => () => $composerModelMenuOpen.set(false), [])
   const restoreSelection = useRef<(() => void) | null>(null)
   const scope = useComposerScope()
   const hasLiveMenu = Boolean(model.modelMenuContent)
@@ -198,6 +205,7 @@ export function ModelPill({
   // committed a model also swallows whatever you type next.
   const setMenuOpen = (next: boolean) => {
     setOpen(next)
+    $composerModelMenuOpen.set(next)
 
     if (!next) {
       releaseTypingFocus()
