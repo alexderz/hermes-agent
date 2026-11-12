@@ -25,6 +25,8 @@ export const sessionEn = {
       approvalNeeded: 'approval needed',
       sudoPasswordNeeded: 'sudo password needed',
       secretInputNeeded: 'secret input needed',
+      // {0}=absolute path the gateway will write; the card is answered on a surface that shows it
+      secretFileElsewhere: (path: string) => `secret for ${path}: enter it in the Hermes Webapp or desktop app`,
       unlockVault: (displayName: string) => `unlock ${displayName}`,
       saveLogin: (site: string) => `save login for ${site}`,
       verificationCode: (site: string) => `verification code for ${site}`

@@ -1178,6 +1178,8 @@ class GatewayAgent:
             answer = {"outcome": "cancelled"} if method == "clarify" else ""
         finally:
             self._open_request = None
+        if answer is _UNANSWERED:  # left open for the other viewers; it ends at its own timeout otherwise
+            return
         if method == "clarify":
             self.connection.reply(frame["id"], answer)
         else:
@@ -1207,7 +1209,17 @@ class GatewayAgent:
     def _ask_secret(self, params):
         """Main's masked "Skill Setup Required" panel (the CLI's registered secret-capture callback,
         ``hermes_cli.callbacks.prompt_for_secret``) collects the value and prints main's lines; the
-        gateway, not this process, saves it in the profile ``.env``, so the panel's save is captured."""
+        gateway, not this process, saves it in the profile ``.env``, so the panel's save is captured.
+
+        A ``clarify(secret_file=...)`` card is neither shown nor answered here: this panel shows only the
+        agent's text, not the file's destination, and every viewer gets the request, so even a skip from
+        this terminal would settle it for the Webapp or desktop app, which draw the destination."""
+        destination = (params.get("metadata") or {}).get("destination")
+        if isinstance(destination, dict) and destination.get("kind") == "file":
+            from hermes_cli.banner import cprint
+            cprint(f"\n  🔑 Secret for {destination.get('path') or 'a file'}: enter it in the Hermes Webapp or "
+                   f"desktop app.")
+            return _UNANSWERED
         from tools import skills_tool
         callback = skills_tool._secret_capture_callback
         if callback is None:
@@ -1487,6 +1499,7 @@ def clarify_reply(callback, params) -> dict:
 
 
 _SECRET_LOCK = threading.Lock()
+_UNANSWERED = object()  # a server request this terminal leaves for another viewer: no response frame
 _SERVER_REQUESTS = {
     "sudo": GatewayAgent._ask_sudo,
     "secret": GatewayAgent._ask_secret,
