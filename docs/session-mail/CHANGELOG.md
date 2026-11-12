@@ -8,3 +8,4 @@ One line per landed item.
 - 2026-11-11 G7 (DER-720): Framing `frame.py` — alexderz/hermes-intercom@d42e904b88
 - 2026-11-12 G8 (DER-721): Record `record.py` — alexderz/hermes-intercom@f033c482d8
 - 2026-11-12 G4 (DER-718): Addressing `address.py`, and `list` — alexderz/hermes-intercom@7d7201a676
+- 2026-11-12 G3 (DER-722): Send path `route.py` — alexderz/hermes-intercom@54581f02bd
