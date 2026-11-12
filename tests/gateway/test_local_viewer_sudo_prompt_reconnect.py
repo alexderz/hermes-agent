@@ -3,9 +3,6 @@
 The whole path on the session authority (``session.resume`` -> ``open_requests`` -> the response frame),
 for the prompt that, before, was skipped at once because no viewer was attached when the turn asked
 (``test_local_viewer_prompts_wait_for_viewer.py`` covers secret and vault prompts and the timeouts).
-Its own file: after the sibling file's in-process sudo prompts ran, ``onboarding.start`` on a fresh
-authority in the same process refused with "No model is set up" (an ordering leak this test does not
-own; the runner isolates files in their own process).
 """
 from __future__ import annotations
 
