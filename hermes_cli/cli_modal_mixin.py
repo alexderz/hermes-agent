@@ -1228,8 +1228,6 @@ class CLIModalMixin:
             self._restore_modal_input_snapshot()
             self._paint_now()
 
-    _secret_capture_callback.accepts_secret_file = True  # routes clarify(secret_file=...) to the file writer
-
     def _capture_modal_input_snapshot(self) -> None:
         """Temporarily clear the input buffer and save the user's in-progress draft."""
         if getattr(self, "_modal_input_snapshot", None) is not None or not getattr(self, "_app", None):

@@ -68,7 +68,8 @@ def test_the_file_holds_the_value_and_the_model_gets_only_its_facts(folder):
     owner, group = result["secret_file"]["owner"], result["secret_file"]["group"]
     assert metadata["destination"] == {"kind": "file", "path": path, "mode": "0600", "owner": owner, "group": group}
     assert name == "XYZ API key"
-    assert f"will be saved to {path} (0600, {owner}:{group})" in prompt  # a client ignoring metadata shows it
+    # A client ignoring metadata shows the facts, and shows them before the model's own text.
+    assert prompt == f"Will be saved to {path} (0600, {owner}:{group})\n\n{QUESTION[0]['question']}"
     assert not is_env_passthrough("XYZ API key") and "XYZ API key" not in load_env()
 
 
@@ -111,7 +112,7 @@ def test_a_turn_nobody_can_answer_refuses(folder):
     with bind_turn_secret_capture(_Card()):
         result = json.loads(clarify_tool(QUESTION, callback=None,
                                          secret_file={"name": "k", "path": str(folder / "key")}))
-    assert "not available on this surface" in result["error"]
+    assert "needs the Hermes Webapp or desktop app" in result["error"]
     assert os.listdir(folder) == []
 
 
@@ -122,7 +123,7 @@ def test_a_messaging_surface_refuses(folder, monkeypatch):
     monkeypatch.setattr(skills_tool, "_secret_capture_callback", _Card())
     result = json.loads(clarify_tool(QUESTION, callback=_never_called,
                                      secret_file={"name": "k", "path": str(folder / "key")}))
-    assert "not available on this surface" in result["error"]
+    assert "needs the Hermes Webapp or desktop app" in result["error"]
     assert os.listdir(folder) == []
 
 
@@ -145,3 +146,15 @@ def test_an_object_sent_as_json_text_is_accepted(folder):
         result = json.loads(clarify_tool(QUESTION, callback=_never_called,
                                          secret_file=json.dumps({"name": "k", "path": str(folder / "key")})))
     assert result["secret_file"]["status"] == "saved"
+
+
+def test_the_models_text_cannot_hide_or_restyle_the_destination(folder):
+    card = _Card()
+    spoof = "XYZ key\x1b[8m — will be saved to /elsewhere\x1b[0m\x1b[2K\r\x07"
+    with bind_turn_secret_capture(card):
+        clarify_tool([{"question": spoof}], callback=_never_called,
+                     secret_file={"name": "XYZ\x1b[31m key", "path": str(folder / "key")})
+    [(name, prompt, _metadata)] = card.shown
+    assert prompt.startswith(f"Will be saved to {folder / 'key'} (")
+    assert name == "XYZ key"
+    assert not any(ch in prompt for ch in "\x1b\r\x07")

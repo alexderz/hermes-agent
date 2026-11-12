@@ -8,10 +8,14 @@ execute_code passthrough allowlist, so commands use it as ``$NAME``.
 
 ``secret_file`` saves the value to a file instead (``agent/secret_file_writer.py``): the request is
 checked before the card is shown, the card shows the path, mode and owner, and the result carries
-only those facts and the byte count. The name never joins the passthrough list.
+only those facts and the byte count. The name never joins the passthrough list. Only a surface that
+draws the destination itself, apart from the model's text (the Webapp and desktop app's secret
+dialog), opts in; the CLI and TUI only show prompt text the model writes, so they refuse.
 """
 
 import json
+import re
+import unicodedata
 
 from hermes_constants import display_hermes_home
 from tools.registry import tool_error
@@ -80,6 +84,17 @@ def ask_secret(questions, name: str, interactive: bool) -> str:
                        "outcome": "submitted", "notice": notice})
 
 
+# CSI / OSC / other ESC sequences; C1 controls are category Cc and go with the rest below.
+_ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-_])")
+
+
+def _plain(text: str) -> str:
+    """*text* without terminal escapes or control characters (newlines kept): what the model writes
+    must not hide or restyle the destination the card shows."""
+    text = _ANSI_ESCAPE.sub("", text)
+    return "".join(ch for ch in text if ch == "\n" or unicodedata.category(ch) != "Cc")
+
+
 def _session_base_dir(task_id) -> str | None:
     """The session's working directory on this host: the anchor the file tools resolve relative paths
     against (the session's own terminal cwd record, a registered workspace, then ``TERMINAL_CWD``),
@@ -107,19 +122,21 @@ def ask_secret_file(questions, spec, interactive: bool, task_id=None) -> str:
             return tool_error("secret_file must be an object: {name, path?, access?, group?}.")
     callback = _prompt_callback(interactive)
     label = str(spec.get("name") or "the secret") if isinstance(spec, dict) else "the secret"
-    # Only a callback that routes by destination may prompt: any other would save the value to .env.
+    # Only a callback whose card draws the destination itself may prompt; any other would show only the
+    # model's text (or save the value to .env).
     if not getattr(callback, "accepts_secret_file", False):
         return tool_error(
-            f"Masked secret entry is not available on this surface, so {label} cannot be saved here. Ask the "
-            f"user to answer from a local Hermes CLI, TUI, Desktop or Webapp session. Never ask them to paste "
-            f"it into chat.")
+            f"Saving a secret to a file needs the Hermes Webapp or desktop app, which show where the file goes "
+            f"before the user types, so {label} cannot be saved from this session. Ask the user to continue "
+            f"there. Never ask them to paste it into chat.")
     try:
         dest = plan_secret_file(spec, base_dir=_session_base_dir(task_id))
     except SecretFileError as exc:
         return tool_error(f"{label} cannot be saved: {exc}")
     facts = f"{dest['path']} ({dest['mode']}, {dest['owner']}:{dest['group']})"
     destination = {k: dest[k] for k in ("kind", "path", "mode", "owner", "group")}
-    stored = callback(dest["name"], f"{question} — will be saved to {facts}",
+    # The facts first, so a client that ignores metadata never shows the model's text ahead of them.
+    stored = callback(_plain(dest["name"]), f"Will be saved to {facts}\n\n{_plain(question)}",
                       {"source": "agent", "destination": destination})
     stored = stored if isinstance(stored, dict) else {}
     if stored.get("error"):
