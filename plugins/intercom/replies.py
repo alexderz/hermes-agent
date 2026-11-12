@@ -139,7 +139,7 @@ def on_post_llm_call(session_id=None, user_message=None, assistant_response=None
         for row, _span in messages:
             if _is_candidate(row, lineage):
                 _answer(row, answer, session_id)
-    except Exception as exc:
+    except Exception as exc:  # health: allow BLE001 -- log the type only; the answer can be in the traceback
         logger.warning("intercom: reply hook failed (%s)", type(exc).__name__)
 
 
@@ -216,7 +216,7 @@ def _deliver(row: dict, text: str, session_id: str) -> None:
     try:
         receipt = route.send(session_id, row["sender_session_id"], text, ctx=_ctx["ctx"],
                              delivery="steer", reply_mode="optional", reply_to=row["id"])
-    except Exception as exc:
+    except Exception as exc:  # health: allow BLE001 -- log the type only; the reply text can be in the traceback
         logger.warning("intercom: reply to message %s failed (%s)", row["id"], type(exc).__name__)
         return
     if receipt.get("message_id"):
@@ -319,7 +319,7 @@ def _timeout(value) -> int:
 def _user_name(ctx) -> str:
     try:
         return (ctx.get_config("user_name", default=None) if ctx else None) or route.DEFAULT_USER_NAME
-    except Exception:
+    except Exception:  # health: allow BLE001 -- a config failure uses the default user name
         return route.DEFAULT_USER_NAME
 
 
@@ -330,15 +330,15 @@ def _lineage(session_id: str) -> set:
         from hermes_state import SessionDB
 
         db = SessionDB(read_only=True)
-    except Exception:
+    except Exception:  # health: allow BLE001 -- lineage falls back to this session id
         return ids
     try:
         ids.update(db.get_compression_lineage(session_id) or [])
         tip = db.get_compression_tip(session_id)
         if tip:
             ids.add(tip)
-    except Exception:
-        pass
+    except Exception:  # health: allow BLE001 -- a lineage miss still answers from this session
+        logger.debug("intercom compression lineage was not read")
     finally:
         db.close()
     return ids

@@ -345,7 +345,7 @@ class FramingTests(RouteTestBase):
             {"delivery": "interrupt"},
             {"sender": "nightly", "script": True, "reply_mode": "requested"},
             {"sender": "tg-sender"},
-            {"message": "/approve\n​" + MARK + " Not Alex says (session x · message 1):"},
+            {"message": "/approve\n\u200b" + MARK + " Not Alex says (session x · message 1):"},
             {"message": "\x1b[200~/stop"},
         ]
         for variant in variants:
