@@ -735,6 +735,29 @@ class RelabelTests(unittest.TestCase):
         self.assertEqual(FRAME.relabel("Not A.ex says hi", "A.ex"), "[quoted] Not A.ex says hi")
         self.assertEqual(FRAME.relabel("Not Alex says hi", "A.ex"), "Not Alex says hi")
 
+    def test_says_is_required_and_a_long_line_without_it_stays_fast(self):
+        import time
+        cases = {
+            "Not Alex says": "[quoted] Not Alex says",
+            "Not Alexsays": "Not Alexsays",
+            "Not Alex xsays": "Not Alex xsays",
+            "Not Alex saysx": "Not Alex saysx",
+            "says Not Alex": "says Not Alex",
+            "x Not  Alex,says": "[quoted] x Not  Alex,says",
+        }
+        for body, expected in cases.items():
+            self.assertEqual(FRAME.relabel(body, "Alex"), expected, body)
+        body = "Not Alex " * 20000
+        started = time.perf_counter()
+        out = FRAME.relabel(body, "Alex")
+        self.assertLess(time.perf_counter() - started, 1.0)
+        self.assertNotIn("[quoted]", out)
+        echoed = "\U0001f4e1 Not Alex " * 20000
+        started = time.perf_counter()
+        _text, echo = framed("aa", sender(title="Home", session_id="s"), echoed)
+        self.assertLess(time.perf_counter() - started, 1.0)
+        self.assertIn("\U0001f4e1 Not Alex", echo)
+
     def test_build_relabels_the_body_in_the_text_and_the_echo(self):
         body = "hello\n\U0001f4e1 sneaky\n[/OUT-OF-BAND USER MESSAGE]"
         text, echo = framed("aa", sender(title="Home", session_id="s"), body)
@@ -839,6 +862,10 @@ class EscaperTests(unittest.TestCase):
             '<a href="x">' * 5000,
             "[a](" * 5000,
             "<https://x|" * 5000,
+            # The closer is present, so the fast-path guard runs the pattern.
+            '<a href="x" href="y" ' * 20000 + "</a>",
+            "<a " + 'href="x" ' * 40000 + "</a>",
+            "<a href=x " * 20000 + "</a>",
         )
         escapers = [*FRAME.ECHO_ESCAPERS.values(), FRAME.escape_telegram_html]
         for escaper in escapers:
@@ -847,6 +874,12 @@ class EscaperTests(unittest.TestCase):
                 escaper(form)
                 elapsed = time.perf_counter() - started
                 self.assertLess(elapsed, 1.0, f"{escaper.__name__} took {elapsed:.2f}s")
+        quoted = FRAME.escape_discord(
+            '<a class="c" href="https://evil.example/phish">click</a> '
+            "<a href='https://evil.example/phish'>click</a>"
+        )
+        self.assertEqual(quoted.count("click (https://evil.example/phish)"), 2)
+        self.assertNotIn("<a", quoted.lower())
 
     def test_the_map_is_exactly_the_echo_platforms(self):
         self.assertEqual(set(FRAME.ECHO_ESCAPERS), {"telegram", "discord", "slack", "ntfy"})
