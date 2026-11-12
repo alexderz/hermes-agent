@@ -14,3 +14,4 @@ One line per landed item.
 - 2026-11-12 G10 (DER-725): CLI, tool schema, caps removal and the legacy path — alexderz/hermes-intercom@dbb6b2d6ec
 - 2026-11-12 G11 (DER-726): Relays on `hermes intercom send` — alexderz/hermes-agent@8eda6b5760
 - 2026-11-12 G13 (DER-727): Upstream drafts (drafts only; nothing is posted) — alexderz/hermes-intercom@badc1f7f6e
+- 2026-11-12 G14 (DER-728): Owner E2E of the integrated plugin (split from G-2) — alexderz/hermes-agent@f37fb90e79
