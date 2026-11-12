@@ -1970,6 +1970,27 @@ body.guest-pointer-lock :is(webview, iframe) {
   mask-image: linear-gradient(to bottom, #000 55%, transparent);
 }
 
+/* Phones and tablets: the pinned prompt clamps to two lines (not four) and its
+   expand / edit row shrinks to 32px and tucks under the bubble, so the prompt
+   pinned at the top costs about half the height it did. useUserBubbleClamp reads
+   the clamp's computed max-height, so the fade and expand toggle follow it. */
+@media (pointer: coarse) {
+  .sticky-human-clamp {
+    max-height: calc(2 * var(--human-msg-line-height) * var(--conversation-text-font-size) + 0.15rem);
+  }
+
+  [data-slot='aui_user-message-root'] [data-slot='aui_user-touch-actions'] {
+    margin-top: -0.375rem;
+  }
+
+  [data-slot='aui_user-message-root'] [data-slot='aui_user-touch-edit'],
+  [data-slot='aui_user-message-root'] [data-slot='aui_user-touch-expand'] {
+    min-width: 2.25rem;
+    min-height: 2rem;
+    height: 2rem;
+  }
+}
+
 /* Short viewports (a phone with the on-screen keyboard up: the Webapp sets
    interactive-widget=resizes-content, so the layout height shrinks with it; or a
    landscape phone): a pinned prompt of up to four lines plus its touch action row

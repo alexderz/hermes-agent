@@ -363,7 +363,10 @@ function TouchUserBubble({
       <div className={cn(className, 'cursor-text')} data-selectable-text="true">
         {children}
       </div>
-      <div className={cn('flex justify-end', (showStop || showRestore) && 'pr-11')}>
+      <div
+        className={cn('flex justify-end', (showStop || showRestore) && 'pr-11')}
+        data-slot="aui_user-touch-actions"
+      >
         {expandable && (
           <Button
             aria-expanded={expanded}
