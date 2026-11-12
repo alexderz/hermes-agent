@@ -26,8 +26,7 @@ MAX_CANDIDATES = 5
 DEFAULT_LIMIT = 30
 FUZZY_CUTOFF = 0.6
 RUN_SOURCES = frozenset({"cron", "subagent", "oneshot"})
-_AVAILABILITY = ("open", "not open", "admin dashboard")
-_DASHBOARD_FIELDS = ("held_by", "host", "runtime")
+_PREFIX_PAGE = 200
 
 # Snapshot taken at register() for the tool text (G10). resolve() does not read it.
 registered_project_addressing: bool | None = None
@@ -195,20 +194,14 @@ def _match_id(db, text: str, lister):
         return _ok(db, found, db.get_session_title(found))
     if not text:
         return None
-    from hermes_state_common import escape_like
-
-    rows = db._read_all(
-        "SELECT id, title, started_at FROM sessions "
-        "WHERE id LIKE ? ESCAPE '\\' ORDER BY started_at DESC",
-        (escape_like(text) + "%",),
-    )
+    rows = _prefix_matches(db, text)
     if not rows:
         return None
     order: list[str] = []
     titles: dict[str, str] = {}
     for row in rows:
         tip = _tip(db, row["id"])
-        title = db.get_session_title(tip) or row["title"] or ""
+        title = db.get_session_title(tip) or row.get("title") or ""
         # Several prefix rows can compress to one tip. Keep a title from the chain
         # when the tip itself has none (the title often stays on the parent).
         if tip in titles:
@@ -237,23 +230,22 @@ def _resolve_slug(db, slug_text: str, lister) -> dict:
     finally:
         conn.close()
 
-    want = slug_text.casefold()
-    slugs = [row["slug"] for row in rows if isinstance(row["slug"], str)]
+    slugs = []
     chosen = None
     for row in rows:
         slug = row["slug"]
-        if isinstance(slug, str) and slug.casefold() == want and want:
+        if not isinstance(slug, str):
+            continue
+        slugs.append(slug)
+        if slug == slug_text:
             chosen = row
-            if slug == slug_text:
-                break
     if chosen is None:
         closest = [{"slug": slug} for slug in _closest_strings(slug_text, slugs)]
         return _refusal("unknown", UNKNOWN_SLUG_MESSAGE, closest)
 
     owner = chosen["owner_session_id"]
-    stored = chosen["slug"] if isinstance(chosen["slug"], str) else slug_text
     if not isinstance(owner, str) or not owner.strip():
-        return _refusal("no-owner-set", no_owner_message(stored))
+        return _refusal("no-owner-set", no_owner_message(slug_text))
     if db is None:
         return _refusal("unknown", UNKNOWN_MESSAGE)
     matched = _match_id(db, owner.strip(), lister)
@@ -265,9 +257,15 @@ def _resolve_slug(db, slug_text: str, lister) -> dict:
 def _unknown_titles(db, text: str, lister) -> dict:
     if db is None or not text:
         return _refusal("unknown", UNKNOWN_MESSAGE)
+    # SessionDB._read_all is private. list_sessions_rich(search_query=) is a
+    # case-folded substring that also matches ids, and the owner's session.list
+    # is one page, so neither can rank a typo (UX F1). G-12 lists this seam or
+    # accepts it. Run sources stay out, the same set list hides.
     rows = db._read_all(
         "SELECT id, title, started_at FROM sessions "
-        "WHERE title IS NOT NULL AND title != ''",
+        "WHERE title IS NOT NULL AND title != '' "
+        f"AND COALESCE(source, '') NOT IN ({','.join('?' for _ in RUN_SOURCES)})",
+        tuple(sorted(RUN_SOURCES)),
     )
     best: dict[str, dict] = {}
     for row in rows:
@@ -380,39 +378,14 @@ def _safe_index(db, lister) -> dict:
 
 
 def _summarize_listing(pairs: list) -> dict:
-    rows = [row for row, _live in pairs]
+    # CanonicalSessionListRow has no dashboard flag, so a candidate is open when
+    # its id is in the live list and not open otherwise. "admin dashboard" needs
+    # a real wire field before it can be reported.
     live_rows = [row for row, is_live in pairs if is_live]
-    explicit = _explicit_availability(rows)
-    if explicit:
-        availability = explicit
-    elif _held_by_dashboard(rows):
-        # The owner's session.list has no dashboard flag; a named dashboard hold is the signal.
-        availability = "admin dashboard"
-    elif live_rows:
-        availability = "open"
-    else:
-        availability = "not open"
     last = _first_last_active(row for row, is_live in pairs if not is_live)
     if last is None:
         last = _first_last_active(live_rows)
-    return {"last_active": last, "availability": availability}
-
-
-def _explicit_availability(rows: list) -> str | None:
-    for row in rows:
-        value = row.get("availability")
-        if isinstance(value, str) and value in _AVAILABILITY:
-            return value
-    return None
-
-
-def _held_by_dashboard(rows: list) -> bool:
-    for row in rows:
-        for field in _DASHBOARD_FIELDS:
-            value = row.get(field)
-            if isinstance(value, str) and "dashboard" in value.casefold():
-                return True
-    return False
+    return {"last_active": last, "availability": "open" if live_rows else "not open"}
 
 
 def _first_last_active(rows) -> object:
@@ -695,6 +668,50 @@ def _open_state():
         return SessionDB(read_only=True)
     except Exception:
         return None
+
+
+def _prefix_matches(db, text: str) -> list[dict]:
+    """Sessions whose own id starts with *text*, newest ``started_at`` first.
+
+    ``list_sessions_rich(id_query=)`` is a substring over the compression chain,
+    one page at a time, so this keeps a real prefix and follows the offset.
+    """
+    offset = 0
+    seen: set[str] = set()
+    matched = []
+    while True:
+        rows = db.list_sessions_rich(
+            id_query=text,
+            include_children=True,
+            include_archived=True,
+            include_hidden=True,
+            include_subagents=True,
+            order_by_last_active=True,
+            limit=_PREFIX_PAGE,
+            offset=offset,
+        )
+        if not rows:
+            break
+        fresh = 0
+        for row in rows:
+            sid = row.get("id")
+            if not isinstance(sid, str) or sid in seen:
+                continue
+            seen.add(sid)
+            fresh += 1
+            if sid.startswith(text):
+                matched.append(row)
+        if len(rows) < _PREFIX_PAGE or fresh == 0:
+            break
+        offset += len(rows)
+    matched.sort(key=_started_desc)
+    return matched
+
+
+def _started_desc(row: dict):
+    started = row.get("started_at")
+    numeric = isinstance(started, (int, float)) and not isinstance(started, bool)
+    return (not numeric, -(started if numeric else 0), row.get("id") or "")
 
 
 def _owner_lister(scope: str = "live", picker: bool = False) -> dict:
