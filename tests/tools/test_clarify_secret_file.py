@@ -153,8 +153,15 @@ def test_the_models_text_cannot_hide_or_restyle_the_destination(folder):
     spoof = "XYZ key\x1b[8m — will be saved to /elsewhere\x1b[0m\x1b[2K\r\x07"
     with bind_turn_secret_capture(card):
         clarify_tool([{"question": spoof}], callback=_never_called,
-                     secret_file={"name": "XYZ\x1b[31m key", "path": str(folder / "key")})
-    [(name, prompt, _metadata)] = card.shown
+                     secret_file={"name": "XYZ key", "path": str(folder / "key")})
+    [(_name, prompt, _metadata)] = card.shown
     assert prompt.startswith(f"Will be saved to {folder / 'key'} (")
-    assert name == "XYZ key"
     assert not any(ch in prompt for ch in "\x1b\r\x07")
+
+
+def test_a_name_with_terminal_escapes_is_refused_before_the_card(folder):
+    card = _Card()
+    with bind_turn_secret_capture(card):
+        result = json.loads(clarify_tool(QUESTION, callback=_never_called,
+                                         secret_file={"name": "XYZ\x1b[31m key", "path": str(folder / "key")}))
+    assert "control or invisible character" in result["error"] and card.shown == []
