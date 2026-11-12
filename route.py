@@ -27,8 +27,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import secrets
 import time
+
+logger = logging.getLogger(__name__)
 
 try:
     from . import address, client, frame, record, scope
@@ -174,7 +177,7 @@ def injection_allowed() -> bool:
         from hermes_cli.config import load_config_readonly
 
         config = load_config_readonly()
-    except Exception:
+    except Exception:  # health: allow BLE001 -- a config failure leaves injection off
         return False
     plugins = config.get("plugins") if isinstance(config, dict) else None
     entries = plugins.get("entries") if isinstance(plugins, dict) else None
@@ -275,7 +278,7 @@ def _open_state():
         from hermes_state import SessionDB
 
         return SessionDB(read_only=True)
-    except Exception:
+    except Exception:  # health: allow BLE001 -- state unreadable means the sender stays unknown
         return None
 
 
@@ -287,7 +290,7 @@ def _facts(session_id) -> dict:
         return facts
     try:
         row = db.get_session(session_id) or {}
-    except Exception:
+    except Exception:  # health: allow BLE001 -- a session-row miss leaves the sender unknown
         row = {}
     finally:
         db.close()
@@ -319,8 +322,8 @@ def _lineage_tips(session_id) -> set:
         tip = db.get_compression_tip(session_id)
         if tip:
             ids.add(tip)
-    except Exception:
-        pass
+    except Exception:  # health: allow BLE001 -- a lineage miss still treats this session as its own
+        logger.debug("intercom compression tip was not read")
     finally:
         db.close()
     return ids
@@ -330,7 +333,7 @@ def _is_live(target, lister) -> bool:
     """Whether the owner had *target* open before delivery (only for the started sentence)."""
     try:
         listing = (lister or client.list_sessions)("live", picker=False)
-    except Exception:
+    except Exception:  # health: allow BLE001 -- an unknown listing still uses the started sentence
         return True
     if not isinstance(listing, dict) or listing.get("ok") is not True:
         return True
@@ -344,7 +347,7 @@ def _is_live(target, lister) -> bool:
         return False
     try:
         return any(db.get_compression_tip(value) == target for value in ids)
-    except Exception:
+    except Exception:  # health: allow BLE001 -- a tip lookup miss is not counted as live
         return False
     finally:
         db.close()

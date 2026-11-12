@@ -37,7 +37,7 @@ def chat_scope(session_id: str, ctx) -> str | None:
     """The chat scope of stored session *session_id*, with *ctx*'s settings read now."""
     try:
         row = _read_row(session_id)
-    except Exception as exc:
+    except Exception as exc:  # health: allow BLE001 -- fail closed to shared; log the type only
         logger.warning("intercom: chat scope read failed (%s); treating the chat as shared",
                        type(exc).__name__)
         return SHARED
@@ -48,13 +48,13 @@ def chat_scope(session_id: str, ctx) -> str | None:
         return None
     try:
         origin = _origin(row)
-    except Exception:
+    except (ValueError, TypeError, KeyError, AttributeError):
         return SHARED  # a corrupt origin_json is no origin
     if origin is None:
         return SHARED
     try:
         return rule(*origin, ctx=ctx)
-    except Exception as exc:
+    except Exception as exc:  # health: allow BLE001 -- fail closed to shared; log the type only
         logger.warning("intercom: chat scope settings read failed (%s); treating the chat as shared",
                        type(exc).__name__)
         return SHARED

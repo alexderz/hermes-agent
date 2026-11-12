@@ -98,7 +98,7 @@ def _run(fn, *args, **kwargs):
     def body():
         try:
             box["value"] = asyncio.run(fn(*args, **kwargs))
-        except BaseException as exc:  # handed back to the calling thread
+        except BaseException as exc:  # health: allow BLE001 -- the worker hands this to the caller, which re-raises it
             box["error"] = exc
 
     thread = threading.Thread(target=contextvars.copy_context().run, args=(body,),
@@ -133,7 +133,7 @@ def _discover():
 
     try:
         found = discover_gateway_endpoint(get_hermes_home(), timeout=_DISCOVERY_TIMEOUT)
-    except Exception as exc:
+    except Exception as exc:  # health: allow BLE001 -- discovery failure is a not-reachable result
         return None, _failure("not-reachable", exc)
     if getattr(found, "state", None) in ("starting", "draining"):
         return None, _failure("owner-restarting")
@@ -157,7 +157,7 @@ async def _read(method, project, **params):
     except GatewayRPCError as exc:
         if result is None:
             result = _refusal(exc)
-    except Exception as exc:
+    except Exception as exc:  # health: allow BLE001 -- a lost read is a not-reachable result
         if result is None:
             result = _failure("not-reachable", exc)
     return result
@@ -178,7 +178,7 @@ async def _deliver(target, text, delivery, sub_id):
     except GatewayRPCError as exc:
         if result is None:
             result = _refusal(exc)
-    except Exception as exc:
+    except Exception as exc:  # health: allow BLE001 -- an in-flight loss stays delivery-unknown
         # In doubt only while a steer, redirect or submit is out without an answer.
         if result is None:
             result = _failure("delivery-unknown" if owner.in_flight else "not-reachable", exc)
