@@ -19,7 +19,7 @@ Human gate: operator accepts, or writes `UX verification not required`.
 
   | Variant | File | Header line 1 for the example mail |
   |---|---|---|
-  | **A — "Not Alex" first** (`ux.md`'s order and the LLD's final shape) | [`variant-a-not-alex-first.html`](variant-a-not-alex-first.html) | `📡 Not Alex · reply expected · hermes@Hermes Improvement — Orchestrator says (session 20261109_071203_a1b2 · message 3f2a9c):` |
+  | **A — "Not Alex" first** (`ux.md`'s order and the LLD's final shape) | [`variant-a-not-alex-first.html`](variant-a-not-alex-first.html) | `📡 Not Alex · reply requested · hermes@Hermes Improvement — Orchestrator says (session 20261109_071203_a1b2 · message 3f2a9c):` |
   | **B — sender first** (intercom's own order) | [`variant-b-sender-first.html`](variant-b-sender-first.html) | `📡 hermes@Hermes Improvement — Orchestrator (session 20261109_071203_a1b2, not Alex) says · reply expected · message 3f2a9c:` |
   | **C — two-line card** | [`variant-c-two-line-card.html`](variant-c-two-line-card.html) | `📡 Not Alex · hermes@Hermes Improvement — Orchestrator says:` then `reply expected · message 3f2a9c · session 20261109_071203_a1b2` |
 
@@ -35,7 +35,7 @@ Human gate: operator accepts, or writes `UX verification not required`.
   1. "Hermes Improvement — Orchestrator" steers mail 3f2a9c into Alex's running turn with "Budgeting — Orchestrator".
   2. Budgeting's answer to Alex carries a `[REPLY 3f2a9c]` block.
   3. The block arrives back in Hermes Improvement as mail 8e41b0, labelled "reply optional".
-  4. Hermes Improvement's answer ends `[REPLY 8e41b0][SILENT][/REPLY]`, so nothing is sent.
+  4. Hermes Improvement's answer writes no `[REPLY 8e41b0]` block, so nothing is sent: a reply goes back only from an explicit block (reply modes, 2026-11-11). Layouts B and C still show the earlier `[REPLY 8e41b0][SILENT][/REPLY]` ending.
   5. Later, Hermes Improvement sends with `delivery="interrupt"` (5b77e1):
      - the header says `interrupt asked`;
      - the receipt says `interrupted` (redirect);
@@ -70,13 +70,13 @@ What each header order does on the surfaces where it matters most.
 
 | Check | A — "Not Alex" first | B — sender first | C — two-line card |
 |---|---|---|---|
-| **Phone, first wrapped line** (the Webapp in a phone browser; about 34 characters at 340 px) | `📡 Not Alex · reply expected ·`, or `📡 Not Alex · interrupt asked ·` for an interrupt: the glance words, for any title | `📡 hermes@Hermes Improvement —`: "not Alex" and the reply label come 3–4 lines later, after the session id | `📡 Not Alex · hermes@Hermes`: "Not Alex" yes; the reply label is on the card's second line, after the title wraps |
-| **Classic CLI's 80-character notice** (`⏩ Steered: '…'`, `↪ Redirected current turn: '…'`) | `📡 Not Alex · reply expected · hermes@Hermes Improvement — Orchestrator says (ses...`: complete glance words on one line | `📡 hermes@Hermes Improvement — Orchestrator (session 20261109_071203_a1b2, not Al...`: **"not Alex" is cut off**, and the reply label never shows | `📡 Not Alex · hermes@Hermes Improvement — Orchestrator says:` then, on a **second terminal line**, `reply expected · mes...`: "Not Alex" and the reply label both show, but across two lines, because the preview holds the header's line break |
+| **Phone, first wrapped line** (the Webapp in a phone browser; about 34 characters at 340 px) | `📡 Not Alex · reply requested ·`, or `📡 Not Alex · interrupt asked ·` for an interrupt: the glance words, for any title | `📡 hermes@Hermes Improvement —`: "not Alex" and the reply label come 3–4 lines later, after the session id | `📡 Not Alex · hermes@Hermes`: "Not Alex" yes; the reply label is on the card's second line, after the title wraps |
+| **Classic CLI's 80-character notice** (`⏩ Steered: '…'`, `↪ Redirected current turn: '…'`) | `📡 Not Alex · reply requested · hermes@Hermes Improvement — Orchestrator says (ses...`: complete glance words on one line | `📡 hermes@Hermes Improvement — Orchestrator (session 20261109_071203_a1b2, not Al...`: **"not Alex" is cut off**, and the reply label never shows | `📡 Not Alex · hermes@Hermes Improvement — Orchestrator says:` then, on a **second terminal line**, `reply expected · mes...`: "Not Alex" and the reply label both show, but across two lines, because the preview holds the header's line break |
 | **Telegram post** (listed chats only) | One line, glance words first | One line; "not Alex" buried in brackets | Two lines; the clearest card to read in a chat |
 | **Model reading it** | Clear | Clear (intercom's familiar order) | Clear |
 | **Reply matcher and `status` anchor** (LLD B6/D3) | One line: starts `📡 Not Alex · `, ends `· message <id>):`. This is the LLD's final shape | One line: starts `📡 hermes@` | **Two lines**: the id is on the line after the anchor, so the matcher and the `status` check must read two lines |
 | **Closeness to intercom upstream** | Keeps `hermes@<title> says`, after the glance words | Closest | Keeps `hermes@<title> says`, then a new second line |
-| **"interrupt asked"** (48 characters with the reply label) | `📡 Not Alex · interrupt asked · reply expected ·`: one or two phone lines, before the title | `… says · interrupt asked · reply expected · message 5b77e1:`, at the end of a long line | On the second card line, after the title |
+| **"interrupt asked"** (49 characters with the reply label) | `📡 Not Alex · interrupt asked · reply requested ·`: one or two phone lines, before the title | `… says · interrupt asked · reply expected · message 5b77e1:`, at the end of a long line | On the second card line, after the title |
 | **Changes the accepted `ux.md`?** | No (only the LLD wording changes listed below, which apply to all three) | Yes: header order, F10, `status` anchor, sm-05 | Yes: as B, plus a two-line matcher |
 
 ## Recommendation: A
@@ -135,6 +135,19 @@ Alex settled **SM-Q20 (gateway only)** and **SM-Q22 (Hermes Mobile dropped)**. H
 | 20 | **Steered echo fixed in the LLD** (row 17). | § "Messaging-gateway sessions": "for a steered message just before the model's next request reads it … A steer that arrives after the turn's last request becomes the next turn, and is echoed as that turn begins. Each message is echoed once."; "For the architect": GW-4 removed, one item left (bare `[SILENT]` in a messaging chat) | sm-20: two Done-whens | Telegram note |
 | 21 | **The expand gesture, from the real code** (GW2-1, `user-message.tsx`). Phone: the expand chevron ⌄ under the row (a tap on the row does not expand). Desktop: a click opens the edit composer; leave with Esc, because sending an edit rewinds the turn. | § "The Webapp in a phone browser" (clamp bullet; the joined-row note); § "Desktop app"; F10 | sm-08 (two Done-whens) | Caption "after Alex taps ⌄", an "⌄ expand · ✎ edit" line under the clamped row, the "What to look at" note; this README's builder note |
 | 22 | **sm-15's leftover status advice** (GW2-2). | — | sm-15: "`status` shows the owner's admission (`admitted: …` / `not admitted`) or, for a steered message, whether its header is in the target's transcript, as in `ux.md`." | — |
+
+### Reply modes (2026-11-11): `reply: none | requested | waiting`, ids for follow-ups
+
+Decided by the manager on Alex's "you decide" (`prompts/reply-modes-spec.md`): fewer tokens, no acknowledgement traffic, and a definitive way to address sessions. The architect updates `lld.md` in parallel. Layout A only.
+
+| # | Change | `ux.md` edits | Story edits | Layout A mockup |
+|---|---|---|---|---|
+| 23 | **`reply` replaces `expect_reply`**, required on `send` with no default. Labels: `no reply needed` (`none`), `reply requested`, `waiting on your reply` (`waiting`); `ask` now reads `waiting on your reply (ask)`. | Parameters table (`reply`; and `include_runs`, `query`, `limit` for `list`); tool description (rewritten, shorter: 273 words, was 300; the catalog sentence and Alex's interrupt sentence unchanged); § "Header" (labels; examples now `reply requested`; glance lengths 30–49, 61 for an interrupting `ask`); § "Accessibility"; SM-Q8 decision line; J1 step 1 (`reply="requested"`), J8, J12 (ask label), F12; the sm-13 row of the stories table; "Differences"; Open questions U2 (settled), SM-Q8 and SM-Q16 rows; "Still to check" (CLI previews) | sm-01 (parameters), sm-05 (labels, footer kinds), sm-08 (label), sm-13 (rewritten), sm-14, sm-21 (label; "use `ask` only when blocked") | Every header and CLI preview reads `reply requested`; the tool rows show `reply requested` |
+| 24 | **`none` sends nothing back**: no block capture, no whole-answer fallback (closes the gap where a `none` note steered into a busy turn mailed back that turn's whole answer). Footer lines 1–5 become "No reply is needed and none will be sent. If something here is wrong or blocks you, send a new message with the intercom tool." | § "Footer" variants (new `none` row); "What sends nothing"; "Several messages in one turn"; receipts (`reply: none` row); J3 | sm-06, sm-07 (the `none` footer carries no `[SILENT]`), sm-13 | New "States" frame: a one-way note from a script, expanded |
+| 25 | **`waiting`**: captured like `requested`; the footer adds "The sender cannot go on until you answer: answer this first, briefly."; the sender's call does not block. | § "Footer" variants (new `waiting` row); receipts (`reply: waiting` row); tool description | sm-13 | — |
+| 26 | **Replies (`reply optional`) go back only from an explicit `[REPLY <id>]` block**, never from the whole answer, so nothing loops back by default; debates continue through blocks. | § "Footer" variants (reply row: lines 2 and 5); J1 step 6 (no `[SILENT]` block needed), J2 (rewritten); "What sends nothing" | sm-06, sm-07 | Reply mails (8e41b0, c41d77) carry the reply footer; step 4 writes no block |
+| 27 | **CLI `--reply none\|requested\|waiting`, default `none`**, replacing `--no-reply`. | § "Command line" (usage, `send` bullet, exit code 2); J3 (no flag needed) | sm-11 | — |
+| 28 | **Discovery and ids**: `list` gives id, title, project, last active and state (`running` / `idle` / `closed`), newest 30 first, runs only with `include_runs`, `query` filters; every receipt carries the target's session id; the description says to use ids for follow-ups. | Parameters; the `list` note under the description; receipts intro; § "Command line" `list` (flags and a sample); J1 step 2 | sm-01, sm-02, sm-12 | — |
 
 ## Notes for the builder
 

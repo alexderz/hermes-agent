@@ -13,6 +13,6 @@
   - [ ] A reply to a sender whose source is `cron`, `subagent` or `oneshot` is stored and starts, steers or queues nothing, whatever its end reason.
   - [ ] A reply to a `cli` owner session whose terminal was closed wakes it (the gateway reopens it); a reply to a Telegram sender is delivered into its topic.
   - [ ] The message such a sender sends carries the footer variant "stored in the record for session "<title>", a <source>. It wakes no one", naming the one source that applies; its receipt says the same.
-  - [ ] Its header line 1 still says `reply expected` (deliberately: the answer is read later from the record).
+  - [ ] Its header line 1 still shows the sender's reply mode, for example `reply requested` (deliberately: the answer is read later from the record).
   - [ ] `status` shows the stored reply.
 - **Out of scope** — telling desktop subagent windows (source `desktop`) apart.
