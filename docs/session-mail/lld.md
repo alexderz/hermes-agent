@@ -225,9 +225,7 @@ turn's answer is then posted to that person, as Alex could do from the Webapp.
   and a new core function would break "listings only".
 - **Mitigations:** the chat rule makes such a chat `shared` (unless Alex listed it), so the body
   carries the shared-chat line, and no echo is posted.
-- **For Alex to accept with the LLD** (HLD O23). If he does not, the smallest change is a thin,
-  read-only core predicate plus its listing. That is a small core addition, not a behaviour change
-  to any host.
+- **Accepted by Alex** (SM-Q23 (a), 2026-11-11; HLD O23). No core predicate.
 
 #### B3. Addressing (`address.py`)
 
