@@ -78,6 +78,7 @@ describe('SecretDialog file destination', () => {
     expect(block.textContent).toContain('Mode 0640, owner hermes:devs')
     expect(block.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(input.getAttribute('type')).toBe('password')
+    expect(input.getAttribute('autocomplete')).toBe('off') // no offer to save it as a site password
 
     fireEvent.change(input, { target: { value: 'dummy-value' } })
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
