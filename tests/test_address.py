@@ -207,7 +207,7 @@ class AddressTests(unittest.TestCase):
         stored = [
             {"id": ids[0], "title": "Ambiguous 0", "last_active_at": 111.0, "running": True},
             {"id": ids[1], "title": "Ambiguous 1", "last_active_at": 50.0, "running": False},
-            {"id": ids[2], "title": "Ambiguous 2", "last_active_at": 40.0, "held_by": "admin dashboard"},
+            {"id": ids[2], "title": "Ambiguous 2", "last_active_at": 40.0},
             {"id": ids[3], "title": "Ambiguous 3", "last_active_at": 30.0},
             {"id": ids[4], "title": "Ambiguous 4", "last_active_at": 20.0},
             {"id": ids[5], "title": "Ambiguous 5", "last_active_at": 10.0, "running": True},
@@ -223,7 +223,6 @@ class AddressTests(unittest.TestCase):
         self.assertEqual(first["availability"], "open")
         self.assertEqual(first["last_active"], 111.0)
         self.assertEqual(second["availability"], "not open")
-        # held_by is not a session.list field, so a stored-only row stays not open.
         self.assertEqual(third["availability"], "not open")
         self.assertEqual(calls, [("stored", True), ("live", False)])
         for item in result["candidates"]:
@@ -287,6 +286,24 @@ class AddressTests(unittest.TestCase):
         self.assertEqual(empty["error"], "unknown")
         self.assertEqual(address.resolve(None, lister=_raising_lister)["error"], "unknown")
         self.assertEqual(address.resolve(12, lister=_raising_lister)["error"], "unknown")
+
+    def test_closest_titles_page_the_published_listing(self):
+        self.open_writer()
+        for index in range(address._PREFIX_PAGE):
+            self.add_session(f"local-fill-{index}", title=f"xxxx {index}", started_at=1000 + index)
+        self.add_session("local-old", title="Budgeting notes", started_at=1)
+        self.add_session("local-hidden", title="Budgeting hidden", started_at=2)
+        self.db.set_session_hidden("local-hidden", True)
+        self.add_session("local-archived", title="Budgeting archived", started_at=3)
+        self.db.set_session_archived("local-archived", True, notify=False)
+        self.add_session("local-cron", title="Budgeting cron", source="cron", started_at=4)
+        self.close_writer()
+        result = address.resolve("Budgeting", lister=_quiet_lister())
+        self.assertEqual(result["error"], "unknown")
+        self.assertEqual(
+            [item["id"] for item in result["candidates"]],
+            ["local-cron", "local-old", "local-hidden", "local-archived"],
+        )
 
     def test_closest_titles_cap_at_five(self):
         self.open_writer()
