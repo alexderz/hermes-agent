@@ -146,6 +146,20 @@ LINK_SAMPLE = (
     "<@123456> <@!123> <!everyone> <#123>"
 )
 
+# The link shape Telegram's to_markdown_v2 and Slack's format_message render.
+# A label may contain '(', which is why this is not `\[[^\]]+\]\([^)]+\)`.
+_FORMATTER_MD_LINK = re.compile(r"\[([^\]]+)\]\(([^()]*(?:\([^()]*\)[^()]*)*)\)")
+_FORMATTER_SLACK_PIPE = re.compile(
+    r"<(?:https?|mailto|tel):[^|>\n]*\|[^>\n]+>",
+    re.IGNORECASE,
+)
+_NESTED_LINKS = (
+    "[[x](https://e)](https://f)",
+    "[a [b](https://evil.example)](https://evil2.example)",
+    "<https://f.example|<https://e.example|hidden label>>",
+    '<a href="https://f.example"><a href="https://e.example">nested click</a></a>',
+)
+
 
 def load_frame():
     spec = importlib.util.spec_from_file_location(MODULE_NAME, PACKAGE_DIR / "frame.py")
@@ -753,19 +767,45 @@ class EscaperTests(unittest.TestCase):
         self.assertIn("<\u200b@123456>", plain)
         self.assertNotIn("\\", plain)
 
+    def test_nested_links_do_not_render_on_any_platform(self):
+        from plugins.platforms.slack.adapter import SlackAdapter
+        from plugins.platforms.telegram.telegram_markdown import to_markdown_v2
+
+        deep = "hidden"
+        for i in range(24):
+            deep = f"[{deep}](https://evil.example/{i})"
+        samples = (*_NESTED_LINKS, deep)
+        for platform, escaper in FRAME.ECHO_ESCAPERS.items():
+            for sample in samples:
+                out = escaper(sample)
+                self._assert_no_rendered_link(out, platform)
+                # What the adapter actually sends.
+                self._assert_no_rendered_link(to_markdown_v2(out), platform + " markdownv2")
+                slack = SlackAdapter.format_message(object(), out)
+                self._assert_no_rendered_link(slack, platform + " slack")
+                self.assertIsNone(re.search(r"(?<!\\)\]\(", to_markdown_v2(out)), platform)
+        peeled = FRAME.escape_discord("[[x](https://e.example)](https://f.example)")
+        self.assertEqual(peeled, "x (https://e.example) (https://f.example)")
+        html_out = FRAME.escape_telegram(_NESTED_LINKS[0], mode="HTML")
+        self._assert_no_rendered_link(html_out, "telegram-html")
+        self.assertIn("x (https://e)", html_out)
+        self.assertIn("https://f", html_out)
+
+    def _assert_no_rendered_link(self, out, platform):
+        self.assertIsNone(_FORMATTER_MD_LINK.search(out), (platform, out))
+        self.assertIsNone(_FORMATTER_SLACK_PIPE.search(out), (platform, out))
+        self.assertNotIn("](", out)
+
     def _assert_inert(self, out, platform):
-        self.assertIsNone(
-            re.search(r"\[[^\]]+\]\([^)]+\)", out),
-            platform,
-        )
+        self._assert_no_rendered_link(out, platform)
         self.assertIsNone(
             re.search(r"@(?:everyone|here)\b", out, re.IGNORECASE),
             platform,
         )
         self.assertIsNone(re.search(r"<(?:@|!|#)", out), platform)
-        self.assertIn("the docs", out)
-        self.assertIn("click here", out)
-        self.assertIn("innocent text", out)
+        self.assertIn("the docs (https://evil.example/phish)", out)
+        self.assertIn("click here (https://evil.example/phish)", out)
+        self.assertIn("innocent text (https://evil.example/phish)", out)
         self.assertIn("@\u200beveryone", out)
         self.assertIn("@\u200bhere", out)
         self.assertIn("@\u200bEveryone", out)
