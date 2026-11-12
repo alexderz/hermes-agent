@@ -3,6 +3,7 @@
 
 The same file is the public list ``hermes plugins validate`` checks plugin imports against, so the
 page and the warning cannot drift. ``--check`` writes nothing and exits 1 when the page is stale.
+The prose after the table is ``gen_plugin_api_docs_footer.md``, appended verbatim.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "hermes_cli" / "data" / "plugin_api.json"
+FOOTER = Path(__file__).with_name("gen_plugin_api_docs_footer.md")
 OUT = ROOT / "website" / "docs" / "developer-guide" / "plugins" / "public-api.md"
 
 HEADER = """---
@@ -46,7 +48,7 @@ def render() -> str:
         for entry in group["entries"]:
             module, _, name = entry.partition(":")
             rows.append(f"| `{module}` | {f'`{name}`' if name else 'whole module'} | {group['source']} |")
-    return HEADER + "\n".join(rows) + "\n"
+    return HEADER + "\n".join(rows) + "\n\n" + FOOTER.read_text(encoding="utf-8-sig")
 
 
 def check(out: Path = OUT) -> int:
