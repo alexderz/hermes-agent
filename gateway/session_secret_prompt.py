@@ -7,7 +7,9 @@ On the session authority the skill runs in the gateway, where a gateway surface 
 "secret entry is not available" hint. For a local viewer's turn the owner now sends main's ``secret``
 server→client request (``tui_gateway/contracts/server_requests.py``: ``SecretRequestParams`` →
 ``ValueResult``) to the attached viewers, saves a non-empty answer in this profile's ``.env`` here,
-and returns main's callback result. The value travels only in the viewer's response frame.
+and returns main's callback result. The value travels only in the viewer's response frame. A request
+whose metadata names a file destination (``clarify(secret_file=...)``) is saved to that file by
+``agent/secret_file_writer.py`` instead, never to ``.env``.
 """
 from __future__ import annotations
 
@@ -47,9 +49,13 @@ def secret_prompt_scope(turn, agent):
                            wait_for_viewer=wait)
         if not value:
             return _skipped(var_name, "cancelled", "Secret setup was skipped.")
+        from agent.secret_file_writer import destination_of, secret_file_answer
+        if (destination := destination_of(metadata)) is not None:  # clarify(secret_file=...)
+            return secret_file_answer(destination, value)
         from hermes_cli.config import save_env_value_secure
         return {**save_env_value_secure(var_name, value), "skipped": False,
                 "message": "Secret stored securely. The secret value was not exposed to the model."}
 
+    callback.accepts_secret_file = True
     with bind_turn_secret_capture(callback):
         yield
