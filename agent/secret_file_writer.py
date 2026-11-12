@@ -4,10 +4,11 @@ Two halves. ``plan_secret_file`` runs before the card is shown: it resolves the 
 with a reason naming this process's user and groups, any request the write could not fulfil, so the
 user never types a value into a card that cannot be saved. ``write_secret_file`` runs in the surface's
 secret callback with the typed value: it walks to the folder one component at a time without
-following a symlink, creates an owner-only temp file there, sets its group and mode on the
+following a symlink, creates an owner-only anonymous file there (``O_TMPFILE``; a named temp file
+where the filesystem has none), sets its group and mode and drops any inherited access ACL on the
 descriptor, writes and syncs it, then hard-links it to the target name, which fails if anything
-appeared there meanwhile (never an overwrite, even in a race). The value is then registered for
-exact-value redaction and the caller drops it.
+appeared there meanwhile (never an overwrite, even in a race), and checks the name is that very
+file. The value is then registered for exact-value redaction and the caller drops it.
 
 A surface's secret callback opts in by setting ``accepts_secret_file = True`` on itself and calling
 ``secret_file_answer`` when ``destination_of(metadata)`` is a file; the tool refuses before the card
@@ -196,24 +197,53 @@ def _fail(exc: OSError, what: str) -> SecretFileError:
     return SecretFileError(f"Could not save the secret ({what}): {exc.strerror}; {_identity()}.")
 
 
-def _fill_temp(dfd: int, tmp: str, data: bytes, gid: int, mode: int) -> os.stat_result:
-    """Create the temp file *tmp* holding *data*, group and mode set on the descriptor before any byte;
-    on any failure after creating it, remove it."""
-    fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=dfd)
+def _create(dfd: int, leaf: str) -> tuple[int, str | None]:
+    """A new owner-only file in the folder: ``(fd, None)`` for an anonymous ``O_TMPFILE`` (Linux; nothing
+    in the folder carries the value until it is linked to its name), else ``(fd, temp name)``."""
+    import errno
+    tmpfile = getattr(os, "O_TMPFILE", 0)
+    if tmpfile:
+        try:
+            return os.open(".", tmpfile | os.O_WRONLY | os.O_CLOEXEC, 0o600, dir_fd=dfd), None
+        except OSError as exc:
+            if exc.errno not in (errno.EOPNOTSUPP, errno.EISDIR, errno.EINVAL):  # no O_TMPFILE here
+                raise
+    tmp = f".{leaf}.{_secrets.token_hex(6)}.tmp"
+    return os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600,
+                   dir_fd=dfd), tmp
+
+
+def _fill(fd: int, data: bytes, gid: int, mode: int) -> os.stat_result:
+    """Group, mode and ACL set on the descriptor before any byte, then *data*, synced."""
+    os.fchown(fd, -1, gid)  # also for private: in a setgid folder the card's group stays the file's group
+    os.fchmod(fd, mode)
+    _drop_access_acl(fd)
+    view = memoryview(data)
+    while view:
+        view = view[os.write(fd, view):]
+    os.fsync(fd)
+    return os.fstat(fd)
+
+
+def _link(fd: int, tmp: str | None, leaf: str, dfd: int) -> None:
+    """Give the written file its name; ``EEXIST`` if anything is there (never replaces)."""
+    if tmp is None:
+        os.link(f"/proc/self/fd/{fd}", leaf, dst_dir_fd=dfd, follow_symlinks=True)
+    else:
+        os.link(tmp, leaf, src_dir_fd=dfd, dst_dir_fd=dfd, follow_symlinks=False)
+
+
+def _check_linked(dfd: int, leaf: str, written: os.stat_result, path: str) -> None:
+    """The name must now be the file this call wrote: in a folder others can write, a temp name could be
+    swapped for their file before the link, or the name replaced right after it."""
     try:
-        os.fchown(fd, -1, gid)  # also for private: in a setgid folder the card's group stays the file's group
-        os.fchmod(fd, mode)
-        _drop_access_acl(fd)
-        view = memoryview(data)
-        while view:
-            view = view[os.write(fd, view):]
-        os.fsync(fd)
-        return os.fstat(fd)
-    except BaseException:
-        _remove_quietly(tmp, dfd)
-        raise
-    finally:
-        os.close(fd)
+        st = os.stat(leaf, dir_fd=dfd, follow_symlinks=False)
+    except OSError:
+        st = None
+    if st is None or (st.st_dev, st.st_ino) != (written.st_dev, written.st_ino):
+        raise SecretFileError(f"The file now at {path} is not the one Hermes wrote: something in that folder "
+                              f"replaced it while saving. Do not use it; check the folder, delete it and ask "
+                              f"again.")
 
 
 def _drop_access_acl(fd: int) -> None:
@@ -247,22 +277,29 @@ def write_secret_file(destination: dict, value: str) -> dict:
         raise SecretFileError("The secret file request is malformed; nothing was written.")
     data = value.rstrip("\r\n").encode("utf-8")
     parent, leaf = os.path.split(path)
-    tmp = f".{leaf}.{_secrets.token_hex(6)}.tmp"
     try:
         dfd, syncable = _open_parent(parent)
     except OSError as exc:
         raise _fail(exc, f"opening the folder {parent}") from None
     try:
         try:
-            st = _fill_temp(dfd, tmp, data, gid, mode)
+            fd, tmp = _create(dfd, leaf)
         except OSError as exc:
-            raise _fail(exc, f"writing a temporary file in {parent}") from None
+            raise _fail(exc, f"creating a file in {parent}") from None
         try:
-            os.link(tmp, leaf, src_dir_fd=dfd, dst_dir_fd=dfd, follow_symlinks=False)  # EEXIST: never replaces
-        except OSError as exc:
-            raise _fail(exc, f"naming the file {path}") from None
+            try:
+                st = _fill(fd, data, gid, mode)
+            except OSError as exc:
+                raise _fail(exc, f"writing a file in {parent}") from None
+            try:
+                _link(fd, tmp, leaf, dfd)
+            except OSError as exc:
+                raise _fail(exc, f"naming the file {path}") from None
+            _check_linked(dfd, leaf, st, path)
         finally:
-            _remove_quietly(tmp, dfd)
+            os.close(fd)
+            if tmp is not None:
+                _remove_quietly(tmp, dfd)
         if syncable:
             os.fsync(dfd)
     finally:

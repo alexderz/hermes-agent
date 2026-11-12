@@ -179,3 +179,67 @@ def test_control_and_invisible_characters_are_refused(folder, field, value):
     with pytest.raises(SecretFileError, match=f"secret_file.{field} contains a control or invisible character"):
         plan_secret_file(spec, base_dir=None)
     assert os.listdir(folder) == []
+
+
+def _no_tmpfile(monkeypatch):
+    """The filesystem refuses O_TMPFILE: the writer falls back to a named temp file."""
+    import errno
+    real_open = os.open
+
+    def open_(path, flags, *args, **kwargs):
+        if getattr(os, "O_TMPFILE", 0) and flags & os.O_TMPFILE == os.O_TMPFILE:
+            raise OSError(errno.EOPNOTSUPP, "Operation not supported")
+        return real_open(path, flags, *args, **kwargs)
+    monkeypatch.setattr(os, "open", open_)
+
+
+def _at_link(monkeypatch, before=None, after=None):
+    real_link = os.link
+
+    def link(*args, **kwargs):
+        if before:
+            before()
+        real_link(*args, **kwargs)
+        if after:
+            after()
+    monkeypatch.setattr(os, "link", link)
+
+
+@pytest.mark.skipif(not getattr(os, "O_TMPFILE", 0), reason="O_TMPFILE is Linux-only")
+def test_nothing_in_the_folder_holds_the_value_before_its_name_exists(folder, monkeypatch):
+    dest = plan_secret_file({"name": "k", "path": str(folder / "key")}, base_dir=None)
+    seen = []
+    _at_link(monkeypatch, before=lambda: seen.append(os.listdir(folder)))
+    write_secret_file(dest, DUMMY)
+    assert seen == [[]]  # no temp name a crash could leave behind
+    assert (folder / "key").read_text(encoding="utf-8") == DUMMY and os.listdir(folder) == ["key"]
+
+
+def test_without_o_tmpfile_a_named_temp_file_is_used_and_removed(folder, monkeypatch):
+    _no_tmpfile(monkeypatch)
+    dest = plan_secret_file({"name": "k", "path": str(folder / "key")}, base_dir=None)
+    seen = []
+    _at_link(monkeypatch, before=lambda: seen.append(_leftovers(folder)))
+    write_secret_file(dest, DUMMY)
+    assert len(seen[0]) == 1 and os.listdir(folder) == ["key"]
+
+
+def test_a_temp_file_swapped_before_the_link_is_not_reported_as_saved(folder, monkeypatch):
+    _no_tmpfile(monkeypatch)
+    dest = plan_secret_file({"name": "k", "path": str(folder / "key")}, base_dir=None)
+
+    def swap():  # another writer of the folder renames the temp file away and plants their own
+        [tmp] = _leftovers(folder)
+        (folder / tmp).rename(folder.parent / "taken")
+        (folder / tmp).write_text("theirs", encoding="utf-8")
+    _at_link(monkeypatch, before=swap)
+    with pytest.raises(SecretFileError, match="not the one Hermes wrote"):
+        write_secret_file(dest, DUMMY)
+
+
+def test_a_name_replaced_right_after_the_link_is_not_reported_as_saved(folder, monkeypatch):
+    dest = plan_secret_file({"name": "k", "path": str(folder / "key")}, base_dir=None)
+    (folder.parent / "theirs").write_text("theirs", encoding="utf-8")
+    _at_link(monkeypatch, after=lambda: (folder.parent / "theirs").rename(folder / "key"))
+    with pytest.raises(SecretFileError, match="not the one Hermes wrote"):
+        write_secret_file(dest, DUMMY)
