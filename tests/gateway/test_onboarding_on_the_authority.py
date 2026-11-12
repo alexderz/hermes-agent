@@ -39,6 +39,8 @@ async def _desktop(tmp_path, monkeypatch, turns):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     monkeypatch.setenv("HERMES_HOME", str(home))
     monkeypatch.setattr(server, "_hermes_home", str(home))
+    # gateway.run latches its home at first import; an earlier test's import would hold that test's home.
+    monkeypatch.setattr("gateway.run._hermes_home", home)
     monkeypatch.setattr(server, "_db", None)
     monkeypatch.setattr("agent.onboarding_facts.read_facts", lambda **kw: FACTS)
     (home / ".env").write_text("OPENROUTER_API_KEY=sk-or-test\n", encoding="utf-8")

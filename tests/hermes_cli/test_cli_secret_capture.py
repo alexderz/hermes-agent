@@ -161,7 +161,10 @@ def test_agent_secret_request_stays_inside_the_panel_on_a_narrow_terminal(monkey
         "metadata": {"source": "agent"},
     }
 
+    from hermes_cli.cli_render import _cells
+
     text = "".join(fragment for _style, fragment in cli._get_secret_display_fragments())
     rows = text.rstrip("\n").split("\n")
-    assert len({len(row) for row in rows}) == 1, rows  # every border lines up: nothing ran past the box
-    assert len(rows[0]) <= 60
+    # Terminal cells, not code points: the title's 🔑 is one code point but two cells.
+    assert len({_cells(row) for row in rows}) == 1, rows  # every border lines up: nothing ran past the box
+    assert _cells(rows[0]) <= 60
