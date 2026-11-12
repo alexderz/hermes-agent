@@ -42,6 +42,8 @@ split:
 - **Intercom item branches** are `der-701/<slug>` in `alexderz/hermes-intercom`, cut from its
   project-main `integrate/session-mail`, which the manager cuts from its `main`.
 - **hermes-agent item branches** are `der-701/<slug>`, cut from `integrate/session-mail-023`.
+- **Commits on hermes-agent branches** run with hooks off or an isolated `HERMES_HOME`: the
+  lefthook setup otherwise provisions into the account's real home.
 - **Out of scope for every item:**
   - the accepted design and Alex's settled decisions: no caps, holds, retries or approval
     gates; default `steer`; three modes; the A′ frame; gateway only (SM-Q20);
@@ -77,6 +79,8 @@ the published plugin API. No behaviour changes anywhere.
   plugin, loaded through real discovery in a temp `HERMES_HOME` with a running owner, attaches
   with the listed names and runs `session.resume` then `prompt.submit` on a session of its own
   profile.
+  - The owner runs with a **fake-model provider** in that temp home, as in G14, because
+    `prompt.submit` on an idle session starts a turn.
 - **No behaviour change:** no non-listing source line changes.
 
 **Verify:**
@@ -117,6 +121,8 @@ owner's session list, through the owner's existing verbs.
   `None`. `HERMES_TUI_GATEWAY_URL` is never read.
 - **Thread:** `deliver_sync(target, text, delivery, submission_id)` runs `asyncio.run` on a
   fresh thread started with `contextvars.copy_context().run`.
+- **Return shape:** it returns `applied`, `applied_detail` and `admission_id` (from
+  `prompt.submit`, for queue and start; `None` for steer and redirect), or an error code.
 - **Resume (R5-4):** every delivery starts with `session.resume{omit_messages: true}`. Only
   `running` and `execution_generation` are read. No other handle field reaches a receipt, a log
   or an exception text.
@@ -135,8 +141,10 @@ owner's session list, through the owner's existing verbs.
   - sent, no answer → `delivery-unknown`.
 
   Error texts are a fixed sentence plus the exception's type name, with no URL or ticket.
-- **List:** `list_sessions(scope, picker)` wraps `session.list` (read only) for G4's `list` and
-  candidates.
+- **Reads:** both are read-only.
+  - `list_sessions(scope, picker)` wraps `session.list`, for G4's `list` and candidates.
+  - `receipt(admission_id)` wraps `prompt.receipt` (`queued` / `started` / `terminal`), for
+    G10's `status`.
 
 **Verify:**
 ```
@@ -189,8 +197,20 @@ the B9 receipt.
   - `frame.build`, then `sanitize_user_prompt_text`, then `header_sha` over the span (G7);
   - `client.deliver_sync` (G2);
   - the record update and the receipt.
-- **Receipt:** carries `target_session` for every delivery and for every refusal after step 1,
-  and `shared_chat = (target_chat_scope == "shared")`.
+- **Consent applies to every target kind:** local, owner-attached and messaging all get
+  `injection-off` without consent.
+- **`reply_mode`** is stored in the record exactly as passed.
+- **Receipt (B9), built in step 7:**
+  - `target_session` for every delivery and every refusal after step 1;
+  - `shared_chat = (target_chat_scope == "shared")`;
+  - `reply`, echoing the framed `reply_mode`;
+  - candidates' ids on `ambiguous` and `unknown`.
+- **Readable line:** ends with `(session <id>)`.
+- **Fixed sentences:**
+  - the cold-start sentence: `"<title>" was not open, so the gateway reopened it and message
+    <id> started a turn there.`;
+  - the `not-addressable` sentence: `"<title>" is open in the admin dashboard, which intercom
+    cannot reach. Nothing was sent.`
 - **Framing:** the CLI always frames as a script. Every submitted `text` starts with `📡` (N2).
 - **Operator power (R5-2, accepted SM-Q23):** a stored messaging chat whose user is no longer on
   the allowlist is still delivered. The test pins this.
@@ -200,7 +220,7 @@ the B9 receipt.
 cd <intercom-repo>
 HERMES_HOME="$(mktemp -d)" <hermes-test-python> -I -m unittest discover -s tests -p 'test_route.py' -t . -v
 ```
-This covers the G-3 row of LLD § Verify.
+This covers the G-3 row of LLD § Verify, plus the B9 receipt fields and sentences above.
 
 - **Blocked by:**
   - G2 — step 6 calls `client.deliver_sync`;
@@ -350,8 +370,14 @@ post.
 cd <intercom-repo>
 HERMES_HOME="$(mktemp -d)" <hermes-test-python> -I -m unittest discover -s tests -p 'test_echo.py' -t . -v
 ```
-This covers the unit part of the G-6 row of LLD § Verify: hook selection, the claim,
-`ECHO_ESCAPERS` and the missing-escaper warning. The fake-ntfy E2E and O21 run in G14.
+This covers the unit part of the G-6 row of LLD § Verify:
+- hook selection;
+- the claim;
+- the post decision (private, hash match);
+- the missing-escaper warning.
+
+The per-platform escaper tests are G7's. The fake-ntfy E2E, O21 and the late-steer case run in
+G14, which needs a real turn finalizer.
 
 - **Blocked by:** G9 — the echo reuses B8 step 2's span finder and hash check (G5's scope,
   G7's escapers and G8's `echoed_at` reach it through G9 → G3)
@@ -399,7 +425,9 @@ cannot pass for Alex's words or a control frame.
 cd <intercom-repo>
 HERMES_HOME="$(mktemp -d)" <hermes-test-python> -I -m unittest discover -s tests -p 'test_frame.py' -t . -v
 ```
-This covers the G-7 row of LLD § Verify.
+This covers the G-7 row of LLD § Verify, and **owns the per-platform escaper unit tests** of
+the G-6 row: every platform in `ECHO_ESCAPERS`, against link text, `@everyone`, `@here`, `<@…>`,
+`<!…>` and `<#…>`.
 
 - **Blocked by:** none (`CONTROL_FRAME_OPENERS` and `sanitize_user_prompt_text` exist at the
   base, and B5 has a fallback; the listing matters only at vendoring, G12)
@@ -431,6 +459,11 @@ This covers the G-7 row of LLD § Verify.
   - `reply_state` is `NULL`, `sent`, `silent`, `stored` or `no-block`.
 - **Helpers:** insert, update, the echo claim, and lookups by id, span hash and target lineage.
   There is no pruning, retry count or status ladder.
+- **Two writers:**
+  - the sender writes its row, `header_sha` and result;
+  - the owner's reply hook writes the reply fields and a new reply row.
+
+  The test runs both against one file.
 
 **Verify:**
 ```
@@ -521,8 +554,8 @@ without the owner client.
     `reply-missing`);
   - `include_runs`, `query` and `limit` for `list`; `timeout` and `request_id` for `ask`;
   - the description sentences of B11, and Alex's interrupt sentence word for word.
-  - `register()` builds the `to` wording from `check_project_addressing()` (G4), with no `@`
-    anywhere when it is false.
+  - `register()` builds the `to` wording from `check_project_addressing()` (G4). There is no `@`
+    anywhere when it is false, and the wording mentions `@<project>` when it is true.
   - The handler is synchronous, and `ask` and `reply` dispatch to G9.
 - **CLI (B9):**
   - `send` takes `--reply none|requested|waiting` (default `none`); `--no-reply` is a usage
@@ -531,11 +564,15 @@ without the owner client.
     first, and has `--json`;
   - `status` reads `prompt.receipt`, or the hashed transcript check;
   - `log` prints the B9 reply lines;
-  - exit codes 0–6, with every receipt carrying `target_session`.
+  - exit codes 0–6, with every receipt carrying `target_session`;
+  - `--to @x` without project addressing exits 3 with the `project-addressing-unavailable`
+    text.
 - **Caps (B10):** `_MAX_MSG_CHARS`, `_RATE_*` and `_DEDUPE_WINDOW_S` are removed.
   `_PENDING_CAP` stays only in the legacy path. 20 identical messages in a minute all arrive.
 - **Legacy path (B12, R5-1, N6-1):**
-  - chosen only when importing the owner-client names **fails**, never by liveness;
+  - chosen only when importing the owner-client names **fails**, never by liveness. On a build
+    that has the names, with discovery `None`, `starting` or `draining`, `inbox.start()` is
+    never called and no drain hook is registered;
   - on such a build it starts lazily, only where `_find_cli_instance` finds a classic
     `HermesCLI`, and never reads argv;
   - its drain hook is registered only together with it;
@@ -579,7 +616,7 @@ This covers the G-10 row of LLD § Verify; the second command runs all of interc
 **Acceptance:**
 - **Docstring:** a docstring-only note in `scripts/dashboard_dispatch.py` says it targets the
   admin dashboard, whose chats intercom cannot reach, and that relays use
-  `hermes intercom send`. No code line changes (see "For the manager", item 2).
+  `hermes intercom send`. No code line changes (the manager confirmed docstring-only).
 - **Relay text:** the replacement relay skill text is drafted in
   `docs/session-mail/relay-skills.md`, using the real G10 flags (`--to`, `--message` /
   `--file`, `--delivery`, `--reply`, `--from`) and session ids from `hermes intercom list`.
@@ -588,7 +625,8 @@ This covers the G-10 row of LLD § Verify; the second command runs all of interc
 
 **Verify:**
 ```
-git diff integrate/session-mail-023 -- scripts/dashboard_dispatch.py   # docstring lines only
+# fails on any change other than the module docstring:
+python -I -c "import ast,sys;a,b=(ast.parse(open(p).read()) for p in sys.argv[1:]);[n.body.pop(0) for n in (a,b) if ast.get_docstring(n)];sys.exit(ast.dump(a)!=ast.dump(b))" <(git show integrate/session-mail-023:scripts/dashboard_dispatch.py) scripts/dashboard_dispatch.py
 grep -n "hermes intercom send" docs/session-mail/relay-skills.md
 python scripts/check
 ```
@@ -642,14 +680,17 @@ passes boundary lint and the owner E2E. After the manager's steps, it runs in th
 **Verify (builder, temporary home only):**
 ```
 python scripts/boundary_lint.py
-HERMES_HOME="$(mktemp -d)" scripts/run_tests.sh tests/plugins/intercom/
+HERMES_HOME="$(mktemp -d)" scripts/run_tests.sh --fail-on-skip tests/plugins/intercom/
+( cd plugins/intercom && HERMES_HOME="$(mktemp -d)" <hermes-test-python> -I -m unittest discover -s tests -p 'test_*.py' -t . )
 python scripts/check
 ```
 
 - **Blocked by:**
   - G1 — the vendored plugin passes boundary lint only with the listings;
   - G11 — deploy step 3 applies its relay text;
-  - G14 — the integrated plugin must pass the owner E2E before it is vendored and deployed;
+  - G14 — the integrated plugin must have a **passing** G14 verdict before it is vendored and
+    deployed;
+  - every fix item filed from a failing G14 verdict (each blocks G12; see G14 "Verdict");
   - the operator: Alex approves the restart window (manager-only step 2).
 - **Blocks:** none
 - **Out of scope:**
@@ -686,10 +727,14 @@ local paths.
 ```
 cd <intercom-repo>
 ls docs/upstream/
-grep -nE -i '<house-detail pattern>' docs/upstream/ ; test $? -eq 1   # the manager's house-detail scrub; no match
+grep -rnE -i "$HOUSE_PATTERN" docs/upstream/; test $? -eq 1
+grep -rnE '(/ho[m]e/|/va[r]/|/sr[v]/|/User[s]/|[0-9]{1,3}(\.[0-9]{1,3}){3})' docs/upstream/; test $? -eq 1
 ```
-The reviewer reads the drafts against G1's diff and intercom's project-main. No `gh` command
-that writes is run.
+- `HOUSE_PATTERN` is the house-detail pattern. The manager supplies it as a shell variable when
+  the builder starts; it is never written into the ticket.
+- The second check is generic and needs nothing from the manager.
+- The reviewer reads the drafts against G1's diff and intercom's project-main.
+- No `gh` command that writes is run.
 
 - **Blocked by:**
   - G1 — the listing drafts describe its diff;
@@ -720,6 +765,14 @@ legacy-path guarantee, before anything is vendored or deployed.
   - the bundled ntfy adapter against a fake ntfy server;
   - a classic CLI under a pty;
   - an owner-attached client.
+- **Temp home config:** the harness writes `config.yaml` with:
+  - `plugins.enabled: [intercom]` (plus the ntfy platform);
+  - `plugins.entries.intercom.allow_gateway_injection: true`;
+  - `settings.user_name`;
+  - `settings.echo_chats` naming the fake ntfy chat;
+  - one unlisted ntfy group, for the N4 and shared-chat cells.
+
+  Its `.env` holds only the fake ntfy server values.
 - **Plugin source:** it installs the plugin into `$HERMES_HOME/plugins/intercom`, from
   `plugins/intercom` when vendored, else from the pytest option `--intercom-src <intercom-repo>`.
   With neither, it skips with that reason. It adds no new environment variable.
@@ -734,19 +787,28 @@ legacy-path guarantee, before anything is vendored or deployed.
     or for a lookalike;
   - the escaping cases go through the real ntfy adapter;
   - after a delivery into an unlisted group, the fake server received only the answer (N4);
-  - steered-echo GW-4: a steer followed by the final answer is echoed once, before the answer.
+  - steered-echo GW-4: a steer followed by the final answer is echoed once, before the answer;
+  - a steer that lands during the final request is echoed by the later turn's `pre_llm_call`.
+    This needs a real turn finalizer.
 - **Replies across kinds:** CLI → owner-attached, ntfy → owner-attached, owner-attached → ntfy.
   An admin-dashboard chat is `not-addressable`.
-- **Verdict:** the item closes with one, like a review item. A failure is filed as a fix item
-  blocked by this one, for example O21 failing (the echo dropped for v1, SM-Q15 → a) or the
-  source strings differing (G5).
+- **Verdict:** the item closes with one, like a review item. G12 needs a **passing** verdict.
+  On a failing verdict:
+  - each fix is filed as an item blocked by this one, **and each fix blocks G12**;
+  - each fix ends with a G14 re-run, and that re-run's pass is G12's E2E proof;
+  - for example, the source strings differing are a fix in G5.
+- **The one exception is O21:** if the echo hooks do not fire bound to the session, the LLD's own
+  fallback applies (no echo for v1, SM-Q15 → a). It is filed as a G6 change that removes the
+  echo, and it also blocks G12.
 
 **Verify:**
 ```
-HERMES_HOME="$(mktemp -d)" scripts/run_tests.sh tests/plugins/intercom/test_e2e_owner.py --intercom-src=<intercom-repo>
+HERMES_HOME="$(mktemp -d)" scripts/run_tests.sh --fail-on-skip tests/plugins/intercom/test_e2e_owner.py -- --intercom-src=<intercom-repo>
 python scripts/check
 ```
-Run it with `<intercom-repo>` at intercom's project-main, with G2 … G10 merged.
+- Run it with `<intercom-repo>` at intercom's project-main, with G2 … G10 merged.
+- The explicit `--` matters: the runner rejects unknown bare flags before conftest options load.
+- `--fail-on-skip` turns a missing plugin source into a failure, not a green skip.
 
 - **Blocked by:**
   - G6 — the echo E2E and O21 need the echo hooks;
@@ -779,8 +841,9 @@ Gates: `G14` — the end-to-end check of the integrated whole.
   hooks fire bound to the messaging session, and does `post_message` post there), the owner's
   source strings, and the R5-1 socket guarantee.
 - One gateway restart deploys the plugin to every chat at once, so this check comes before it.
-- G14 waits on all of wave 4 and is the only blocker of G12 that is not already met by an earlier
-  wave.
+- G14 waits on all of wave 4. G14 and G11 both close in wave 5, and G12 waits on both; G14 is
+  the only gate.
+- A failing G14 holds G12 through its fix items, which each block G12.
 - G13 runs beside it, because the drafts need no E2E result.
 
 ## For the manager
@@ -789,17 +852,16 @@ Gates: `G14` — the end-to-end check of the integrated whole.
    G-2, but the Land table puts "G-12 vendor and E2E" on hermes-agent, and the E2E needs the
    whole plugin. This groom splits it out as G14. The LLD's G-2 row can be read as the client
    only.
-2. **`scripts/dashboard_dispatch.py`: unchanged or a docstring note?** The LLD's Paths table and
-   its G-11 Verify row say "unchanged". Its G-11 items row asks for a docstring note. G11 plans a
-   docstring-only note, which keeps behaviour unchanged. Confirm, or drop the note from G11.
-3. **Where the relay skill text lives.** The LLD says the manager edits the live skills at
-   deploy, but names no place for the new text. G11 drafts it in
-   `docs/session-mail/relay-skills.md`.
-4. **Two interface clarifications** that keep wave 1 wide; neither changes behaviour:
+2. **Settled by the manager:** `scripts/dashboard_dispatch.py` gets a docstring-only note
+   (G11).
+3. **Settled by the manager:** the relay skill text is drafted in
+   `docs/session-mail/relay-skills.md` (G11).
+4. **Interface clarifications** that keep wave 1 wide and give later items what they read;
+   none changes behaviour:
    - G4 takes the owner's `session.list` rows through an injected lister, which G2's
      `client.list_sessions` fills;
    - G6 and G9 register their own hooks in `register()`, while G10 owns the schema, the CLI and
-     the legacy wiring.
-5. **The lefthook incident applies to every hermes-agent branch.** Builders commit in worktrees
-   with hooks off or an isolated `HERMES_HOME`, because the hook provisions into the account's
-   real home. The cleanup of the earlier live-home artifacts is still the manager's.
+     the legacy wiring;
+   - G2's `deliver_sync` returns `applied`, `applied_detail` and `admission_id` (the record's
+     `admission_id`, B7);
+   - G2 adds a read-only `receipt(admission_id)` over `prompt.receipt`, for G10's `status`.
