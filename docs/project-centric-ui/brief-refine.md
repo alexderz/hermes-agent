@@ -1,5 +1,44 @@
 # Refine: project-centric Hermes UI (DER-686)
 
+## Round 4 (2026-11-11, base v0.23.1, surface the gateway Webapp)
+
+Checked only the round-4 delta against Alex's words (unchanged apart from the surface) and the v0.23 code in this worktree. Alex's ask on this surface: tap a project → see its chats and open "the project's main chat"; one permanent owner chat that "just compacts"; steer it from the phone while it works.
+
+| Item | Verdict | Reason |
+|---|---|---|
+| "Dropped by the v0.23 move" (Mobile drafts, dashboard page, socket kickoff, rebase question, compress fix, Mobile constraints) | **Keep** | Each drop follows from the new base or surface. The legacy `session.compress` gap stays a separate fork bug. |
+| Intent 1: `owner_session_id` column through existing `projects.*` calls | **Keep** | Unchanged and still the smallest. Keep the name (Session Mail already references it) and add a one-line docstring for the name clash in fact 5. Don't open a rename. |
+| Intent 1 bullet: "Session Mail consumes this field" | **Simplify** | True, but DER-686 builds nothing for it. Keep it as a note, not an intent item. |
+| Intent 2: seed six owners by id with an undo file | **Keep** | Titles changed twice, so seeding by id is right. |
+| Intent 3 / Q1 option C: core sidebar change **plus** a bundled plugin for a row badge and the `/new` rule | **Simplify** | Alex asked for the main chat to open and come first in its project; he didn't ask for a badge on every list. The core change already lists the owner first, marked "Main chat", so the session-row badge plugin is a duplicate. Drop it. The bundled plugin exists only if Q2 is yes, and then holds only the `/new` composer rule. With Q2 no, slice 1 is option A alone. |
+| Option B (plugin Projects page), option D (runtime plugin) | **Kill** | B duplicates the sidebar list and leaves the tap unchanged; D breaks `rules.md` 19. The brief already advises against both. |
+| Pins option "pin every owner at seeding" | **Kill** | Pinned rows leave their project list (fact 12), so this would hide owners from the place Alex taps. Q3 already recommends leaving pins alone. |
+| Owner shown first "even if pinned" | **Keep** | Needed: "HME - Orchestrator" is pinned today and would otherwise be missing from its project. |
+| Intent 4 / Q2: `/new` → `/compact` in the Webapp only | **Keep as Alex's question** | In his scope list; on v0.23 it is a copy of Bot Chat's middleware, and compaction is owner-run on the gateway. |
+| Intent 5: steering met by the base, verify only | **Keep** | Verified in code (below). The CLI-exits-mid-turn case stays a live check. |
+| Q3 (seed the five Orchestrators plus "MDL - Model Master", pins untouched) | **Keep** | |
+| Q4 (Session Mail's `@project` switch) | **Simplify** | This is an interface note for the Session Mail chunk, not a choice for Alex. The answer ("the server field alone") costs DER-686 nothing. Send it to Session Mail, drop it from Alex's questions, and drop the matching "Verify later" line. |
+| Deferred PWA service worker | **Keep deferred** | The manifest is already linked (`apps/desktop/index.html:12`), so the Webapp installs to the home screen as Alex uses it. |
+| Size ratchet on `sidebar/index.tsx` | **Keep** | 2,078 lines, confirmed. The tap and ordering logic goes in a `sidebar/projects/` sibling. |
+
+Fact checks (code, read-only; no hooks or tools run against any Hermes home):
+- 10: `enterProject` "Never opens a session" (`apps/desktop/src/store/projects.ts:107-120`); the row handler only syncs the cwd and scopes (`sidebar/index.tsx:1243-1254`). Verified.
+- 12: pinned rows "belong to the Pinned section and nowhere else", and the entered project's lanes go through `excludeProjectSessions` (`sidebar/index.tsx:708-745, 1079-1086`). Verified.
+- 13: session-row slots (`src/lib/session-row-slots.ts:19-22`) and `composer.middleware` (`src/app/chat/composer/contrib.ts:38, 88`) exist. No project-row slot, so the tap needs core code. Verified.
+- 14: the Bot Chat rule matches `/^\/(new|reset)\s*$/` and reroutes to `/compact` with a notice (`plugins/hermes-bots/plugin.tsx`, around 774-795). Verified.
+- 18: the CLI imports `GatewayAgent` "the gateway runs the turn" (`hermes_cli/cli_agent_setup_mixin.py:647`); `gateway_agent.py:1-6` says the CLI never builds an agent. Verified.
+- 19: the gateway authority's `authorize` checks profile and capability (`gateway/session_authority.py:200-210`). Nothing in `gateway/session_controls.py`, `session_busy_controls.py` or `session_authority.py` reads the lease file or `SESSION_NOT_OWNED`. Verified in code; still to be run live, as the brief says.
+- 20: `session.mutate` handles `compress` on the gateway (`gateway/session_mutations.py:116-143`). Verified.
+- Added: `projects.*` is not in the gateway's own handler table (`gateway/session_controls.py:221-246`). It reaches the legacy dispatcher through `legacy_fallback_allowed` (`tui_gateway/ws.py:401-409`; `ws_legacy_fallback.py:53-62`), which allows any non-session verb on an interactive grant. So the new field and `projects.update` work from the Webapp with no gateway change. Verified.
+- 5: the other `owner_session_id` names exist (`gateway/run_notifications.py:203`). Verified.
+- Not re-checked: live data (fact 25), fact 15's drawer behaviour, fact 21's dispatch script.
+
+Net: slice 1 is the column, the seeding, one core sidebar change (tap opens the owner; owner first and marked, even if pinned), and, only if Q2 is yes, a small plugin with the `/new` rule. Alex's questions shrink to Q1–Q3; Q4 becomes a note to Session Mail. No requirement of Alex's dies and no new open point appears, so the Plan step can apply these cuts.
+
+Refine: pass
+
+---
+
 ## Round 3 (2026-11-08)
 
 Only the delta from Alex's 21:00 addition is checked: Intent 5, A6–A7, facts 17–29, the five steering options, the Q1 note, Q4 and Q5. Alex's words: owner sessions "must be reachable and steerable from the phone while they work. Either run them inside the dashboard/gateway that the app talks to, or let the app queue or interject into a session that another process holds."
