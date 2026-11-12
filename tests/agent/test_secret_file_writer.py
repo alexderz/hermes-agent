@@ -146,3 +146,22 @@ def test_an_empty_answer_is_a_skip_and_writes_nothing(folder):
     dest = plan_secret_file({"name": "k", "path": str(folder / "key")}, base_dir=None)
     assert secret_file_answer(dest, "\r\n")["skipped"] is True
     assert os.listdir(folder) == []
+
+
+@pytest.mark.parametrize("access, mode", [("private", 0o600), ("standard", 0o640)])
+def test_a_folders_default_acl_never_widens_the_file_past_its_mode(folder, access, mode):
+    import subprocess
+    try:
+        set_default = subprocess.run(["setfacl", "-d", "-m", "u:nobody:rw", str(folder)],
+                                     capture_output=True, check=False)
+    except FileNotFoundError:
+        pytest.skip("setfacl is not installed")
+    if set_default.returncode != 0:
+        pytest.skip(f"this filesystem has no POSIX ACLs: {set_default.stderr.decode(errors='replace')}")
+    assert "system.posix_acl_default" in os.listxattr(folder)
+
+    dest = plan_secret_file({"name": "k", "path": str(folder / "key"), "access": access}, base_dir=None)
+    write_secret_file(dest, DUMMY)
+
+    assert "system.posix_acl_access" not in os.listxattr(folder / "key")  # no named user or group entries
+    assert stat.S_IMODE((folder / "key").stat().st_mode) == mode
