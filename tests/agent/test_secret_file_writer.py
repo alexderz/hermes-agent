@@ -243,3 +243,30 @@ def test_a_name_replaced_right_after_the_link_is_not_reported_as_saved(folder, m
     _at_link(monkeypatch, after=lambda: (folder.parent / "theirs").rename(folder / "key"))
     with pytest.raises(SecretFileError, match="not the one Hermes wrote"):
         write_secret_file(dest, DUMMY)
+
+
+def test_a_lone_surrogate_is_a_clean_refusal_that_carries_no_part_of_the_value(folder):
+    dest = plan_secret_file({"name": "k", "path": str(folder / "key")}, base_dir=None)
+    value = "dummy-" + "\ud800" + "-tail"
+    with pytest.raises(SecretFileError) as err:
+        write_secret_file(dest, value)
+    assert "\ud800" not in str(err.value) and "dummy-" not in str(err.value)
+    assert err.value.__context__ is None and err.value.__cause__ is None  # no UnicodeEncodeError holding it
+    assert os.listdir(folder) == []
+
+
+def test_a_failed_folder_sync_after_the_link_still_reports_saved_with_a_warning(folder, monkeypatch):
+    dest = plan_secret_file({"name": "k", "path": str(folder / "key")}, base_dir=None)
+    real_fsync, calls = os.fsync, []
+
+    def fsync(fd):
+        calls.append(fd)
+        if len(calls) == 2:  # the file syncs first, then its folder
+            raise OSError(5, "Input/output error")
+        real_fsync(fd)
+    monkeypatch.setattr(os, "fsync", fsync)
+
+    saved = write_secret_file(dest, DUMMY)
+
+    assert saved["status"] == "saved" and "syncing its folder failed" in saved["warning"]
+    assert (folder / "key").read_text(encoding="utf-8") == DUMMY

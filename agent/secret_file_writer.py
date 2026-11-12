@@ -275,7 +275,13 @@ def write_secret_file(destination: dict, value: str) -> dict:
     gid = _my_groups().get(str(destination.get("group") or ""))
     if not os.path.isabs(path) or path == "/" or mode is None or gid is None:
         raise SecretFileError("The secret file request is malformed; nothing was written.")
-    data = value.rstrip("\r\n").encode("utf-8")
+    try:
+        data = value.rstrip("\r\n").encode("utf-8")
+    except UnicodeEncodeError:  # a lone surrogate a JSON frame can carry; the error object holds the value
+        data = None
+    if data is None:  # raised outside the handler: no exception context keeps the value alive
+        raise SecretFileError("The value is not valid text (it contains an unpaired surrogate); nothing was "
+                              "written. Ask the user to paste it again.")
     parent, leaf = os.path.split(path)
     try:
         dfd, syncable = _open_parent(parent)
@@ -300,14 +306,24 @@ def write_secret_file(destination: dict, value: str) -> dict:
             os.close(fd)
             if tmp is not None:
                 _remove_quietly(tmp, dfd)
-        if syncable:
-            os.fsync(dfd)
+        warning = _sync_folder(dfd) if syncable else None
     finally:
         os.close(dfd)
     from agent.redact import register_vault_redaction_value
     register_vault_redaction_value(data.decode("utf-8"))
-    return {"status": "saved", "path": path, "mode": f"{stat.S_IMODE(st.st_mode):04o}", "owner": _user(),
-            "group": _group_name(st.st_gid), "bytes": len(data)}
+    saved = {"status": "saved", "path": path, "mode": f"{stat.S_IMODE(st.st_mode):04o}", "owner": _user(),
+             "group": _group_name(st.st_gid), "bytes": len(data)}
+    return {**saved, "warning": warning} if warning else saved
+
+
+def _sync_folder(dfd: int) -> str | None:
+    """fsync the folder so the new name survives a power loss; the file is already saved either way, so a
+    failure is a warning, never an error (a retry would only hit "already exists")."""
+    try:
+        os.fsync(dfd)
+    except OSError as exc:
+        return f"The file is saved, but syncing its folder failed ({exc.strerror}); it may not survive a power loss."
+    return None
 
 
 def secret_file_answer(destination: dict, value: str) -> dict:
