@@ -1,9 +1,11 @@
 """intercom record — one owner-only SQLite file for every message (LLD B7).
 
 ``plugins.plugin_storage.plugin_db("intercom", "record.db")``: WAL, ``busy_timeout``
-5000 ms. ``plugin-data/intercom/`` is ``0700`` on every open. The first open runs
-under ``umask 077``, creates ``record.db`` ``O_EXCL`` ``0600``, and ``chmod 0600``
-on ``-wal`` and ``-shm`` after a write.
+5000 ms. ``plugin-data/intercom/`` is ``0700`` on every open. Only the first open
+runs under ``umask 077``: it creates ``record.db`` ``O_EXCL`` ``0600`` and the
+schema write that makes ``-wal`` and ``-shm``. That set/restore is serialised,
+because the umask is process-wide. Later opens do not change it; they ``chmod``
+the files, and SQLite gives the sidecars the database file's mode.
 
 The ``messages`` table is B7's. ``reply_mode`` checks ``none``, ``requested``,
 ``waiting`` and ``optional``. There is no ``expect_reply`` column.
@@ -22,11 +24,16 @@ import errno
 import os
 import sqlite3
 import stat
+import threading
 import time
 from collections.abc import Sequence
 
 DB_FILENAME = "record.db"
 PLUGIN = "intercom"
+
+# The umask is process-wide. The first open's set/restore holds this lock so
+# no other record call can save and restore the umask in the middle of it.
+_open_lock = threading.Lock()
 
 REPLY_MODES = ("none", "requested", "waiting", "optional")
 # NULL is the unset state. These four are the only values a writer may store.
@@ -78,34 +85,37 @@ CREATE TABLE IF NOT EXISTS messages (
 def connect() -> sqlite3.Connection:
     """Open the record. The caller closes it.
 
-    Directory ``0700`` on every open. The database file is created ``O_EXCL``
-    ``0600`` under ``umask 077``; ``-wal`` and ``-shm`` are ``0600`` after the
-    schema write that this open performs.
+    The directory is ``0700`` on every open. Only the first open changes the
+    process umask (see ``_open_lock``). Later opens ``chmod`` the files.
     """
     from plugins.plugin_storage import plugin_data_dir, plugin_db
 
-    # umask 077 covers the directory, the O_EXCL create, and the WAL sidecars
-    # SQLite creates while the schema statement commits. Restored before return.
-    old = os.umask(0o077)
-    conn = None
-    db_path = None
-    try:
+    with _open_lock:
         directory = plugin_data_dir(PLUGIN)
         os.chmod(directory, 0o700)
         db_path = directory / DB_FILENAME
-        _create_exclusive(db_path)
-        conn = plugin_db(PLUGIN, DB_FILENAME)
-        conn.isolation_level = None  # this module's own BEGIN/COMMIT
-        conn.row_factory = sqlite3.Row
-        conn.execute(_SCHEMA)
-    except BaseException:
-        if conn is not None:
-            conn.close()
-        raise
-    finally:
-        os.umask(old)
-    _tighten(db_path)
-    return conn
+        # Absent inode: this is the first open. A symlink is not absent; it is
+        # refused by _create_exclusive without touching the umask.
+        creating = _db_missing(db_path)
+        if creating:
+            old_umask = os.umask(0o077)
+        conn = None
+        try:
+            _create_exclusive(db_path)
+            conn = plugin_db(PLUGIN, DB_FILENAME)
+            conn.isolation_level = None  # this module's own BEGIN/COMMIT
+            conn.row_factory = sqlite3.Row
+            # The schema statement is the write that creates -wal and -shm.
+            conn.execute(_SCHEMA)
+        except BaseException:
+            if conn is not None:
+                conn.close()
+            raise
+        finally:
+            if creating:
+                os.umask(old_umask)
+        _tighten(db_path)
+        return conn
 
 
 def insert(
@@ -259,6 +269,14 @@ def by_target_lineage(session_ids: Sequence[str]) -> list[dict]:
 # ── internals ────────────────────────────────────────────────────────────────
 
 
+def _db_missing(path) -> bool:
+    try:
+        os.lstat(path)
+    except FileNotFoundError:
+        return True
+    return False
+
+
 def _create_exclusive(path) -> None:
     """Create a new ``record.db`` inode ``0600``, or leave a regular file in place.
 
@@ -314,10 +332,9 @@ def _tighten(db_path) -> None:
 
 
 def _run_write(fn):
+    # No umask change here. Sidecars created by a later write take the database
+    # file's mode (SQLite's unix VFS); _tighten chmods them after the commit.
     conn = connect()
-    # The write itself may be what creates -wal/-shm. Hold umask 077 across it,
-    # then chmod whatever exists once the connection is closed.
-    old = os.umask(0o077)
     try:
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -329,7 +346,6 @@ def _run_write(fn):
             conn.commit()
             return result
     finally:
-        os.umask(old)
         conn.close()
         _tighten(_db_path())
 

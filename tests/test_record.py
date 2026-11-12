@@ -251,7 +251,7 @@ class ModeTests(RecordTestBase):
         finally:
             held.close()
 
-    def test_umask_covers_the_open_and_is_restored(self):
+    def test_umask_is_only_the_first_open_and_is_restored(self):
         seen = []
         real_umask = os.umask
 
@@ -261,9 +261,52 @@ class ModeTests(RecordTestBase):
 
         with mock.patch("os.umask", side_effect=wrapped):
             self.record.connect().close()
-        self.assertIn(0o077, seen)
+            first = list(seen)
+            seen.clear()
+            self.record.connect().close()
+            second = list(seen)
+        self.assertIn(0o077, first)
+        self.assertNotIn(0o077, second)
         current = os.umask(0o022)
         self.assertEqual(current, 0o022)
+
+    def test_concurrent_calls_leave_the_process_umask_unchanged(self):
+        # The verifier's repro: several threads open the record together,
+        # starting from umask 022. The process umask must still be 022.
+        errors = []
+
+        def reads(index):
+            try:
+                for n in range(40):
+                    self.record.get(f"missing-{index}-{n}")
+            except Exception as exc:  # reported from the main thread
+                errors.append(exc)
+
+        def writes():
+            try:
+                self.send("w1", created_at=1.0)
+                self.record.update("w1", header_sha="h", result="delivered")
+                self.record.claim_echo("w1", 3.0)
+            except Exception as exc:  # reported from the main thread
+                errors.append(exc)
+
+        threads = [threading.Thread(target=reads, args=(i,)) for i in range(8)]
+        threads.append(threading.Thread(target=writes))
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+            self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(os.umask(0o022), 0o022)
+        held = self.record.connect()
+        try:
+            directory = self.directory()
+            self.assertEqual(mode_of(directory), 0o700)
+            for name in ("record.db", "record.db-wal", "record.db-shm"):
+                self.assertEqual(mode_of(directory / name), 0o600, name)
+        finally:
+            held.close()
 
     def test_a_symlink_is_not_the_record(self):
         directory = self.directory()
