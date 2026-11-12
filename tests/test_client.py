@@ -487,6 +487,24 @@ class ClientTests(unittest.TestCase):
                 self.assert_clean(result)
                 self.assertNotIn("prompt.submit", self.owner.methods())
 
+    def test_request_the_gateway_client_never_wrote_is_not_reachable(self):
+        cases = [
+            ("submit", "queue", dict(session_resume=[handle(False)], prompt_submit=[GatewayClientError(NOT_SENT)])),
+            ("steer", "steer", dict(session_resume=[handle(True)], session_steer=[GatewayClientError(NOT_SENT)])),
+            ("redirect", "interrupt",
+             dict(session_resume=[handle(True)], session_redirect=[GatewayClientError(NOT_SENT)])),
+            ("hard-interrupt submit", "interrupt",
+             dict(session_resume=[handle(True)], session_redirect=[ack("rejected")], session_interrupt=[{}],
+                  prompt_submit=[GatewayClientError(NOT_SENT)])),
+        ]
+        for name, delivery, script in cases:
+            with self.subTest(name):
+                self.owner = FakeOwner(**script)
+                result = self.deliver(delivery)
+                self.assertEqual((result["error"], result["exit"]), ("not-reachable", 5))
+                self.assertEqual(result["message"], ERROR_SENTENCES["not-reachable"] + " (GatewayClientError)")
+                self.assertNotIn("nothing was sent", result["message"])
+
     def test_sent_without_answer_is_delivery_unknown(self):
         lost = GatewayClientError(f"Gateway disconnected; turn outcome is unknown. {LEAK}")
         cases = [
@@ -561,6 +579,9 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(self.client.receipt("adm-1", session_id="s1")["error"], "not-reachable")
 
 
+# The real gateway client's not-sent refusal text (hermes_cli.gateway_client.NOT_SENT).
+NOT_SENT = "Gateway disconnected before the request was sent; nothing was sent."
+
 ERROR_SENTENCES = {
     "not-addressable": "The session is held by another runtime that intercom cannot reach.",
     "refused-by-owner": "The gateway refused the call.",
@@ -590,6 +611,13 @@ class PublishedNamesTests(unittest.TestCase):
         self.assertEqual(str(gc.GatewayRPCError("stale_generation")), "stale_generation")
         self.assertIn("timeout", inspect.signature(gr.discover_gateway_endpoint).parameters)
         self.assertTrue(hasattr(gc.connect_gateway(ENDPOINT), "__aenter__"))
+
+    def test_not_sent_text_matches_the_real_refusal(self):
+        """client.py matches this text to tell a request never written from a lost answer."""
+        client = load_client()
+        self.assertEqual(client._NOT_SENT, self.gateway_client.NOT_SENT)
+        self.assertEqual(NOT_SENT, self.gateway_client.NOT_SENT)
+        self.assertNotEqual(self.gateway_client.DISCONNECTED, client._NOT_SENT)
 
 
 if __name__ == "__main__":
