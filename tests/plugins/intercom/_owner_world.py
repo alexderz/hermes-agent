@@ -8,7 +8,9 @@
 - a real classic CLI (``display.interface: cli``) under a pty, a client of that owner;
 - owner-attached clients (``discover_gateway_endpoint`` + ``connect_gateway`` +
   ``session.create``), which is what the Ink TUI and the Desktop do;
-- a real standalone ``hermes dashboard`` (the admin panel), whose chats the owner cannot reach.
+- a real standalone ``hermes dashboard`` (the admin panel), whose chats the owner cannot reach;
+- ``hook-probe``, a test plugin written into the temp home only: each turn it records its process's
+  live hook table, so a hook registered after load (B12's legacy drain) is visible.
 
 The model reads directives from the turn's prompt (the newest user row that is not a steer):
 
@@ -412,6 +414,41 @@ class WsClient:
 # ── the world ────────────────────────────────────────────────────────────────
 
 
+HOOK_PROBE = "hook-probe"
+HOOK_PROBE_YAML = f"""\
+name: {HOOK_PROBE}
+version: 0.1.0
+description: "Test plugin: at each turn, write this process's live hook table to the home."
+provides_tools: []
+provides_hooks: [pre_llm_call]
+"""
+# The live table, not plugins.list's load-time count: a hook registered lazily (B12's legacy drain is
+# registered at the first intercom call) shows here and nowhere else.
+HOOK_PROBE_INIT = '''"""hook-probe: each pre_llm_call appends {pid, hook: [module:qualname]} to hook-probe.jsonl."""
+import json
+import os
+import time
+
+from hermes_cli.plugins import iter_hook_callbacks
+from hermes_constants import get_hermes_home
+
+HOOKS = ("pre_llm_call", "pre_api_request", "post_llm_call", "on_session_end")
+
+
+def _snapshot(**_kw):
+    record = {"pid": os.getpid(), "t": time.time()}
+    for hook in HOOKS:
+        record[hook] = [f"{getattr(cb, '__module__', '?')}:{getattr(cb, '__qualname__', '?')}"
+                        for cb in iter_hook_callbacks(hook)]
+    with open(get_hermes_home() / "hook-probe.jsonl", "a", encoding="utf-8") as out:
+        out.write(json.dumps(record) + "\\n")
+
+
+def register(ctx):
+    ctx.register_hook("pre_llm_call", _snapshot)
+'''
+
+
 def home_config(model_url: str) -> str:
     """The temp home's config.yaml: the chaos knobs, plus what the ticket names for intercom."""
     return chaos_config(model_url, stale_timeout=600, request_timeout=600, max_turns=12, extra=(
@@ -420,7 +457,7 @@ def home_config(model_url: str) -> str:
         f"telemetry:\n  shared_metrics:\n    enabled: false\n    send: false\n    offer_version: {OFFER_VERSION}\n"
         "display:\n  interface: cli\n"
         "plugins:\n"
-        "  enabled: [intercom, ntfy-platform]\n"
+        f"  enabled: [intercom, ntfy-platform, {HOOK_PROBE}]\n"
         "  entries:\n"
         "    intercom:\n"
         "      allow_gateway_injection: true\n"
@@ -457,6 +494,10 @@ class World:
         self.plugin = self.hermes_home / "plugins" / "intercom"
         shutil.copytree(intercom_src, self.plugin,
                         ignore=shutil.ignore_patterns(".git", "tests", "docs", "__pycache__", "*.pyc"))
+        probe = self.hermes_home / "plugins" / HOOK_PROBE
+        probe.mkdir(parents=True)
+        (probe / "plugin.yaml").write_text(HOOK_PROBE_YAML, encoding="utf-8")
+        (probe / "__init__.py").write_text(HOOK_PROBE_INIT, encoding="utf-8")
         env = hermetic_env(self.home, self.hermes_home, tag)
         for key in ("NOTIFY_SOCKET", "INVOCATION_ID", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
                     "XDG_CACHE_HOME", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "TMUX", "TMUX_PANE"):
@@ -520,10 +561,15 @@ class World:
         return made["stored_session_id"]
 
     def attached_submit(self, sid: str, text: str) -> None:
-        resumed = self.rpc(("session.resume", {"session_id": sid, "omit_messages": True}))[0]
-        self.rpc(("session.resume", {"session_id": sid, "omit_messages": True}),
-                 ("prompt.submit", {"session_id": resumed["session_id"], "text": text,
-                                    "submission_id": secrets.token_hex(8)}))
+        """Resume *sid* on one attached connection and submit *text* on the live id it returns."""
+        from hermes_cli.gateway_client import connect_gateway
+
+        async def run() -> None:
+            async with connect_gateway(self.endpoint) as client:
+                resumed = await client.rpc("session.resume", session_id=sid, omit_messages=True)
+                await client.rpc("prompt.submit", session_id=resumed["session_id"], text=text,
+                                 submission_id=secrets.token_hex(8))
+        asyncio.run(run())
 
     # classic CLI under a pty
     def start_cli(self) -> None:
@@ -586,8 +632,9 @@ class World:
     def start_dashboard(self) -> None:
         dist = self.root / "web_dist"
         dist.mkdir(exist_ok=True)
-        (dist / "index.html").write_text("<!doctype html><html><head><title>hermes</title></head><body><div id=root></div></body></html>",
-                                         encoding="utf-8")
+        (dist / "index.html").write_text(
+            "<!doctype html><html><head><title>hermes</title></head><body><div id=root></div></body></html>",
+            encoding="utf-8")
         proc = self._spawn("dashboard", ["dashboard", "--no-open", "--skip-build", "--host", "127.0.0.1",
                                          "--port", "0"], extra={"HERMES_WEB_DIST": str(dist)}, group=True)
         ready = re.compile(r"HERMES_DASHBOARD_READY port=(\d+)")
@@ -641,9 +688,6 @@ class World:
         assert hold.arrived.wait(TURN_S), f"the long turn {tag} on {kind} never reached the model"
         return hold
 
-    def as_prompt(self, needle: str) -> list[Request]:
-        return self.model.find(lambda r: needle in r.prompt)
-
     def steered(self, needle: str, tag: str) -> list[Request]:
         return self.model.find(lambda r: r.tag == tag and any(needle in s for s in r.steers))
 
@@ -662,6 +706,14 @@ class World:
             return conn.execute(sql, args).fetchall()
         finally:
             conn.close()
+
+    def hook_tables(self, pid: int | None) -> list[dict]:
+        """The hook-probe snapshots process *pid* wrote, oldest first."""
+        path = self.hermes_home / "hook-probe.jsonl"
+        if not path.exists():
+            return []
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        return [row for row in rows if pid is None or row["pid"] == pid]
 
     def record(self, message_id: str) -> dict | None:
         path = self.hermes_home / "plugin-data" / "intercom" / "record.db"
