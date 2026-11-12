@@ -156,6 +156,10 @@ def _on_session_end(**kw) -> None:
 
 
 def register(ctx) -> None:
+    # B3: snapshot project addressing for the tool text. resolve() checks again.
+    from .address import note_registration
+
+    note_registration()
     inbound = ctx.get_config("inbound", default="always")
     inbox_enabled = inbound != "never"
 
