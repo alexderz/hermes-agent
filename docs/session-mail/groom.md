@@ -121,8 +121,11 @@ owner's session list, through the owner's existing verbs.
   `None`. `HERMES_TUI_GATEWAY_URL` is never read.
 - **Thread:** `deliver_sync(target, text, delivery, submission_id)` runs `asyncio.run` on a
   fresh thread started with `contextvars.copy_context().run`.
-- **Return shape:** it returns `applied`, `applied_detail` and `admission_id` (from
-  `prompt.submit`, for queue and start; `None` for steer and redirect), or an error code.
+- **Return shape:** it returns `applied`, `applied_detail` and `admission_id`, or an error
+  code.
+  - `admission_id` is `prompt.submit`'s id whenever the sequence ends in a submit: start, queue,
+    steer → queue, and hard interrupt.
+  - It is `None` when `session.steer` or `session.redirect` took the message.
 - **Resume (R5-4):** every delivery starts with `session.resume{omit_messages: true}`. Only
   `running` and `execution_generation` are read. No other handle field reaches a receipt, a log
   or an exception text.
@@ -626,7 +629,7 @@ This covers the G-10 row of LLD § Verify; the second command runs all of interc
 **Verify:**
 ```
 # fails on any change other than the module docstring:
-python -I -c "import ast,sys;a,b=(ast.parse(open(p).read()) for p in sys.argv[1:]);[n.body.pop(0) for n in (a,b) if ast.get_docstring(n)];sys.exit(ast.dump(a)!=ast.dump(b))" <(git show integrate/session-mail-023:scripts/dashboard_dispatch.py) scripts/dashboard_dispatch.py
+bash -c 'python -I -c "import ast,sys;a,b=(ast.parse(open(p).read()) for p in sys.argv[1:]);[n.body.pop(0) for n in (a,b) if ast.get_docstring(n)];sys.exit(ast.dump(a)!=ast.dump(b))" <(git show integrate/session-mail-023:scripts/dashboard_dispatch.py) scripts/dashboard_dispatch.py'
 grep -n "hermes intercom send" docs/session-mail/relay-skills.md
 python scripts/check
 ```
@@ -680,7 +683,7 @@ passes boundary lint and the owner E2E. After the manager's steps, it runs in th
 **Verify (builder, temporary home only):**
 ```
 python scripts/boundary_lint.py
-HERMES_HOME="$(mktemp -d)" scripts/run_tests.sh --fail-on-skip tests/plugins/intercom/
+HERMES_HOME="$(mktemp -d)" scripts/run_tests.sh --fail-on-skip --file-retries 0 --file-timeout <seconds> tests/plugins/intercom/
 ( cd plugins/intercom && HERMES_HOME="$(mktemp -d)" <hermes-test-python> -I -m unittest discover -s tests -p 'test_*.py' -t . )
 python scripts/check
 ```
@@ -803,12 +806,17 @@ legacy-path guarantee, before anything is vendored or deployed.
 
 **Verify:**
 ```
-HERMES_HOME="$(mktemp -d)" scripts/run_tests.sh --fail-on-skip tests/plugins/intercom/test_e2e_owner.py -- --intercom-src=<intercom-repo>
+HERMES_HOME="$(mktemp -d)" scripts/run_tests.sh --fail-on-skip --file-retries 0 --file-timeout <seconds> tests/plugins/intercom/test_e2e_owner.py -- --intercom-src=<intercom-repo>
 python scripts/check
 ```
 - Run it with `<intercom-repo>` at intercom's project-main, with G2 … G10 merged.
 - The explicit `--` matters: the runner rejects unknown bare flags before conftest options load.
 - `--fail-on-skip` turns a missing plugin source into a failure, not a green skip.
+- `--file-retries 0`: the runner otherwise re-runs a failing file once and counts a pass on retry
+  as passed (FLAKY). A FLAKY E2E is a failing verdict.
+- `--file-timeout <seconds>`: the builder sizes it to the E2E's measured run (24+ cells, an owner
+  restart, a pty CLI), above the runner's 300 s default, and records the value in the item. G12
+  uses the same value.
 
 - **Blocked by:**
   - G6 — the echo E2E and O21 need the echo hooks;
