@@ -1,5 +1,7 @@
 # AGENTS.md — hermes-intercom
 
+This guide lives at `docs/agents-guide.md` so a host checkout does not append it to its AGENTS chain.
+
 PoC local de mensajería sesión-a-sesión para Hermes Agent (estilo cross-session messaging de Claude Code), basado en el issue upstream [NousResearch/hermes-agent#81885](https://github.com/NousResearch/hermes-agent/issues/81885).
 
 ## Objetivo

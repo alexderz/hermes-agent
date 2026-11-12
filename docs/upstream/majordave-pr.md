@@ -12,7 +12,7 @@ Compared with `ae90a2a`:
 
 - New: `client.py`, `route.py`, `address.py`, `scope.py`, `frame.py`, `echo.py`, `record.py`, `replies.py`, `cli.py`, and `tests/test_client.py`, `test_route.py`, `test_address.py`, `test_scope.py`, `test_frame.py`, `test_echo.py`, `test_record.py`, `test_replies.py`, `test_cli.py`.
 - Changed: `__init__.py`, `inbox.py`, `plugin.yaml` (version 0.3.0; hooks `post_llm_call`, `pre_llm_call`, `pre_api_request`).
-- Unchanged: `README.md`, `docs/AGENTS.md`, `docs/findings.md`, `tests/test_protocol.py`. The README and the manifest description still describe the socket inbox.
+- Unchanged at the time of the draft: `README.md`, `docs/findings.md`, `tests/test_protocol.py`. The PoC guide that was `docs/AGENTS.md` is now `docs/agents-guide.md` (same text, renamed so a host AGENTS chain does not load it). The README and the manifest description still describe the socket inbox.
 
 ## Text to post
 

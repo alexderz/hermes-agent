@@ -152,7 +152,7 @@ class SpanFinderTests(RepliesTestBase):
         self.assertEqual([r["id"] for r, _ in replies.find_messages([wrapped])], [message_id])
 
     def test_changed_span_or_typed_lookalike_has_no_row(self):
-        message_id, text = self.send("requested")
+        _message_id, text = self.send("requested")
         changed = text.replace("22:00", "23:00")
         self.assertEqual(replies.find_messages([changed]), [])
         lookalike = (f"{MARK} Not Alex · reply requested · hermes@Sender Chat says "

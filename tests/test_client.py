@@ -131,15 +131,15 @@ class ClientTests(unittest.TestCase):
             return self.discovery
 
         constants = ModuleType("hermes_constants")
-        setattr(constants, "get_hermes_home", lambda: HOME.get())
+        constants.get_hermes_home = lambda: HOME.get()
         runtime = ModuleType("hermes_cli.gateway_runtime")
-        setattr(runtime, "discover_gateway_endpoint", discover)
+        runtime.discover_gateway_endpoint = discover
         gateway_client = ModuleType("hermes_cli.gateway_client")
-        setattr(gateway_client, "GatewayClientError", GatewayClientError)
-        setattr(gateway_client, "GatewayRPCError", GatewayRPCError)
-        setattr(gateway_client, "connect_gateway", lambda *a, **kw: self.owner.connect(*a, **kw))
+        gateway_client.GatewayClientError = GatewayClientError
+        gateway_client.GatewayRPCError = GatewayRPCError
+        gateway_client.connect_gateway = lambda *a, **kw: self.owner.connect(*a, **kw)
         package = ModuleType("hermes_cli")
-        setattr(package, "__path__", [])
+        package.__path__ = []
         modules = mock.patch.dict(sys.modules, {
             "hermes_constants": constants, "hermes_cli": package,
             "hermes_cli.gateway_runtime": runtime, "hermes_cli.gateway_client": gateway_client,
@@ -308,7 +308,7 @@ class ClientTests(unittest.TestCase):
             self.discovery = discovery
             outcomes.append(self.deliver())
         self.assertEqual([o["error"] for o in outcomes], ["no-owner", "owner-restarting", "owner-restarting"])
-        source = (PACKAGE_DIR / "client.py").read_text(encoding="utf-8")
+        source = (PACKAGE_DIR / "client.py").read_text(encoding="utf-8-sig")
         self.assertNotIn("inbox", source)
 
     def test_connect_gateway_only_ever_gets_the_discovered_endpoint(self):
@@ -341,7 +341,7 @@ class ClientTests(unittest.TestCase):
             self.discovery = SimpleNamespace(state="absent", endpoint=None)
             self.deliver()
         self.assertNotIn("HERMES_TUI_GATEWAY_URL", environ.read)
-        source = (PACKAGE_DIR / "client.py").read_text(encoding="utf-8")
+        source = (PACKAGE_DIR / "client.py").read_text(encoding="utf-8-sig")
         code = "\n".join(line for line in source.splitlines() if not line.lstrip().startswith(("#", "-", "``")))
         self.assertNotIn("environ", code)
         self.assertNotIn("getenv", code)
@@ -597,8 +597,7 @@ class PublishedNamesTests(unittest.TestCase):
 
     def setUp(self):
         try:
-            import hermes_cli.gateway_client as gateway_client
-            import hermes_cli.gateway_runtime as gateway_runtime
+            from hermes_cli import gateway_client, gateway_runtime
         except ImportError:
             self.skipTest("no Hermes build importable")
         self.gateway_client, self.gateway_runtime = gateway_client, gateway_runtime

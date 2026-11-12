@@ -50,7 +50,7 @@ def check_project_addressing() -> bool:
         if not plugin_id or plugin_id not in enabled:
             return False
         return _projects_have_owner_column()
-    except Exception:
+    except Exception:  # health: allow BLE001 -- any read error means project addressing is unavailable
         return False
 
 
@@ -225,7 +225,7 @@ def _resolve_slug(db, slug_text: str, lister) -> dict:
             if not _has_owner_column(conn):
                 return _refusal("project-addressing-unavailable", PROJECT_UNAVAILABLE)
             rows = _unarchived_project_rows(conn)
-        except Exception:
+        except sqlite3.Error:
             return _refusal("project-addressing-unavailable", PROJECT_UNAVAILABLE)
     finally:
         conn.close()
@@ -349,7 +349,7 @@ def _safe_index(db, lister) -> dict:
     try:
         stored = lister("stored", picker=True)
         live = lister("live", picker=False)
-    except Exception:
+    except Exception:  # health: allow BLE001 -- a listing failure is an empty index, not an error for resolve
         return {}
     stored_rows = _ok_rows(stored)
     live_rows = _ok_rows(live)
@@ -558,7 +558,7 @@ def _project_index():
             "SELECT p.name AS name, p.slug AS slug, f.path AS path "
             "FROM project_folders f JOIN projects p ON p.id = f.project_id"
         ).fetchall()
-    except Exception:
+    except sqlite3.Error:
         return None
     finally:
         conn.close()
@@ -605,7 +605,7 @@ def _projects_have_owner_column() -> bool:
         return False
     try:
         return _has_owner_column(conn)
-    except Exception:
+    except sqlite3.Error:
         return False
     finally:
         conn.close()
@@ -640,11 +640,11 @@ def _open_projects():
         conn = sqlite3.connect(uri, uri=True)
         conn.row_factory = sqlite3.Row
         return conn
-    except Exception:
+    except (OSError, sqlite3.Error, ValueError):
         if conn is not None:
             try:
                 conn.close()
-            except Exception:
+            except (OSError, sqlite3.Error):
                 pass
         return None
 
@@ -655,7 +655,7 @@ def _open_state():
         from hermes_state import SessionDB
 
         return SessionDB(read_only=True)
-    except Exception:
+    except Exception:  # health: allow BLE001 -- state unreadable means no sessions, not an error
         return None
 
 
