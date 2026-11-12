@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Start (or continue) a chat turn INSIDE the running dashboard, then detach.
 
+This script targets the admin dashboard, whose chats intercom cannot reach.
+Relays use ``hermes intercom send``.
+
 The turn runs in the dashboard process, so it survives this script exiting, and every client
 attached to that dashboard (Hermes Mobile, the web app, Desktop) can open the chat and steer it
 while it works. That is not possible with ``hermes chat -q``: a CLI process owns its session
