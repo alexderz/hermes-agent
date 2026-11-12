@@ -440,12 +440,17 @@ def _list_item(row: dict, tip: str, db, live_index: dict, projects) -> dict:
                 break
     title = row.get("title")
     workspace = row.get("workspace")
+    # reboot-notice keeps oneshot and drops cron and subagent. The stored row
+    # has the source; the public list fields do not, so it has to travel here.
+    source = row.get("source")
+    source = source.strip() if isinstance(source, str) else ""
     return {
         "id": tip,
         "title": title.strip() if isinstance(title, str) else "",
         "project": _project_for(workspace if isinstance(workspace, str) else "", projects),
         "last_active": last,
         "state": state,
+        "source": source,
     }
 
 
