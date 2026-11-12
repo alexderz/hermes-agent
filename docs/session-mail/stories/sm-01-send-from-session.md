@@ -12,7 +12,8 @@
 - **Done when**
   - [ ] `intercom` is callable from every session of the profile's gateway owner, once the owner loaded the plugin: in its tool list when Tool Search is off, or through `tool_call` when it is on (see sm-16).
   - [ ] `tool_describe` (or the tool list, with Tool Search off) returns the description in `ux.md` § "Tool description", word for word. Its first sentence is at most 60 characters, so the Tool Search catalog shows all of it: `Message another Hermes session; never send an empty message.`
-  - [ ] It keeps intercom's `action` values (`list`, `send`, `ask`, `reply`) and `to`, `message`, `timeout`, `request_id`, and adds `delivery` (default `steer`) and `expect_reply` (default `true`).
+  - [ ] It keeps intercom's `action` values (`list`, `send`, `ask`, `reply`) and `to`, `message`, `timeout`, `request_id`, and adds `delivery` (default `steer`), a **required** `reply` (`none`, `requested` or `waiting`, no default) for `send`, and `include_runs`, `query` and `limit` for `list`. A `send` without `reply` is a usage error.
+  - [ ] Every receipt carries the target's session id, and the description tells the model to use it for follow-ups.
   - [ ] A delivered `send` returns the message id, the target's title and id, the requested and applied mode, and the `message` sentence from `ux.md` § "Receipts".
   - [ ] The sender is taken from the calling session, never from the model's input: a `message` that claims another sender changes nothing in the header.
   - [ ] The record has a row for the message: sender, target, body, requested and applied mode, timestamps.

@@ -16,6 +16,6 @@
   - [ ] `status` of an unknown id exits 1 with a one-line message.
   - [ ] `log` shows the last 24 hours newest first, one line per message, with sender, target, applied mode and reply state; `--since`, `--to` and `--from` narrow or widen it. A reply that was not delivered shows as `reply: <id> not delivered (<reason>)`. A reply held back because the sender's chat is shared and the target wrote no block shows as `reply: stored (shared chat, no [REPLY] block)`.
   - [ ] A message lost after handover shows its delivery result with `no reply recorded`, never as answered.
-  - [ ] `list` prints this profile's sessions from the owner (title, id, last active).
+  - [ ] `list` prints this profile's sessions from the owner, newest first: id, title, project, last active and state (`running` / `idle` / `closed`); cron, subagent and oneshot runs only with `--include-runs`; `--query` filters on title or project; 30 by default (`--limit`), which is output size, not a delivery cap.
   - [ ] None of these starts a turn; all take `--json`.
 - **Out of scope** — a dashboard Mail tab; editing the record.

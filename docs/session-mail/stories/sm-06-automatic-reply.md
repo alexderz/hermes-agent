@@ -10,12 +10,14 @@
 - **I want** the target's answer to come back to me as a message, steered into my turn (or starting one), without anyone calling a tool
 - **So that** I can delegate a question and act on the answer when it arrives
 - **Done when**
-  - [ ] When a turn that received a `send` ends, the content of its `[REPLY <id>] … [/REPLY]` block goes to that message's sender as a new message whose line 1 starts `📡 Not Alex · reply optional ·` and names `reply to your message <id>`.
-  - [ ] With no block for that message, the whole final answer is sent, except to a sender in a shared chat: then nothing is sent, and the record says `stored (shared chat, no [REPLY] block)`.
+  - [ ] When a turn that received a `send` with `reply: requested` or `waiting` ends, the content of its `[REPLY <id>] … [/REPLY]` block goes to that message's sender as a new message whose line 1 starts `📡 Not Alex · reply optional ·` and names `reply to your message <id>`.
+  - [ ] A `reply: none` note never sends anything back: no block is captured and there is no whole-answer fallback.
+  - [ ] A reply (`reply optional`) is answered only from an explicit `[REPLY <id>]` block, never from the whole answer.
+  - [ ] For a `requested` or `waiting` message with no block, the whole final answer is sent, except to a sender in a shared chat: then nothing is sent, and the record says `stored (shared chat, no [REPLY] block)`.
   - [ ] Two messages with two blocks in one turn: each block goes to its own sender, nothing else to either.
   - [ ] For a message that has its own block, only that block is mailed; a `[SILENT]` block sends nothing, even in a turn that also answers Alex.
   - [ ] Footer line 2 tells the model to always write the block when the turn also answers Alex or other work.
-  - [ ] A sender acting on a reply can end the exchange with `[REPLY <reply id>][SILENT][/REPLY]` while reporting to Alex (J1 step 6).
+  - [ ] A sender acting on a reply ends the exchange simply by writing no block while it reports to Alex (J1 step 6); nothing goes back.
   - [ ] The reply is delivered with the default `steer` by the gateway owner (which reopens the sender's session if it is not open), and the record links it to the message it answers.
   - [ ] Messages sent with `ask` get no automatic reply (sm-21).
   - [ ] Ending the target's turn does not wait for the reply to be delivered.
