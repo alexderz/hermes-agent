@@ -1,0 +1,128 @@
+{
+  "sha": "5e45a249b537b48fc63b8ca706625f2c0a997ea9",
+  "fidelity": "real gateway daemon + real `hermes chat -q --oneshot` CLI, temporary HERMES_HOME, 127.0.0.1 only, fake local model, second client via connect_gateway (interactive ticket)",
+  "checks": [
+    {
+      "name": "gateway daemon ready on the temporary home",
+      "pass": true,
+      "detail": {
+        "exit": null
+      }
+    },
+    {
+      "name": "one-shot CLI turn reached the fake model",
+      "pass": true,
+      "detail": {
+        "cli_exit": null
+      }
+    },
+    {
+      "name": "second gateway client resumes the CLI's session by title and sees it running",
+      "pass": true,
+      "detail": {
+        "running": true,
+        "execution_generation": 1
+      }
+    },
+    {
+      "name": "second client session.steer accepted during the CLI's turn",
+      "pass": true,
+      "detail": {
+        "status": "queued",
+        "text": "STEER_MARKER_7",
+        "execution_generation": 1,
+        "authority_epoch": 1
+      }
+    },
+    {
+      "name": "second client queued prompt.submit accepted (no SESSION_NOT_OWNED)",
+      "pass": true,
+      "detail": {
+        "admission_id": "5ffb81fece8f4bd9805e793d567729e2",
+        "ref": {
+          "profile_id": "<tmp-home>",
+          "session_id": "local-60790f150edd1354b9186a3921afa782cb8251eada6c88b7c96331d25febe7d4"
+        },
+        "sequence": 2,
+        "status": "queued",
+        "outcome": null,
+        "authority_epoch": 1,
+        "execution_generation": null
+      }
+    },
+    {
+      "name": "steer text reached the model inside the CLI's running turn",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "CLI one-shot finished its turn and exited",
+      "pass": true,
+      "detail": {
+        "exit": 0
+      }
+    },
+    {
+      "name": "queued prompt ran as the next turn in the gateway",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "after SIGKILL of the CLI, the gateway turn keeps calling the model",
+      "pass": true,
+      "detail": {
+        "before": 2,
+        "after": 7
+      }
+    },
+    {
+      "name": "the turn is still running and visible to the second client",
+      "pass": true,
+      "detail": {
+        "running": true,
+        "execution_generation": 3
+      }
+    },
+    {
+      "name": "steer still accepted after the CLI died",
+      "pass": true,
+      "detail": {
+        "status": "queued",
+        "text": "STEER_AFTER_KILL",
+        "execution_generation": 3,
+        "authority_epoch": 1
+      }
+    },
+    {
+      "name": "that steer reached the model",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "second client session.interrupt accepted",
+      "pass": true,
+      "detail": {
+        "ref": {
+          "profile_id": "<tmp-home>",
+          "session_id": "local-60790f150edd1354b9186a3921afa782cb8251eada6c88b7c96331d25febe7d4"
+        },
+        "instance_id": "29f6f047d9d84e9ca20849204e52c335",
+        "authority_epoch": 1,
+        "revision": 2,
+        "execution_generation": 3,
+        "execution_state": "running"
+      }
+    },
+    {
+      "name": "interrupted turn stops calling the model",
+      "pass": true,
+      "detail": {
+        "at_interrupt": 8,
+        "after": 8
+      }
+    }
+  ],
+  "passed": 14,
+  "total": 14,
+  "model_requests": 34
+}
