@@ -10,3 +10,4 @@ One line per landed item.
 - 2026-11-12 G4 (DER-718): Addressing `address.py`, and `list` — alexderz/hermes-intercom@7d7201a676
 - 2026-11-12 G3 (DER-722): Send path `route.py` — alexderz/hermes-intercom@54581f02bd
 - 2026-11-12 G9 (DER-723): Replies and the in-process `ask`, `replies.py` — alexderz/hermes-intercom@44c520eed6
+- 2026-11-12 G6 (DER-724): Echo `echo.py` — alexderz/hermes-intercom@2c356055ee
