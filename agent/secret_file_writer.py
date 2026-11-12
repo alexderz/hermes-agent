@@ -188,6 +188,7 @@ def _fill_temp(dfd: int, tmp: str, data: bytes, gid: int, mode: int) -> os.stat_
     try:
         os.fchown(fd, -1, gid)  # also for private: in a setgid folder the card's group stays the file's group
         os.fchmod(fd, mode)
+        _drop_access_acl(fd)
         view = memoryview(data)
         while view:
             view = view[os.write(fd, view):]
@@ -198,6 +199,20 @@ def _fill_temp(dfd: int, tmp: str, data: bytes, gid: int, mode: int) -> os.stat_
         raise
     finally:
         os.close(fd)
+
+
+def _drop_access_acl(fd: int) -> None:
+    """Remove the access ACL a folder's default ACL gave the new file: its named entries could let other
+    users read past the mode the card shows. Without it the mode bits are the whole story."""
+    import errno
+    removexattr = getattr(os, "removexattr", None)  # Linux; elsewhere no POSIX access ACL xattr
+    if removexattr is None:
+        return
+    try:
+        removexattr(fd, "system.posix_acl_access")
+    except OSError as exc:
+        if exc.errno not in (errno.ENODATA, errno.ENOTSUP, errno.EOPNOTSUPP):
+            raise
 
 
 def _remove_quietly(name: str, dfd: int) -> None:
