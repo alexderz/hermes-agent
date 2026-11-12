@@ -89,10 +89,10 @@ _ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1
 
 
 def _plain(text: str) -> str:
-    """*text* without terminal escapes or control characters (newlines kept): what the model writes
-    must not hide or restyle the destination the card shows."""
+    """*text* without terminal escapes, control or format characters (bidi overrides, zero-width; newlines
+    kept): what the model writes must not hide, reorder or restyle the destination the card shows."""
     text = _ANSI_ESCAPE.sub("", text)
-    return "".join(ch for ch in text if ch == "\n" or unicodedata.category(ch) != "Cc")
+    return "".join(ch for ch in text if ch == "\n" or unicodedata.category(ch) not in ("Cc", "Cf"))
 
 
 def _session_base_dir(task_id) -> str | None:
