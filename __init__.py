@@ -58,8 +58,20 @@ def owner_client_available() -> bool:
     return connect_gateway is not None and discover_gateway_endpoint is not None
 
 
-def _tool_description() -> str:
-    """Default tool text. It never mentions ``@``; the ``to`` parameter does, when enabled."""
+# ux.md tool description, the ``to:`` paragraph. The present form is the only change.
+_TO_PARAGRAPH_OFF = (
+    "to: a session id (best for follow-ups: list and receipts give it; it survives compaction), "
+    "an exact title, or Home. If several match, or none, nothing is sent and you get the closest."
+)
+_TO_PARAGRAPH_ON = (
+    "to: a session id (best for follow-ups: list and receipts give it; it survives compaction), "
+    "@<project-slug> (that project's owner session), an exact title, or Home. "
+    "If several match, or none, nothing is sent and you get the closest."
+)
+
+
+def _tool_description(projects: bool) -> str:
+    """Tool text. ``projects`` selects the ``to:`` paragraph; the rest stays the default."""
     from .cli import INTERRUPT_SENTENCE
     from .frame import CATALOG_SENTENCE
 
@@ -74,8 +86,7 @@ def _tool_description() -> str:
     ])
     paragraphs = [
         lead,
-        "to: a session id (best for follow-ups: list and receipts give it; it survives compaction), "
-        "an exact title, or Home. If several match, or none, nothing is sent and you get the closest.",
+        _TO_PARAGRAPH_ON if projects else _TO_PARAGRAPH_OFF,
         "reply (required for send): none for a one-way note (nothing comes back); requested if you "
         "want an answer; waiting if they should answer first but your turn can go on (your call "
         "returns; the answer arrives as a new message).",
@@ -98,7 +109,7 @@ def _schema(projects: bool) -> dict:
     """Tool schema fixed for this process. ``projects`` is the register-time check."""
     from .cli import INTERRUPT_SENTENCE
 
-    description = _tool_description()
+    description = _tool_description(projects)
     return {
         "name": "intercom",
         "description": description,
