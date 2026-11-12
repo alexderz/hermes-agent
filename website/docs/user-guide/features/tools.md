@@ -326,15 +326,19 @@ platforms have no masked input, so the agent refuses there. It tells you to set 
 CLI, TUI or desktop session, or to add it to the profile's `.env` yourself. Never send keys in chat.
 
 When a secret belongs in a file instead (a token another program reads, for example), the agent uses
-`secret_file`: it names the secret, a path and an access level. Before you type anything, the prompt
-shows where the value will be saved: the full path, the mode, and the owner and group. A relative path
-is resolved in the session's working directory. `private` (the default) saves it as `0600`, readable
-only by the user Hermes runs as. `standard` saves it as `0640`, also readable by a group that user
-belongs to. A file is never world-readable, and the owner is always the user Hermes runs as. The agent
-only gets the path, mode, owner and size back.
+`secret_file`: it names the secret, a path and an access level. This works in the Webapp and the
+desktop app, whose secret dialog shows where the value will be saved before you type anything: the
+full path, the mode, and the owner and group. The CLI and TUI refuse it, because their prompts can only
+show text the agent wrote. A relative path is resolved in the session's working directory; with none,
+the agent must give an absolute path. `private` (the default) saves it as `0600`, readable only by the
+user Hermes runs as. `standard` saves it as `0640`, also readable by a group that user belongs to. A
+file is never world-readable, even in a folder with a default ACL, and the owner is always the user
+Hermes runs as. The agent only gets the path, mode, owner and size back.
 
 Hermes refuses before showing the prompt if it cannot save the file. That covers a missing or
 unwritable folder, a symbolic link on the path, a group the Hermes user is not in, and a file that
 already exists: a secret file is never overwritten. To replace one, the agent deletes the old file and
 asks again, or asks for a new file (such as `api-key.v2`) and swaps it in. Hermes writes the file with
-its own permissions, never with `sudo`, so it can only save where its user can already write.
+its own permissions, never with `sudo`, so it can only save where its user can already write. The
+file gets its name through a hard link, so on a filesystem without hard links (such as FAT or exFAT)
+the save fails after you submit, and nothing is written.
