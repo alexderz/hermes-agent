@@ -1,3 +1,5 @@
+> **Retired (v0.23 move), 2026-11-11.** Dashboard profile switching no longer applies; the Webapp opens rows in their own profile (F8 in `ux.md`). Kept for the record; do not build.
+
 # Story — Open a project chat from another profile
 
 - Id: `pcu-15-other-profile-chat`

@@ -1,3 +1,5 @@
+> **Retired (v0.23 move), 2026-11-11.** Replaced by `pcu-20` (and F4 in `ux.md`). Kept for the record; do not build.
+
 # Story — A project with no chats
 
 - Id: `pcu-06-empty-project`

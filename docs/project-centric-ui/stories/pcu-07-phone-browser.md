@@ -1,3 +1,5 @@
+> **Retired (v0.23 move), 2026-11-11.** Replaced by `pcu-21` (phone home-screen Webapp). Kept for the record; do not build.
+
 # Story — Projects in a phone browser
 
 - Id: `pcu-07-phone-browser`

@@ -1,3 +1,5 @@
+> **Retired (v0.23 move), 2026-11-11.** The standalone dashboard is no longer a surface; the family check is now part of `pcu-20`. Kept for the record; do not build.
+
 # Story — Family members are not slowed down
 
 - Id: `pcu-10-family-unaffected`

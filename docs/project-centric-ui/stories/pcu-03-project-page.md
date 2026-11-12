@@ -1,3 +1,5 @@
+> **Retired (v0.23 move), 2026-11-11.** No separate project page; the Webapp's entered project is the page (`pcu-19`). Kept for the record; do not build.
+
 # Story — Project page with the main chat on top
 
 - Id: `pcu-03-project-page`

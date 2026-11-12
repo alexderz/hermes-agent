@@ -1,3 +1,5 @@
+> **Retired (v0.23 move), 2026-11-11.** The Webapp project row's existing "+" already starts a chat in the primary folder. Kept for the record; do not build.
+
 # Story — New chat in the project
 
 - Id: `pcu-04-new-chat-here`

@@ -1,3 +1,5 @@
+> **Retired (v0.23 move), 2026-11-11.** Hermes Mobile is no longer a target; no issue drafts. Kept for the record; do not build.
+
 # Story — No "hermes" group in Hermes Mobile History (drafted issue 2)
 
 - Id: `pcu-13-mobile-history-home-group`

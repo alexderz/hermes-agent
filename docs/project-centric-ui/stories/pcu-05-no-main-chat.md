@@ -1,3 +1,5 @@
+> **Retired (v0.23 move), 2026-11-11.** Replaced by `pcu-20`. Kept for the record; do not build.
+
 # Story — Projects without a working main chat
 
 - Id: `pcu-05-no-main-chat`

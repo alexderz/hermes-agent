@@ -1,3 +1,5 @@
+> **Retired (v0.23 move), 2026-11-11.** Replaced by `pcu-18` (tap in the Webapp sidebar opens the main chat). Kept for the record; do not build.
+
 # Story — Open a project's main chat in one tap
 
 - Id: `pcu-02-open-main-chat`

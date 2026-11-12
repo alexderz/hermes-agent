@@ -1,3 +1,5 @@
+> **Retired (v0.23 move), 2026-11-11.** Hermes Mobile is no longer a target; no issue drafts. Kept for the record; do not build.
+
 # Story — Hermes Mobile project screen (drafted issue 1)
 
 - Id: `pcu-11-mobile-project-screen`
