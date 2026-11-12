@@ -122,10 +122,17 @@ describe('frameSizeFromMessage', () => {
   })
 
   it('accepts our message with our token, height clamped', () => {
-    expect(frameSizeFromMessage(msg(), 'tok')).toEqual({ height: 500, width: 300 })
+    expect(frameSizeFromMessage(msg(), 'tok')).toEqual({ fluid: false, height: 500, width: 300 })
     expect(frameSizeFromMessage(msg({ height: 12 }), 'tok')?.height).toBe(120)
     expect(frameSizeFromMessage(msg({ height: 5000 }), 'tok')?.height).toBe(1200)
     expect(frameSizeFromMessage(msg({ height: 500.7 }), 'tok')?.height).toBe(501)
+  })
+
+  it('flags a page that fills the frame viewport as fluid', () => {
+    expect(frameSizeFromMessage(msg({ width: 412, vw: 412 }), 'tok')?.fluid).toBe(true)
+    expect(frameSizeFromMessage(msg({ width: 300, vw: 412 }), 'tok')?.fluid).toBe(false)
+    expect(frameSizeFromMessage(msg({ width: 300, vw: 'x' }), 'tok')?.fluid).toBe(false)
+    expect(frameSizeFromMessage(msg({ width: 0, vw: 412 }), 'tok')?.fluid).toBe(false)
   })
 
   it('sanitizes width to 0 when missing or hostile', () => {

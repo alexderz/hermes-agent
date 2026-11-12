@@ -4,10 +4,13 @@ import { useEffect, useMemo, useState } from 'react'
 import { requestComposerSubmit } from '@/app/chat/composer/focus'
 import { useSessionView } from '@/app/chat/session-view'
 import { PreviewAttachment } from '@/components/chat/preview-attachment'
+import { Codicon } from '@/components/ui/codicon'
 import { PreviewDocumentFrame } from '@/components/ui/preview-document-frame'
 import { useThemeEpoch } from '@/hooks/use-theme-epoch'
 import { isReadFileErrorResult, readDesktopFileText } from '@/lib/desktop-fs'
 import { localPreviewTarget } from '@/lib/local-preview'
+
+import { INLINE_TABLE_CSS, inlineTableScript } from './inline-preview-tables'
 
 /**
  * `::preview{file="…"}` — a workspace HTML file rendered LIVE inside the
@@ -257,7 +260,8 @@ export function themePrelude(vars: Record<string, string>, font: string, colorSc
 
   return (
     `<style>:root{color-scheme:${colorScheme};${tokens}}` +
-    `html,body{margin:0;padding:0;background:transparent;color:var(--foreground,inherit);${fontRule}}</style>`
+    `html,body{margin:0;padding:0;background:transparent;color:var(--foreground,inherit);${fontRule}}` +
+    `${INLINE_TABLE_CSS}</style>`
   )
 }
 
@@ -280,7 +284,7 @@ export function measurementScript(token: string): string {
     'w=Math.ceil(w);' +
     'if(Math.abs(h-lastH)>1||Math.abs(w-lastW)>1){lastH=h;lastW=w;parent.postMessage({type:' +
     JSON.stringify(SIZE_MESSAGE_TYPE) +
-    ',token:t,height:h,width:w},"*")}}' +
+    ',token:t,height:h,width:w,vw:innerWidth},"*")}}' +
     'if(typeof ResizeObserver==="function"){var ro=new ResizeObserver(post);' +
     'ro.observe(document.documentElement);if(document.body)ro.observe(document.body)}' +
     'addEventListener("load",post);post()})()</script>'
@@ -291,7 +295,7 @@ export function measurementScript(token: string): string {
  *  then the measuring + intent scripts before `</body>` when present so they
  *  run after the page's own markup, appended otherwise. */
 export function withInlineChrome(doc: string, token: string, prelude: string): string {
-  const script = measurementScript(token) + intentScript(token)
+  const script = inlineTableScript() + measurementScript(token) + intentScript(token)
   const bodyClose = /<\/body\s*>/i.exec(doc)
   const framed = bodyClose ? doc.slice(0, bodyClose.index) + script + doc.slice(bodyClose.index) : doc + script
 
@@ -299,6 +303,9 @@ export function withInlineChrome(doc: string, token: string, prelude: string): s
 }
 
 export interface FrameSizeReport {
+  /** Content spans the whole frame viewport: a fluid page, which must keep
+   *  following the column instead of freezing at the width it first saw. */
+  fluid: boolean
   height: number
   /** Intrinsic content width, 0 when unmeasurable. */
   width: number
@@ -314,7 +321,7 @@ export function frameSizeFromMessage(data: unknown, token: string): FrameSizeRep
     return null
   }
 
-  const message = data as { type?: unknown; token?: unknown; height?: unknown; width?: unknown }
+  const message = data as { type?: unknown; token?: unknown; height?: unknown; width?: unknown; vw?: unknown }
 
   if (message.type !== SIZE_MESSAGE_TYPE || message.token !== token || typeof message.height !== 'number') {
     return null
@@ -329,7 +336,11 @@ export function frameSizeFromMessage(data: unknown, token: string): FrameSizeRep
       ? Math.round(message.width)
       : 0
 
+  const viewport =
+    typeof message.vw === 'number' && Number.isFinite(message.vw) && message.vw > 0 ? Math.round(message.vw) : 0
+
   return {
+    fluid: width > 0 && viewport > 0 && width >= viewport - 1,
     height: Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, Math.round(message.height))),
     width
   }
@@ -380,7 +391,10 @@ function InlineHtmlFrame({
   const [doc, setDoc] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
   const [measured, setMeasured] = useState<number | null>(null)
-  const [contentWidth, setContentWidth] = useState<number | null>(null)
+  // 'fluid': the page fills whatever it is given, so the frame stays column-wide
+  // (a fold opening, a rotated phone) instead of freezing at its first width.
+  const [contentWidth, setContentWidth] = useState<number | 'fluid' | null>(null)
+  const [collapsed, setCollapsed] = useState(false)
 
   // One token per mount: the message listener only trusts reports from the
   // document THIS mount injected, so two previews in one transcript (or a
@@ -481,7 +495,7 @@ function InlineHtmlFrame({
       // would feedback-loop: %-width children reflow narrower every time
       // the frame shrinks, spiraling toward zero.
       if (next.width > 0) {
-        setContentWidth(prev => prev ?? next.width)
+        setContentWidth(prev => prev ?? (next.fluid ? 'fluid' : next.width))
       }
     }
 
@@ -511,10 +525,23 @@ function InlineHtmlFrame({
   // Left-aligned in the message flow, like an image: the frame is only as
   // wide as its content (capped at the column). Fluid pages measure the
   // full viewport and stay full-bleed.
-  const width = contentWidth !== null ? Math.min(contentWidth, MAX_COLUMN_WIDTH) : undefined
+  const width = typeof contentWidth === 'number' ? Math.min(contentWidth, MAX_COLUMN_WIDTH) : undefined
+  const name = file.split('/').pop() || file
 
   return (
     <span className="my-2 block w-full max-w-160">
+      <button
+        aria-expanded={!collapsed}
+        className="flex max-w-full items-center gap-1 py-0.5 text-xs text-muted-foreground hover:text-foreground"
+        data-slot="inline-preview-toggle"
+        onClick={() => setCollapsed(value => !value)}
+        type="button"
+      >
+        <Codicon name={collapsed ? 'chevron-right' : 'chevron-down'} size="0.75rem" />
+        <span className="truncate">{name}</span>
+      </button>
+      {/* Hidden, not unmounted: the widget keeps its state across a collapse. */}
+      <span className="block" hidden={collapsed}>
       {framedDoc === null ? (
         <span
           className="block w-full animate-pulse rounded-md bg-[color-mix(in_srgb,currentColor_4%,transparent)]"
@@ -535,6 +562,7 @@ function InlineHtmlFrame({
           />
         </span>
       )}
+      </span>
     </span>
   )
 }
