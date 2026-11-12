@@ -42,8 +42,8 @@ no acknowledgement traffic, and a definitive way to address sessions.
 
 ## Round 7: security round 6 notes and the steered-echo gap
 
-Security round 6 accepted the trust boundaries at `6ccea9121f`. R5-2 / O23 is Alex's decision
-with the LLD (SM-Q18).
+Security round 6 accepted the trust boundaries at `6ccea9121f`. R5-2 / O23 was Alex's decision:
+he accepted it (SM-Q23 (a)). **Alex accepted this LLD on 2026-11-11 (SM-Q18).**
 
 | Item | Where |
 |---|---|
