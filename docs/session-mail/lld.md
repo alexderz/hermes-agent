@@ -9,7 +9,22 @@
   - **`poc/round3/poc.md` (round 3, v0.23: the base of this design)**.
 - Base: `integrate/session-mail-023`, from `alex/v0.23.1-canary-1110`
 - Tickets this LLD covers: Epic `DER-701`. Items G-1 … G-13 below; the manager files them at Groom
-- Date: `2026-11-11` (round 7: security notes N6-1, N6-2 and the steered-echo gap GW-4; round 6: security review round 5 folded in; round 5: gateway only, SM-Q20)
+- Date: `2026-11-11` (round 8: reply modes and `list` with ids; round 7: security notes N6-1, N6-2 and the steered-echo gap GW-4; round 6: security review round 5 folded in; round 5: gateway only, SM-Q20)
+
+## Round 8: reply modes, and `list` with ids
+
+Alex's change (2026-11-11, decided by the manager on his "you decide"). The goal is fewer tokens,
+no acknowledgement traffic, and a definitive way to address sessions.
+
+| Change | Where |
+|---|---|
+| `reply: none \| requested \| waiting` replaces `expect_reply`. It is **required** on the tool's `send` (no default), and the CLI defaults to `none` | B2, B9, B11 |
+| Labels `no reply needed` / `reply requested` / `waiting on your reply`; replies carry `reply optional`; new footers | B5 |
+| **A `none` note never gets anything back** (this fixes a gap: round 7's B8 step 3 did not check the flag, so a no-reply note steered into a busy turn mailed that turn's whole answer back) | B8 steps 3–4 |
+| **A reply is sent back only from an explicit `[REPLY <id>]` block**, never from the whole answer, so nothing loops by default | B8 step 4 |
+| `reply_mode` column replaces `expect_reply` | B7 |
+| `list` returns id, title, project, last active and state; leaves out runs unless `include_runs`; has `query` and `limit` (default 30, output size only) | B3, B9, B11 |
+| Every receipt carries the target's session id; the description says to follow up by session id | B9, B11 |
 
 ## Round 7: security round 6 notes and the steered-echo gap
 
@@ -196,9 +211,18 @@ Inputs:
   CLI);
 - `to`, `message`;
 - `delivery` (default `steer`);
-- `expect_reply` (default true);
+- `reply_mode`:
+  - from the tool's `send`: its required `reply` (`none`, `requested` or `waiting`), with no
+    default;
+  - from the CLI: `--reply`, default `none`;
+  - for an `ask`: `waiting`;
+  - **`optional` is set only by B8** for a reply (`reply_to` set). The tool and the CLI cannot
+    pass it;
 - `kind` (`send` or `ask`);
 - `reply_to`.
+
+A tool `send` without `reply` is `refused` / `reply-missing` (3) before step 0, with a one-line
+hint naming the three values. Nothing is recorded.
 
 | # | Step | Result |
 |---|---|---|
@@ -209,7 +233,7 @@ Inputs:
 | 4 | `record.insert(...)`, with `result` empty | The row exists before delivery |
 | 5 | `frame.build(...)` (B5), then `sanitize_user_prompt_text(text)` (L-2) once, then `header_sha = sha256(<span>)` stored in the row | The sender is the only writer of the frame and its hash |
 | 6 | `client.deliver_sync(target, text, delivery, submission_id)` (B1) | `applied`, `applied_detail`, or an error code |
-| 7 | `record.update(...)`; the receipt (B9), with `shared_chat = (target_chat_scope == "shared")` | — |
+| 7 | `record.update(...)`; the receipt (B9), with `shared_chat = (target_chat_scope == "shared")` and `target_session` | — |
 
 There is no lease lookup, no socket, no wake module and no gateway role. **The owner hosts every
 addressable session, live or cold.** A session the owner cannot take is `not-addressable`.
@@ -244,6 +268,27 @@ are no per-process endpoints to name.
 **Candidates** (at most 5, display only): title, id, last active, and `open` / `not open` /
 `admin dashboard`. The last comes from the owner's `session.list` (a read; `session:read`).
 
+**`list` (the tool's `list` action and `hermes intercom list`)** is the discovery side of
+addressing. It reads the owner, never intercom's registry:
+- **Reads:**
+  - `session.list{scope: "stored", picker: true}`, the owner's default 200 rows, for id, title,
+    source, `running`, `last_active_at` and `workspace`;
+  - `session.list{scope: "live"}` to tell `idle` from `closed`.
+- **Per session:**
+  - `id`: the compression tip's id, the one B3 rule 2 resolves;
+  - `title`;
+  - `project`: the `projects.db` project whose orchestrator the session is (B3 rule 3), else the
+    last path part of `workspace`, else empty;
+  - `last_active`;
+  - `state`: `running` (`running` true), `idle` (in the live list, not running) or `closed`
+    (stored only; a delivery reopens it).
+- **Runs left out by default:** sources `cron`, `subagent` and `oneshot` (the strings G-2
+  confirms) are dropped unless `include_runs: true`.
+- **`query`:** a case-insensitive substring match on title or project.
+- **Order and size:** newest `last_active` first. `limit` defaults to 30; it bounds the output's
+  size, never a delivery.
+- **No other filtering:** the sender's own session is listed, marked `(this session)`.
+
 #### B4. Chat scope (`scope.py`): the rule for messaging sessions, inside the plugin
 
 The rule is unchanged from LLD round 4 (F1, R2-1, R2-3, N1, N2). It moves from core into the
@@ -265,7 +310,7 @@ plugin, and it reads only published names.
 
 #### B5. Framing and the one relabel rule (`frame.py`)
 
-`build(message_id, sender, body, *, reply_label, requested_interrupt, kind, reply_to, user_name, sender_scope, target_scope) -> (text, echo)`.
+`build(message_id, sender, body, *, reply_mode, requested_interrupt, kind, reply_to, user_name, sender_scope, target_scope) -> (text, echo)`.
 The wording is exactly as in `ux.md` § "Header", § "Footer" and § "Variants".
 
 **Header line 1:**
@@ -273,6 +318,21 @@ The wording is exactly as in `ux.md` § "Header", § "Footer" and § "Variants".
 - A script sender: `hermes@script {label} says (message {message_id}):`. **The CLI always
   builds the script variant;** it cannot name a session as sender.
 - A messaging-platform sender: `hermes@{title} ({Platform} {chat_type}) says (…)`.
+
+**`{reply_label}` and the footer come from `reply_mode`:**
+
+| `reply_mode` | Label | Footer |
+|---|---|---|
+| `none` | `no reply needed` | "No reply is needed and none will be sent. If something here is wrong or blocks you, send a new message with the intercom tool." No `[REPLY]` or `[SILENT]` line: nothing goes back anyway |
+| `requested` | `reply requested` | Round 7's `send` footer: the `[REPLY <id>] … [/REPLY]` request, the whole-answer fallback, `[SILENT]` |
+| `waiting` | `waiting on your reply` | The `requested` footer, plus one line: "The sender cannot go on until you answer: answer this first, briefly." |
+| `optional` (a reply) | `reply optional` | "Only a `[REPLY <id>] … [/REPLY]` block is sent back; nothing else is. Write one only if you have more to say." |
+| `ask` (`kind`) | as `ux.md` has it | The `ask` footer (answer with `reply`), unchanged |
+
+- The `no approval; ask {user_name}` line, the script footer and the cron-oneshot-subagent
+  footer keep their wording. A `reply_mode` other than `none` to a script sender adds "the reply
+  is stored; the script reads it with `hermes intercom status`".
+- The final sentences are the ones above; `ux.md` carries the full footers (designer).
 
 **Field cleaning:** every interpolated field (title, label, source, platform, chat type,
 `user_name`) is cleaned:
@@ -288,7 +348,7 @@ The function is copied from `hermes_state_titles.sanitize_title` into the plugin
 - the **shared-chat line** when the target's scope is `shared`;
 - the **reply-destination footer line** when the sender's scope is `shared` (R2-2);
 - the **body**, after one blank line, relabelled;
-- the **footer** (send / script / cron-oneshot-subagent / `no reply needed` / `ask` variants);
+- the **footer**, chosen by `reply_mode` (table above), plus the script and cron-oneshot-subagent variants;
 - the **closing line** `📡 End of message {id}`.
 
 **`echo`:** header line 1 and the body, Markdown-escaped and with mentions escaped (F12), for B6.
@@ -394,8 +454,10 @@ So it is an **invariant: every submitted `text` starts with `📡`**, after
 - the first open runs under `os.umask(0o077)`. It creates `record.db` `O_EXCL` `0600`, then
   `chmod 0600` on `-wal` and `-shm` after the first write.
 
-The schema is round 4's. **Changed columns:** `host` and `host_kind` are replaced by
-`delivery_path` and `admission_id`.
+The schema is round 4's. **Changed columns:**
+- `host` and `host_kind` are replaced by `delivery_path` and `admission_id`;
+- `reply_mode` replaces `expect_reply` (round 8). The record is new in this chunk, so there is
+  no migration.
 
 ```sql
 CREATE TABLE IF NOT EXISTS messages (
@@ -407,8 +469,10 @@ CREATE TABLE IF NOT EXISTS messages (
   body TEXT NOT NULL,
   header_sha TEXT,                   -- sha256 of the whole framed span; written by the SENDER (F10, R2-4)
   sender_chat_scope TEXT, target_chat_scope TEXT,
-  expect_reply INTEGER NOT NULL, requested TEXT NOT NULL, applied TEXT, applied_detail TEXT,
-  result TEXT, detail TEXT, reply TEXT, reply_state TEXT,
+  reply_mode TEXT NOT NULL CHECK (reply_mode IN ('none','requested','waiting','optional')),
+  requested TEXT NOT NULL, applied TEXT, applied_detail TEXT,
+  result TEXT, detail TEXT, reply TEXT,
+  reply_state TEXT,                  -- NULL | 'sent' | 'silent' | 'stored' | 'no-block'
   created_at REAL NOT NULL, delivered_at REAL, replied_at REAL,
   echoed_at REAL                     -- set once by the echo claim (B6)
 );
@@ -427,15 +491,21 @@ session (Trial R3: `cli`, `tui`, `ntfy`):
 2. **Find messages:** lines starting `📡 Not ` and ending `message <8 hex>):`, spanning to
    `📡 End of message <id>`. The span's SHA-256 must equal `header_sha` (F10, R2-4; cannot be
    reproduced from the echo alone, N3).
-3. **Real candidates only:** `kind='send'`, the target is this session or its compression
-   lineage, and `reply_state IS NULL`.
-4. **Reply text:** the `[REPLY <id>]` block, else the whole answer. **Except** for a `shared`
-   sender scope, or `NULL` with a messaging `sender_source`: then only the block is sent; with no
-   block, `stored` / `shared-chat-no-block` (F1, R2-1).
+3. **Real candidates only:** `kind='send'`, **`reply_mode != 'none'`**, the target is this
+   session or its compression lineage, and `reply_state IS NULL`. A `none` note is never a
+   candidate: no block is captured and no answer is sent, whatever the turn says. Its
+   `reply_state` stays `NULL`.
+4. **Reply text, by `reply_mode`:**
+   - `requested` and `waiting`: the `[REPLY <id>]` block, else the whole answer. **Except** for a
+     `shared` sender scope, or `NULL` with a messaging `sender_source`: then only the block is
+     sent; with no block, `stored` / `shared-chat-no-block` (F1, R2-1).
+   - `optional` (the message was itself a reply): **only** the `[REPLY <id>]` block, never the
+     whole answer. With no block, nothing is sent and `reply_state='no-block'`. A debate goes on
+     only while a side writes a block.
 5. **Silence:** an empty block, `[SILENT]`, or with no block an empty answer or `[SILENT]` as the
    whole answer or its first or last line → `silent`.
 6. **Store, then deliver** on a fresh thread (`contextvars.copy_context().run`):
-   `route.send(sender=session_id, to=sender_session_id, message=reply, delivery="steer", expect_reply=False, reply_to=id)`.
+   `route.send(sender=session_id, to=sender_session_id, message=reply, delivery="steer", reply_mode="optional", reply_to=id)`.
    Not for `cron`, `subagent`, `oneshot` or script senders (SM-Q9 b). Nothing retries.
 7. Stopped and failed turns fire no hook (Trial Q9).
 
@@ -448,11 +518,18 @@ run in the owner, so intercom's waiter is resolved **in process**, without its s
 - A `[SILENT]` reply returns "nothing to add" at once (`reply_state='silent'`); a normal reply
   sets `answered`.
 - The CLI has no `ask`.
+- **`waiting` is not `ask`:** a `send` with `reply: waiting` returns its receipt at once; the
+  reply arrives later as a steer into the sender, like any reply. Only `ask` blocks the tool call.
 
 #### B9. Receipts, error codes, and the CLI (`cli.py`)
 
 **Receipt:**
-`{"ok", "receipt": "delivered"|"held"|"refused", "to", "message_id", "target_title", "target_session", "requested", "applied", "applied_detail", "shared_chat", "message", "error"}`.
+`{"ok", "receipt": "delivered"|"held"|"refused", "to", "message_id", "target_title", "target_session", "reply", "requested", "applied", "applied_detail", "shared_chat", "message", "error"}`.
+- **`target_session` is in every receipt** whose address resolved: deliveries and every refusal or
+  error after B2 step 1 (`own-session`, `not-addressable`, `injection-off`, `no-owner`, …). It is
+  the compression tip's id. `ambiguous` and `unknown` carry their candidates' ids instead. The
+  readable line ends with `(session <id>)`.
+- **`reply`** echoes the `reply_mode` that was framed.
 - **Cold start:** the `started` sentence for a target that was not open says the owner restored
   it: `"<title>" was not open, so the gateway reopened it and message <id> started a turn there.`
   It replaces round 3's "in the dashboard" wording (designer delta).
@@ -460,17 +537,21 @@ run in the owner, so intercom's waiter is resolved **in process**, without its s
 
 | `detail` | When | Exit |
 |---|---|---|
-| `empty`, `ambiguous`, `unknown`, `own-session` | refused (B2 steps 0–1) | 3 |
+| `reply-missing` (tool only), `empty`, `ambiguous`, `unknown`, `own-session` | refused (B2 inputs, steps 0–1) | 3 |
 | `not-addressable`, `injection-off`, `refused-by-owner` | the owner or the consent cannot take it | 4 |
 | `no-owner`, `owner-restarting`, `not-reachable` | not delivered | 5 |
 | `delivery-unknown` | sent, no answer | 6 |
 
-**CLI** (`register_cli_command("intercom", …)`): `send`, `list`, `status`, `log`, with the same
-flags as round 4 and exit codes 0–6 (0 delivered, 1 no such id, 2 usage, 3–6 as above).
+**CLI** (`register_cli_command("intercom", …)`): `send`, `list`, `status`, `log`, with round 4's
+flags except as below, and exit codes 0–6 (0 delivered, 1 no such id, 2 usage, 3–6 as above).
+- **`send --reply none|requested|waiting`**, default `none` (scripts and cron mostly notify). It
+  replaces `--no-reply`, which is now a usage error (2). A script cannot be woken (SM-Q9 b), so a
+  reply to it is stored; `status` shows it.
 - **The CLI is an owner client.** It runs the B2 send path in its own process, attaches with
   B1, and starts no turn of its own. It always frames as a script.
-- **`list`:** the owner's `session.list` for this profile (titles, ids, last active), not
-  intercom's peers.
+- **`list [--include-runs] [--query TEXT] [--limit N]`:** B3's `list`: id, title, project, last
+  active and state, newest first, 30 by default, runs left out. One row per line, id first;
+  `--json` gives the rows.
 - **`status`:**
   - for a queued or started delivery, the owner's `prompt.receipt` for `admission_id`
     (`queued` / `started` / `terminal`, read only);
@@ -478,7 +559,8 @@ flags as round 4 and exit codes 0–6 (0 delivered, 1 no such id, 2 usage, 3–6
     check: a `role='user' AND (active=1 OR compacted=1)` row whose span hashes to `header_sha`.
 
   It writes nothing, retries nothing and sets no timer. Round 4's pid and lease advice is removed.
-- **`log`:** as round 4, including `reply: stored (shared chat, no [REPLY] block)`.
+- **`log`:** as round 4, including `reply: stored (shared chat, no [REPLY] block)`, plus
+  `reply: none (not asked)` and `reply: none (no [REPLY] block)` for `no-block`.
 
 #### B10. Caps removed (`intercom:inbox.py`)
 
@@ -498,7 +580,18 @@ The cap tests are rewritten so that 20 identical messages in a minute all arrive
   - `action` (`list|send|ask|reply`);
   - `to`, `message`;
   - `delivery` (`interrupt|steer|queue`, default `steer`);
-  - `expect_reply`, `timeout`, `request_id`.
+  - `reply` (`none|requested|waiting`): **required for `send`**, no default, so the model
+    chooses each time. A JSON schema cannot require it for one action only, so the handler
+    refuses (`reply-missing`). It is ignored by the other actions;
+  - `include_runs`, `query`, `limit` (for `list`);
+  - `timeout`, `request_id` (for `ask`).
+- **Description, after the unchanged first sentence,** adds three short sentences:
+  - "`reply`: none for a note (nothing comes back), requested for an answer, waiting when you
+    need it before you go on.";
+  - "Use `ask` only when this turn cannot continue without the answer; otherwise `send` with
+    reply: waiting.";
+  - "For follow-ups, address by session id: `list` and every receipt give it, and it stays valid
+    after compaction." (Addressing already resolves an id to its compression tip, B3 rule 4.)
 - Alex's interrupt sentence appears word for word.
 - The handler is synchronous (`is_async=False`); a cold start plus RPCs stays well under the
   300-second `_run_async` limit, but there is no reason to use the async path. The sender comes
@@ -588,14 +681,14 @@ Operator acceptance: pending.
 |---|---|
 | G-1 listing PR | `tests/plugins/test_plugin_api_owner_client.py`: a plugin loaded through real discovery attaches with the listed names and runs `session.resume` + `prompt.submit`; `scripts/boundary_lint.py` passes for `plugins/intercom` |
 | G-2 owner client | `test_client.py` against a fake owner: each mode row, fallbacks, `stale_generation` → idle row, error mapping (`runtime_coordination_required` → `not-addressable`), `submission_id` idempotent, error text without URL or ticket; `connect_gateway` never called without an endpoint and `HERMES_TUI_GATEWAY_URL` never read (R5-5); resume sent with `omit_messages` and no transcript or handle field in any receipt, log or error (R5-4). **E2E** (`tests/plugins/intercom/test_e2e_owner.py`, real owner in a temp home, fake model, fake ntfy, CLI under a pty): Trial round 3's 24 cells rebuilt from scratch; also the exact `sessions.source` strings for local and owner sessions (B4); after an owner restart, no intercom socket exists under `$HERMES_HOME/intercom/sessions/` and no drain hook is registered (R5-1) |
-| G-3 send path | `test_route.py`: steps 0–7; `injection-off` for **every** target kind without consent (R5-3); the CLI frames as a script; own-session refused; a stored messaging chat whose user is not on the current allowlist is still delivered (operator power pinned, R5-2 b); every submitted `text` starts with `📡` (N2) |
+| G-3 send path | `test_route.py`: steps 0–7; `injection-off` for **every** target kind without consent (R5-3); the CLI frames as a script; own-session refused; a stored messaging chat whose user is not on the current allowlist is still delivered (operator power pinned, R5-2 b); every submitted `text` starts with `📡` (N2); a tool `send` without `reply` is refused `reply-missing` and records nothing; `reply_mode` is stored as passed, and the tool cannot pass `optional`; `target_session` is in the receipt for a delivery and for each refusal after step 1 |
 | G-4 addressing | `test_address.py`: title, `Home`, `local-…` and v0.22 id prefixes, ambiguous, `@slug` both ways, compression tip |
 | G-5 chat scope | `test_scope.py`: owner DM private, non-owner DM shared, unlisted group shared, listed group private, other-platform prefix shared, int entry ignored, corrupt `origin_json` shared, missing row shared, local `None`, fresh read |
 | G-6 echo | `test_echo.py`, plus the E2E with fake ntfy: an echo is posted in a private chat from the target's own turn, never in a shared chat, never for a lookalike (O21); the escaping cases (link text, `@everyone`, `<@…>`) through the real ntfy adapter, and per-platform escaper unit tests for the platforms in `echo_chats` (N3); after a delivery into an unlisted group, the fake server received only the turn's answer (N4); a private chat on a platform missing from `ECHO_ESCAPERS` gets no post and one warning (N6-2). **Steered echo (GW-4):** a steer whose turn's next step is the final answer is echoed once, before that answer; a steer that lands during the final request is echoed by the later turn's `pre_llm_call`; retries never post twice |
-| G-7 framing | `test_frame.py`: the exact header and variants, relabel cases (F4), cleaning (a newline in `--from` stays on line 1), echo escaping (F12), `_short_desc` → the 60-character sentence; every variant's text starts with `📡` after `sanitize_user_prompt_text` (N2) |
-| G-8 record | `test_record.py`: schema, modes on all three files, two writers |
-| G-9 replies and `ask` | `test_replies.py`: block / whole / silence, the record check, the shared-sender rule, SM-Q9 (b), reply via the owner client, in-process `ask` accepted only from the target's `reply` call, `[SILENT]` on `ask` |
-| G-10 CLI | `test_cli.py`: exit codes 0–6; `list` through `session.list`; `status` through `prompt.receipt` and the hashed transcript check. **Legacy path (R5-1):** on a build that publishes the owner names, with discovery returning `None`, `starting` or `draining`, `inbox.start()` is never called and no drain hook is registered; on a simulated old build, where importing the names **fails** (N6-1), it starts only where a `HermesCLI` instance exists |
+| G-7 framing | `test_frame.py`: the exact header and variants, relabel cases (F4), cleaning (a newline in `--from` stays on line 1), echo escaping (F12), `_short_desc` → the 60-character sentence; every variant's text starts with `📡` after `sanitize_user_prompt_text` (N2); the label and footer for each `reply_mode` (`none` has no `[REPLY]` or `[SILENT]` line; `waiting` adds the "cannot go on" line; `optional` asks for a block only) |
+| G-8 record | `test_record.py`: schema, modes on all three files, two writers; `reply_mode` rejects any value outside the four, and there is no `expect_reply` column |
+| G-9 replies and `ask` | `test_replies.py`: block / whole / silence, the record check, the shared-sender rule, SM-Q9 (b), reply via the owner client, in-process `ask` accepted only from the target's `reply` call, `[SILENT]` on `ask`. **Reply modes:** a `none` note steered into a busy turn sends nothing back, even when the turn's answer contains a `[REPLY <id>]` block (no delivery, `reply_state` stays `NULL`); a reply (`optional`) whose answer has no block sends nothing back (`no-block`); a reply with a block is delivered; `requested` and `waiting` still fall back to the whole answer; a `waiting` send returns at once |
+| G-10 CLI | `test_cli.py`: exit codes 0–6; `list` (CLI and tool) leaves out `cron`, `subagent` and `oneshot` sessions by default and returns each session's id (the compression tip's), with `include_runs`, `query`, `limit` (default 30) and the three states; `send` defaults to `--reply none`, and `--no-reply` is a usage error (2); `status` through `prompt.receipt` and the hashed transcript check. **Legacy path (R5-1):** on a build that publishes the owner names, with discovery returning `None`, `starting` or `draining`, `inbox.start()` is never called and no drain hook is registered; on a simulated old build, where importing the names **fails** (N6-1), it starts only where a `HermesCLI` instance exists |
 | G-11 relays | The relay skill text uses `hermes intercom send`; `scripts/dashboard_dispatch.py` is unchanged |
 | G-12 deploy | After the gateway restart: `hermes plugins list` shows intercom enabled in the owner; `hermes intercom send --to Home --message "deploy check" --delivery queue` exits 0; a message to an admin-dashboard chat exits 4 `not-addressable` |
 | Code health | `python scripts/check` (and lefthook, which needs ruff 0.15.22 in the build environment) |
