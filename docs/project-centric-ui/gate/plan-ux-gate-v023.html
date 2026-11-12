@@ -1,0 +1,98 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root{--fg:#e6edf3;--mut:#9aa7b4;--bd:#2d3b45;--card:#111c22;--teal:#0e9f8f;--amber:#d97706;--green:#16a34a;--violet:#7c3aed}
+  body{background:#0b1418;color:var(--fg);font-family:system-ui,sans-serif;margin:16px}
+  .w{width:780px;line-height:1.45;font-size:14px}
+  h2{font-size:18px;margin:0 0 4px} h3{font-size:13px;margin:18px 0 6px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut)}
+  .note{color:var(--mut);font-size:12.5px}
+  .row{display:flex;gap:14px;align-items:flex-start}
+  .frame{border:1px solid var(--bd);border-radius:10px;background:var(--card);overflow:hidden}
+  .bar{font-size:11px;color:var(--mut);padding:4px 8px;border-bottom:1px solid var(--bd)}
+  .side{width:200px;border-right:1px solid var(--bd);padding:6px 0;font-size:12px}
+  .side .h{padding:3px 10px;color:var(--mut);font-size:10.5px;text-transform:uppercase}
+  .side .r{padding:3px 10px;display:flex;justify-content:space-between;gap:6px}
+  .side .sel{background:#16303a}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:0}
+  .tag{font-size:10px;padding:0 5px;border-radius:4px;border:1px solid;white-space:nowrap}
+  .ok{color:var(--teal);border-color:var(--teal)} .am{color:var(--amber);border-color:var(--amber)} .gr{color:var(--green);border-color:var(--green)}
+  .m{color:var(--mut);font-size:11px}
+  .pane{flex:1;padding:8px 10px;font-size:12px}
+  .bubble{border:1px solid var(--bd);border-radius:8px;padding:5px 7px;margin:4px 0}
+  .comp{border:1px solid var(--bd);border-radius:8px;padding:5px 7px;margin-top:8px;display:flex;justify-content:space-between}
+  .btn{font-size:10.5px;padding:1px 7px;border-radius:5px;background:var(--teal);color:#fff;margin-left:4px}
+  .arrow{font-size:22px;color:var(--teal);align-self:center}
+  table{border-collapse:collapse;width:100%;font-size:13px} td,th{border-top:1px solid var(--bd);padding:5px 6px;vertical-align:top;text-align:left} th{width:160px}
+  .q{border:1px solid var(--bd);border-radius:10px;padding:8px 11px;margin-bottom:8px} .id{color:#a78bfa;font-weight:700}
+  .rec{color:var(--teal);font-weight:600}
+  .x{text-decoration:line-through;color:var(--mut)}
+</style>
+<div class="w">
+<h2>Project UI (DER-686), refreshed for Hermes v0.23</h2>
+<div class="note">Your surface is now the v0.23 Webapp (laptop, and the phone's home-screen copy). Hermes Mobile and the old dashboard are no longer targets. Sketches are drawn from <code>ux.md</code>, not the Spec mockups. Example data.</div>
+
+<h3>1 · Today in the Webapp vs. after slice 1 (laptop)</h3>
+<div class="row">
+  <div class="frame" style="width:220px"><div class="bar">today: tap "HIM - Hermes Improvement"</div>
+    <div class="side" style="width:auto;border:0">
+      <div class="r">← All projects</div>
+      <div class="h">HIM - Hermes Improvement</div>
+      <div class="r"><span>HIM - Project UI</span><span class="m">now</span></div>
+      <div class="r"><span>HIM - Session Mail</span><span class="m">1 h</span></div>
+      <div class="r"><span>HIM - T3 Code Frontend</span><span class="m">1 d</span></div>
+      <div class="r m">(Orchestrator is buried by date, or hidden under Pinned if pinned)</div>
+    </div>
+    <div class="pane m">Main pane: whatever chat you had open. Nothing opens.</div>
+  </div>
+  <div class="arrow">→</div>
+  <div class="frame" style="width:520px;display:flex">
+    <div class="side">
+      <div class="r">← All projects</div>
+      <div class="h">HIM - Hermes Improvement</div>
+      <div class="r sel"><span><span class="dot" style="background:var(--teal)"></span>HIM - Orchestrator</span></div>
+      <div class="r" style="padding-top:0"><span class="tag ok">Main chat · Working</span></div>
+      <div class="r"><span>HIM - Project UI</span><span class="m">now</span></div>
+      <div class="r"><span>HIM - Session Mail</span><span class="m">1 h</span></div>
+      <div class="r"><span>HIM - T3 Code Frontend</span><span class="m">1 d</span></div>
+    </div>
+    <div class="pane"><b>HIM - Orchestrator</b> <span class="m">opened by the tap</span>
+      <div class="bubble m">…the owner chat, resumed where you left it…</div>
+      <div class="bubble">Working on the routing step 2 tests…</div>
+      <div class="comp"><span class="m">Message…</span><span><span class="btn">Steer</span><span class="btn">Queue</span><span class="btn" style="background:#b91c1c">Stop</span></span></div>
+    </div>
+  </div>
+</div>
+<div class="note" style="margin-top:6px">One tap on a project opens its main chat and enters the project. The main chat is always the first row, even when pinned (it also stays in Pinned). Its state is a word, not just a dot: <span class="tag ok">Main chat · Working</span> <span class="tag am">Main chat · Needs your answer</span> <span class="tag gr">Main chat · Finished</span> <span class="tag ok">Main chat</span>. A project with no main chat behaves exactly as today.</div>
+
+<h3>2 · Phone (home-screen Webapp)</h3>
+<div class="row">
+  <div class="frame" style="width:200px;border-radius:18px"><div class="bar">drawer → tap project</div>
+    <div class="side" style="width:auto;border:0">
+      <div class="r"><span><span class="dot" style="background:var(--teal)"></span>HIM - Hermes Impr…</span></div>
+      <div class="r"><span><span class="dot" style="background:var(--violet)"></span>MDL - Model Testing</span></div>
+      <div class="r"><span><span class="dot" style="background:var(--amber)"></span>BDG - Budgeting</span></div>
+    </div></div>
+  <div class="arrow">→</div>
+  <div class="frame" style="width:200px;border-radius:18px"><div class="bar">drawer closes, chat shows</div>
+    <div class="pane"><b>HIM - Orchestrator</b><br><span class="tag ok">Main chat · Working</span><div class="bubble">Working on…</div>
+    <div class="comp"><span class="m">Message…</span><span><span class="btn">Steer</span></span></div></div></div>
+  <div class="note" style="width:320px">Two taps from the home screen: menu, then the project. Steer, Queue and Stop are the Webapp's existing controls. On v0.23 this works even for chats started by command-line one-shots: the Trial checked it (14/14 on a temporary home, fake model). <b>That fixes the "open in another window" error you hit, with no code from us.</b> The real browser and multi-hour turns get a live check after deploy.</div>
+</div>
+
+<h3>3 · What gets built</h3>
+<table>
+<tr><th>Main-chat field</th><td>One optional field per project (<code>owner_session_id</code>). Small core patch, same as planned on v0.22; the gateway passes it through unchanged. Session Mail's <code>@project</code> will read it.</td></tr>
+<tr><th>Webapp sidebar</th><td>Small core edit (plugins can't hook project rows): the tap opens the main chat, the main chat is listed first and marked, even when pinned. Code moves out of the oversized sidebar file, so it gets smaller.</td></tr>
+<tr><th>Set the main chats</th><td>New command <code>hermes project set-owner &lt;project&gt; &lt;session-id&gt;</code> (and <code>--clear</code>), with an undo file. Run once for the six: five "XXX - Orchestrator" chats plus "MDL - Model Master". Pins unchanged.</td></tr>
+<tr><th><code>/new</code> in a main chat</th><td>Only if you say yes (PUI-Q2): a small fork plugin copies Bot Chat's rule, so <code>/new</code> compacts the main chat in the Webapp. The command line keeps plain <code>/new</code>.</td></tr>
+<tr><th>Deploy</th><td>Pull, rebuild the Webapp bundle, then one drain-first gateway restart: it waits (up to 30 minutes) for running turns, scheduled when no main-chat turn is running. Reload the Webapp, or reopen the home-screen copy.</td></tr>
+<tr><th>Dropped by the v0.23 move</th><td><span class="x">Hermes Mobile issue drafts</span> · <span class="x">standalone-dashboard Projects tab</span> · <span class="x">kickoff command for phone steering</span> (v0.23 does it) · <span class="x">waiting for the v0.23 rebase</span></td></tr>
+<tr><th>Still deferred</th><td>A "make main chat" button, a main chat for Home, a <code>/new</code> guard outside the Webapp.</td></tr>
+</table>
+
+<h3>Decisions</h3>
+<div class="q"><span class="id">PUI-Q1</span> Accept this Plan and UX for slice 1 on v0.23? <span class="rec">Recommended: yes.</span> Next is Spec: detailed design, 2–3 mockup variants, a security review, then your OK on the detailed design.</div>
+<div class="q"><span class="id">PUI-Q2</span> <code>/new</code> in a main chat compacts it, in the Webapp only, like Bot Chat? <span class="rec">Recommended: yes.</span> On v0.23 it's about 40 lines in a plugin.</div>
+<div class="q"><span class="id">PUI-Q3</span> <span class="x">Move owner-chat runs to a dashboard command</span>: withdrawn. v0.23 already makes them steerable.</div>
+<div class="q"><span class="id">PUI-Q4</span> The six main chats: the five Orchestrators plus "MDL - Model Master", with pins left as they are? <span class="rec">Recommended: yes.</span></div>
+<div class="note">Documents: fork branch <code>integrate/project-centric-ui-023</code>, <code>docs/project-centric-ui/</code> (hld.md, ux.md, stories/pcu-18..23, poc/v023/).</div>
+</div>
