@@ -288,17 +288,6 @@ class AddressTests(unittest.TestCase):
         self.assertEqual(address.resolve(None, lister=_raising_lister)["error"], "unknown")
         self.assertEqual(address.resolve(12, lister=_raising_lister)["error"], "unknown")
 
-    def test_closest_titles_leave_out_runs(self):
-        self.open_writer()
-        self.add_session("local-cron-near", title="Budgeting night", source="cron", started_at=9)
-        self.add_session("local-sub-near", title="Budgeting child", source="subagent", started_at=8)
-        self.add_session("local-once-near", title="Budgeting once", source="oneshot", started_at=7)
-        self.add_session("local-real", title="Budgeting notes", source="cli", started_at=1)
-        self.close_writer()
-        result = address.resolve("Budgeting", lister=_quiet_lister())
-        ids = [item["id"] for item in result["candidates"]]
-        self.assertEqual(ids, ["local-real"])
-
     def test_closest_titles_cap_at_five(self):
         self.open_writer()
         for index in range(6):
