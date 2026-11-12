@@ -16,3 +16,4 @@ One line per landed item.
 - 2026-11-12 G13 (DER-727): Upstream drafts (drafts only; nothing is posted) — alexderz/hermes-intercom@badc1f7f6e
 - 2026-11-12 G14 (DER-728): Owner E2E of the integrated plugin (split from G-2) — alexderz/hermes-agent@f37fb90e79
 - 2026-11-12 G12 (DER-729): Vendor into hermes-agent, then deploy (gateway restart) — alexderz/hermes-agent@6052059ea6
+- 2026-11-12 G15 (DER-745): Reboot warning and resume through intercom — alexderz/hermes-intercom@44e09f2976
