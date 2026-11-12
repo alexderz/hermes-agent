@@ -91,7 +91,6 @@ _WS_WRITE_TIMEOUT_S = 10.0
 # cannot drain ~48 KiB in 30s is gone, and closing here starts its reconnect instead of leaving every
 # later frame and RPC reply parked behind the writer lock (#106369).
 _WS_SEND_DEADLINE_S = 30.0
-_WS_LOG_PAYLOAD_PREVIEW = 240
 # Frames read ahead of a busy dispatcher. RPCs still dispatch one at a time in arrival order, but on a
 # per-connection task so the read loop keeps answering gateway.ping while a handler blocks (a lock held
 # by a long compaction, a GIL-heavy turn): the client's heartbeat deadline measures the transport, not
@@ -701,7 +700,8 @@ async def handle_ws(ws: Any, *, auth_identity: dict | None = None, subprotocol: 
                 req = json.loads(line)
             except json.JSONDecodeError as exc:
                 parse_errors += 1
-                _log.warning("ws parse error peer=%s index=%d error=%s payload=%r", peer, messages, exc, line[:_WS_LOG_PAYLOAD_PREVIEW])
+                # Length only, never content: a garbled answer frame from a masked card carries its value.
+                _log.warning("ws parse error peer=%s index=%d error=%s payload_chars=%d", peer, messages, exc, len(line))
                 await _reply(_error(-32700, "parse error", None), "send_failed_after_parse_error",
                              "ws parse-error reply send failed peer=%s", peer)
                 continue

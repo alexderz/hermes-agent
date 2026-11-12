@@ -114,10 +114,20 @@ export interface SudoRequest extends KeyedPrompt {
   description?: string
 }
 
+// Where the gateway will save the answer when the agent asked for a file (`clarify(secret_file=...)`):
+// shown on the card before the user types. Absent: the profile's `.env`.
+export interface SecretFileDestination {
+  path: string
+  mode: string
+  owner: string
+  group: string
+}
+
 export interface SecretRequest extends KeyedPrompt {
   envVar: string
   prompt: string
   requestId: string
+  destination?: SecretFileDestination
 }
 
 // External password-manager unlock (agent/vault_backends): `vault.unlock_prompt`

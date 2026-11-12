@@ -408,7 +408,7 @@ class HostSupervisor:
             try:
                 frame = json.loads(raw)
             except json.JSONDecodeError:
-                logger.warning("compute host emitted invalid json: %r", raw[:200])
+                logger.warning("compute host emitted invalid json (%d chars)", len(raw))  # never its content
                 continue
             if isinstance(frame, dict):
                 self._handle_host_frame(frame)
