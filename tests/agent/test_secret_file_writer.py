@@ -165,3 +165,17 @@ def test_a_folders_default_acl_never_widens_the_file_past_its_mode(folder, acces
 
     assert "system.posix_acl_access" not in os.listxattr(folder / "key")  # no named user or group entries
     assert stat.S_IMODE((folder / "key").stat().st_mode) == mode
+
+
+@pytest.mark.parametrize("field, value", [
+    ("path", "key\u202egpj.txt"),   # right-to-left override: the name would read differently
+    ("path", "key\n0600 owner ok"),  # a line break would push fake facts into the card
+    ("path", "key\x00"),             # NUL: lstat would raise ValueError, not a refusal
+    ("name", "XYZ\u200bkey"),        # zero-width space
+    ("group", "staff\u2028"),        # line separator
+])
+def test_control_and_invisible_characters_are_refused(folder, field, value):
+    spec = {"name": "k", "path": str(folder / "key"), field: str(folder / value) if field == "path" else value}
+    with pytest.raises(SecretFileError, match=f"secret_file.{field} contains a control or invisible character"):
+        plan_secret_file(spec, base_dir=None)
+    assert os.listdir(folder) == []

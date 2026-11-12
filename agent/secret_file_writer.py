@@ -106,6 +106,20 @@ def _check_components(path: str) -> None:
                 f"with shell commands.")
 
 
+_HIDDEN_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp"})  # controls (NUL too), bidi/zero-width, line breaks
+
+
+def _refuse_hidden_characters(spec: dict) -> None:
+    """A path, name or group the card would draw differently from what is written: refused."""
+    import unicodedata
+    for field in ("path", "name", "group"):
+        text = str(spec.get(field) or "")
+        hidden = next((ch for ch in text if unicodedata.category(ch) in _HIDDEN_CATEGORIES), None)
+        if hidden is not None:
+            raise SecretFileError(f"secret_file.{field} contains a control or invisible character "
+                                  f"(U+{ord(hidden):04X}); use plain visible text.")
+
+
 def plan_secret_file(spec, *, base_dir: str | None) -> dict:
     """Validate a ``secret_file`` request; the destination the card shows and the writer gets."""
     from hermes_platform.host import facts
@@ -113,6 +127,7 @@ def plan_secret_file(spec, *, base_dir: str | None) -> dict:
         raise SecretFileError("secret_file is not available on a Windows host.")
     if not isinstance(spec, dict):
         raise SecretFileError("secret_file must be an object with at least a name.")
+    _refuse_hidden_characters(spec)
     name = str(spec.get("name") or "").strip()
     if not name:
         raise SecretFileError("secret_file.name must say what the secret is (for example \"XYZ API key\").")
