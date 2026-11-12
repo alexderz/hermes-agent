@@ -128,14 +128,28 @@ Webapp, Claude Projects, ChatGPT Projects.
      `gateway/run_notifications.py` and `tui_gateway/methods_session.py`.
    - One owner per project per profile (profiles are islands).
 2. **Webapp sidebar — core change** (decision 2).
-   - Tap: `onEnterProject` keeps scoping the sidebar and, when the project node has an owner,
-     also calls the sidebar's existing `onResumeSession(owner)`. No owner → exactly today's tap.
-   - Entered view: the owner row is pulled out above the lanes, marked "Main chat"; the rest of
-     the list is unchanged. The pin filter (`isHiddenFromProjects`) exempts the owner row **in
-     its own project only**; it still shows in Pinned too, so a pinned owner appears twice, once
-     marked.
-   - An owner id that matches no row in the project (session gone, archived, beyond the tree's
-     window) shows no owner row and changes nothing else.
+   - **One rule for the owner:** the owner counts as *found* only when its id matches one of the
+     project's rows (on either identity, `id` or `_lineage_root_id`), or is returned by the
+     single-session lookup Spec may add (Risks, "Tree window"). Found → the tap scopes the sidebar
+     **and** opens the owner chat (the sidebar's existing `onResumeSession(owner)`), and the
+     "Main chat" row is shown. Not found → the tap behaves exactly as today (scope only, no chat
+     opened) and no "Main chat" row is shown; the rest of the list is unchanged either way. The
+     three not-found cases, whatever the field holds:
+     1. **deleted** — the session no longer exists;
+     2. **archived** — the tree leaves archived sessions out;
+     3. **outside the tree's window** — older than the `session_limit` most recent sessions the
+        tree reads (the likely case for a long-ended owner).
+     No owner set → today's tap, as for not found. The tap never resumes an id it has not found.
+   - Entered view: the found owner row is pulled out above the lanes, marked "Main chat". The pin
+     filter (`isHiddenFromProjects`) exempts the owner row **in its own project only**; it still
+     shows in Pinned too, so a pinned owner appears twice, once marked.
+   - **Status as a word, not colour only:** the "Main chat" row shows a visible word next to the
+     mark for every status-dot state it can show (`SessionDotState`,
+     `app/chat/session-status-dot.tsx`, `store/session-dot-state.ts`): working and stalled
+     ("Working"), needs-input ("Needs your answer"), background ("Working in background"),
+     unread ("Finished"), draft ("Draft"); idle shows no dot and no word. The words reuse the
+     dot's existing translated labels (today only aria labels and hover titles, which a phone
+     cannot hover); the exact copy is the UX's (`ux.md`).
    - Size ratchet: `sidebar/index.tsx` is 2,078 lines (cap 2,000) and `ChatSidebar` runs from
      line 399 to the end, far over the 300-line function cap; both may only shrink. The pin
      identity set, `isPinnedSession`, `isHiddenFromProjects` and `onEnterProject` (about 50 lines
@@ -290,8 +304,11 @@ explicit go, never by a builder.
 - **Tests:** Python through `scripts/run_tests.sh` against a temporary `HERMES_HOME` (migration on
   an existing `projects.db`; set, clear, read through `projects.update`, `projects.list` and the
   tree; `set-owner` refuses an unknown session). Webapp logic in the `apps/desktop` vitest suite
-  (tap opens the owner; owner first and marked; pinned owner still in its project; no owner →
-  unchanged; the `/new` rule only in owner chats). Behaviour contracts, never source-reading
+  (tap opens the owner only when found; owner first and marked; pinned owner still in its
+  project; no owner, and each not-found case (deleted, archived, outside the tree's window) →
+  today's scope-only tap and no "Main chat" row; the "Main chat" row shows a visible status word
+  for each dot state — working, stalled, needs-input, background, unread, draft — and none for
+  idle; the `/new` rule only in owner chats). Behaviour contracts, never source-reading
   tests; each fix proven red on the base.
 - **Size ratchet:** `sidebar/index.tsx` and `ChatSidebar` must end smaller than on the base; new
   units meet the caps.
@@ -346,8 +363,9 @@ process) is dropped.
   likely; moving the owner and pin logic into a sibling keeps the carried diff small.
 - **Pinned owner shown twice** (Pinned and its project). Intended; the project copy is marked.
 - **Tree window.** The tree reads up to `session_limit` recent sessions; a long-idle owner could
-  fall outside it and lose its row. Spec decides whether the hook fetches the owner row on its
-  own (`session.info`) when absent.
+  fall outside it and lose its row (not-found case 3 in part 2). Spec decides whether the hook
+  fetches the owner row on its own (`session.info`) when absent; with that lookup, case 3 becomes
+  found (row and tap work), Spec says whether archived does too, and deleted never does.
 - **Name clash** of `owner_session_id` with unrelated fields elsewhere; mitigated by the
   docstring, kept for Session Mail.
 - **A plain `systemctl restart`** would interrupt running turns at once; the deploy uses the
