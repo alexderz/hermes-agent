@@ -1,3 +1,5 @@
+> **Retired (v0.23 move), 2026-11-11.** Hermes Mobile is no longer a target; no issue drafts. Kept for the record; do not build.
+
 # Story — New project chats start in the primary folder (drafted issue 2)
 
 - Id: `pcu-14-mobile-new-chat-primary-folder`

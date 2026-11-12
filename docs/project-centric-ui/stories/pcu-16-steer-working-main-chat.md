@@ -1,3 +1,5 @@
+> **Retired (v0.23 move), 2026-11-11.** The dashboard kickoff command is dropped; v0.23 runs every turn in the gateway. Replaced by `pcu-22`. Kept for the record; do not build.
+
 # Story — Steer a working main chat from the phone or the dashboard
 
 - Id: `pcu-16-steer-working-main-chat`

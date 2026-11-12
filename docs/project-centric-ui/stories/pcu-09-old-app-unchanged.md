@@ -1,3 +1,5 @@
+> **Retired (v0.23 move), 2026-11-11.** Hermes Mobile is no longer a target surface. Kept for the record; do not build.
+
 # Story — Today's Hermes Mobile keeps working
 
 - Id: `pcu-09-old-app-unchanged`

@@ -1,3 +1,5 @@
+> **Retired (v0.23 move), 2026-11-11.** Replaced by `pcu-23` (Webapp composer rule, only if Q2 is yes). Kept for the record; do not build.
+
 # Story — `/new` in the main chat compacts on Hermes Mobile
 
 - Id: `pcu-12-mobile-main-chat-compacts`

@@ -1,3 +1,5 @@
+> **Retired (v0.23 move), 2026-11-11.** The standalone dashboard Projects page is dropped; the Webapp sidebar's existing Projects list is the list. Kept for the record; do not build.
+
 # Story — Projects list on the dashboard
 
 - Id: `pcu-01-project-list`
