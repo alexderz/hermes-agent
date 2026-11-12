@@ -250,8 +250,13 @@ def _wire_callbacks(sid: str):
             val = _ask("secret", owner_sid, pl) if owner_sid else ""
         if not val:
             return {"success": True, "stored_as": env_var, "validated": False, "skipped": True, "message": "skipped"}
+        from agent.secret_file_writer import destination_of, secret_file_answer
+        if (destination := destination_of(metadata)) is not None:  # clarify(secret_file=...), never .env
+            return secret_file_answer(destination, val)
         from hermes_cli.config import save_env_value_secure
         return {**save_env_value_secure(env_var, val), "skipped": False, "message": "ok"}
+
+    secret_cb.accepts_secret_file = True
 
     set_sudo_password_callback(lambda: _ask(
         "sudo", sid, {"command": _redact_approval_command(get_sudo_prompt_command())}, timeout=120))

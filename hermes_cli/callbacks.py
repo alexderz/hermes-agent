@@ -33,11 +33,18 @@ def _skipped(var_name: str, reason: str, message: str) -> dict:
         "validated": False, "skipped": True, "message": message}
 
 
-def _secret_result(var_name: str, value: str) -> dict:
+def _secret_result(var_name: str, value: str, metadata=None) -> dict:
     """Store ``value`` (or report a skip when empty) and build the callback result dict."""
     if not value:
         cprint(f"\n{_DIM}  ⏭ Secret entry skipped{_RST}")
         return _skipped(var_name, "cancelled", "Secret setup was skipped.")
+    from agent.secret_file_writer import destination_of, secret_file_answer
+    if (destination := destination_of(metadata)) is not None:  # clarify(secret_file=...), never .env
+        result = secret_file_answer(destination, value)
+        saved = result.get("secret_file")
+        cprint(f"\n{_DIM}  ✓ Saved secret to {saved['path']}{_RST}" if saved else
+               f"\n  ✗ {result.get('error') or 'Secret entry skipped'}")
+        return result
     try:
         stored = save_env_value_secure(var_name, value)
     except ValueError as exc:  # a locked or denylisted key: the skill setup only logs it, so say why here
@@ -65,7 +72,7 @@ def prompt_for_secret(cli, var_name: str, prompt: str, metadata=None) -> dict:
             value = masked_secret_prompt(f"{prompt} (hidden, ESC or empty Enter to skip): ")
         except (EOFError, KeyboardInterrupt):
             value = ""
-        return _secret_result(var_name, value)
+        return _secret_result(var_name, value, metadata)
 
     response_queue = queue.Queue()
     cli._secret_state = {
@@ -90,7 +97,7 @@ def prompt_for_secret(cli, var_name: str, prompt: str, metadata=None) -> dict:
         cli._secret_state = None
         cli._secret_deadline = 0
         _invalidate(cli)
-        return _secret_result(var_name, value)
+        return _secret_result(var_name, value, metadata)
 
     cli._secret_state = None
     cli._secret_deadline = 0

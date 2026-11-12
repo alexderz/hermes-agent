@@ -305,7 +305,8 @@ _RAW_INLINE_TOOL_EXECUTORS: dict[str, InlineToolExecutor] = {
     "memory": _memory,
     "clarify": _tool(
         "tools.clarify_tool", "clarify_tool", ("questions", "questions"), ("secret_env", "secret_env"),
-        callback=lambda agent, ctx: agent.clarify_callback,
+        ("secret_file", "secret_file"),
+        callback=lambda agent, ctx: agent.clarify_callback, task_id=lambda agent, ctx: ctx.effective_task_id,
     ),
     "read_terminal": _callback_tool(
         "tools.read_terminal_tool", "read_terminal_tool", "read_terminal_callback",
