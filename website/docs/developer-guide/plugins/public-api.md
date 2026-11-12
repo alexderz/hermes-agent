@@ -141,8 +141,8 @@ with the runtime id that later verbs use; `prompt.submit` on that connection nee
 
 Text a plugin submits on another party's behalf goes through `sanitize_user_prompt_text`, the
 owner's own prompt cleanup. `CONTROL_FRAME_OPENERS` lists the openers of Hermes' own control frames
-(`[System: ...]`, the steer marker, ...); relabel any of them in relayed text, as hosted rooms do,
-so it cannot pass for a frame Hermes wrote.
+(`[System: ...]`, the steer marker, ...); relabel any of them in relayed text, in any letter case
+(as hosted rooms do), so it cannot pass for a frame Hermes wrote.
 
 ```python
 import re
@@ -154,7 +154,8 @@ from hermes_cli.gateway_runtime import discover_gateway_endpoint
 from hermes_cli.input_sanitize import sanitize_user_prompt_text
 from hermes_constants import get_hermes_home
 
-FRAME = re.compile(r"\[(?=" + "|".join(o.replace("]", r"\]") for o in CONTROL_FRAME_OPENERS) + ")")
+FRAME = re.compile(r"\[(?=" + "|".join(o.replace("]", r"\]") for o in CONTROL_FRAME_OPENERS) + ")",
+                   re.IGNORECASE)
 
 
 async def submit(session_id: str, text: str) -> dict:
