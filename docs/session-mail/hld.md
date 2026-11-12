@@ -32,7 +32,9 @@ hostname (served by the gateway), desktop, Ink TUI, classic CLI and messaging.
    `steer`). The strongest mode the target can take, at or below the request, is applied. An idle
    or cold target starts a turn.
 3. The receiver can tell a message from Alex's words, and treats it as a peer's (A′).
-4. The final answer goes back on its own; a debate ends at `[SILENT]`.
+4. The sender chooses `reply: none | requested | waiting`. A requested answer goes back on its
+   own (the block, else the whole answer); a note gets nothing back; a reply goes back only from
+   an explicit block, so a debate ends when no side writes one, or at `[SILENT]`.
 5. A durable record keeps sender, target, body, requested and applied mode, and the reply.
 6. The work lands in our intercom fork, plus **listing-only** core PRs, all upstreamable.
 
@@ -167,8 +169,11 @@ re-check.
 
 - **A′ framing** (SM-Q7): `📡 Not Alex · [interrupt asked · ]<label> · hermes@<sender> says (…)`,
   then the authority line, the body (relabelled), the footer and the closing line.
-- **Replies** (SM-Q8 option 2): the block, else the whole answer. The data-class exception is for
-  shared-chat senders.
+- **Replies** (SM-Q8 option 2), by the sender's `reply` mode (LLD B8; it replaces `expect_reply`):
+  `none` sends nothing back; `requested` and `waiting` send the block, else the whole answer; a
+  reply to a reply sends the block only. The data-class exception is for shared-chat senders.
+- **Discovery:** `list` gives each session's id, title, project, last active and state, without
+  runs by default; receipts carry the target's session id, the address to use for follow-ups.
 - **Senders whose run is over** (SM-Q9 b): replies to `cron`, `oneshot` and `subagent` senders
   are stored only.
 - **Addressing** (decision 2): titles, `@slug`, ids, `Home`, compression tip. No endpoint names.
