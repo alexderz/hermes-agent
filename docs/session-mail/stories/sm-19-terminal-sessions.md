@@ -10,14 +10,13 @@
 - **I want** a message to my terminal session to be delivered by that terminal, and to see it arrive the way my own typed input would
 - **So that** sessions can reach me where I actually work, and I can tell at once what arrived and what it did to my turn
 - **Done when**
-  - [ ] A message to a session open in a classic CLI is delivered by that CLI's process, in the requested mode or the strongest weaker one.
-  - [ ] The classic CLI prints its existing notice with the first 80 characters of the message, which start `📡 Not Alex · …`: `⏩ Steered: '…'` for a steer; `Queued for the next turn: …` for a queue; `↪ Redirected current turn: '…'` or `⚡ New message detected, interrupting...` for an interrupt; for an idle prompt, the message in the scrollback and a turn starts.
-  - [ ] A `steer` into a running CLI turn does not interrupt it (today's injection would).
-  - [ ] In the Ink TUI, the message appears as a user row starting with the 📡 header, delivered by the TUI's own backend.
+  - [ ] A message to a session open in a classic CLI or the Ink TUI is delivered by the gateway owner, which hosts it (the terminal is an owner client), in the requested mode or its fallback.
+  - [ ] The message appears in the terminal's transcript as a user row starting with the 📡 header. Whether the classic CLI also prints its existing notices (`⏩ Steered`, `Queued for the next turn`, `↪ Redirected current turn`) for input another client delivered is checked in the E2E (`ux.md` "Still to check"); this story does not require them.
+  - [ ] A `steer` into a running terminal turn does not interrupt it.
+  - [ ] In the Ink TUI, the message appears as a user row starting with the 📡 header.
   - [ ] At an idle classic CLI prompt with half-typed input, the message starts its turn and the half-typed text survives in the prompt (Trial-backed).
   - [ ] Half-typed input or a composer draft is never touched; Ctrl+C, typing and `/steer` work as with any turn.
-  - [ ] A message to a session open in a terminal that has not run a turn yet takes the dashboard wake path (HLD O18): the receipt says `started`, and the turn runs in the dashboard, as `ux.md` F13 describes.
-- **Out of scope** — new terminal notices or colours; delivering into a terminal before its first turn (O18, accepted for v1).
+- **Out of scope** — new terminal notices or colours.
 
 ## Optional
 

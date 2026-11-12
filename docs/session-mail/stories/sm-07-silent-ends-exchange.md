@@ -10,7 +10,7 @@
 - **I want** to keep answering for as long as I have something new, and to end it by answering `[SILENT]`
 - **So that** a debate can run its course with no counter cutting it short, and ends without empty "agreed" ping-pong
 - **Done when**
-  - [ ] Two sessions exchange at least four rounds by automatic replies, each a new message with its own id, on any pair of hosts (for example a terminal and a dashboard chat).
+  - [ ] Two sessions exchange at least four rounds by automatic replies, each a new message with its own id, on any pair of chat surfaces (for example a terminal and a Webapp chat).
   - [ ] An answer that is `[SILENT]` as a whole, on its first or last line, or a reply block that is empty or `[SILENT]`, or an empty answer, sends nothing, and the record says "silent".
   - [ ] `[SILENT]` mid-sentence is sent as content.
   - [ ] The plugin has no hop, round, rate, duplicate, length or daily limit (intercom's four caps are removed), and no timer that ends an exchange.

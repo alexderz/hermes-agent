@@ -12,8 +12,9 @@
 - **Done when**
   - [ ] In the Webapp's chat view on a phone-width screen (narrower than 768 px), a steered message that Hermes did not join with other text shows as its own user row where it landed, and the row's first wrapped line reads `📡 Not Alex · reply expected` (or the matching label), at least after a transcript reload.
   - [ ] A queued or started message that was not joined shows the same first wrapped line, followed by that turn's answer. A queued one shows once.
+  - [ ] Every user row is clamped to four lines, fading from about halfway; line 1 (`📡 Not Alex · <reply label> ·`) is in the clear part, and a tap on the expand chevron (⌄) under the row shows the authority line, body, footer and closing line (a tap on the row itself does not expand it).
   - [ ] A message sent with interrupt has a first line that reads `📡 Not Alex · interrupt asked · …`; after a redirect it follows the stopped answer.
-  - [ ] In a row joined with Alex's own steer or queued text, the 📡 header and `📡 End of message <id>` are both visible.
+  - [ ] In a row joined with Alex's own steer or queued text, the 📡 header and `📡 End of message <id>` are both visible after a tap on the row's expand chevron (⌄).
   - [ ] The sender's chat shows the `intercom` tool row with the target and the receipt.
   - [ ] Nothing relies on colour.
 - **Out of scope** — Webapp UI changes (SM-Q11); Hermes Mobile (SM-Q22).

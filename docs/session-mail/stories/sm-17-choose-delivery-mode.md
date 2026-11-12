@@ -11,7 +11,7 @@
 - **So that** I push exactly as hard as the situation needs, and know whether the other session's work was stopped, joined or left alone
 - **Done when**
   - [ ] `delivery` omitted means `steer`, on the tool and the CLI.
-  - [ ] The host applies the requested mode when the target supports it now; otherwise the strongest weaker one (interrupt > steer > queue), on every host.
+  - [ ] The owner applies the requested mode, with its fallbacks: a refused steer becomes `queue`; a refused redirect becomes a hard interrupt (still `interrupt`). An interrupt never falls back to steer or queue (LLD B1).
   - [ ] An idle target starts a turn whatever the mode, and the receipt says `started`.
   - [ ] The receipt carries `requested` and `applied` (`interrupt`, `steer`, `queue` or `start`, with `applied_detail` `redirect` or `hard-interrupt`); its `message` sentence and the CLI line name the applied mode in words, and add "asked: <requested>" when it is weaker; the record stores both.
   - [ ] The tool description contains, word for word: "Only use interrupt when you intend to stop what the other session is doing right now (it is wrong, or the work is obsolete). Otherwise use steer (default) or queue."

@@ -7,12 +7,12 @@
 ## Required
 
 - **As a** sender who knows another session is doing work that is now wrong
-- **I want** `delivery="interrupt"` to stop that work and run my message now, and, where the host cannot interrupt, to get the next strongest delivery and be told so
+- **I want** `delivery="interrupt"` to stop that work and run my message now, and, where the owner cannot redirect, to have the turn stopped hard instead, and be told which
 - **So that** wrong work stops as soon as possible, and I never believe I stopped something I did not
 - **Done when**
-  - [ ] Into a running turn on the dashboard, a classic CLI or the gateway, a v0.22 agent's turn is redirected and the message runs now (Trial round 2, R1). Only a media payload or an older agent falls back to a hard interrupt: the turn is stopped and the message is the next turn. Receipt: `interrupted`.
-  - [ ] The delivered message's line 1 says `interrupt asked` (the request; the frame is built before the host reports what it applied), and line 3 says: "The sender asked to interrupt. If your previous work in this session was stopped for this message, decide yourself whether to go back to it."
-  - [ ] Where interrupt is not possible now, the strongest weaker mode is applied: `queue` for a dashboard, desktop or Ink TUI session that is compacting (compaction demotes both interrupt and steer); `steer` for a classic CLI on a Hermes build without the seam. The receipt says "asked: interrupt"; the header still says `interrupt asked`, and its conditional line 3 stays true.
-  - [ ] Alex sees the surface's usual redirect: a classic CLI prints "↪ Redirected current turn" (or, in the hard-interrupt fallback only, "⚡ New message detected, interrupting…"); the dashboard, desktop and phone show the stopped answer, the message, then the new answer.
+  - [ ] Into a running turn, the owner redirects it and the message runs now (`interrupted`, `redirect`). If the owner refuses the redirect, it stops the turn hard and the message runs as the next turn (`interrupted`, `hard-interrupt`), with the receipt sentence "… stopped the running turn …; it runs as that session's next turn".
+  - [ ] The delivered message's line 1 says `interrupt asked` (the request; the frame is built before the owner reports what it applied), and line 3 says: "The sender asked to interrupt. If your previous work in this session was stopped for this message, decide yourself whether to go back to it."
+  - [ ] An interrupt never falls back to steer or queue; the header still says `interrupt asked`, and its conditional line 3 stays true after a redirect or a hard interrupt.
+  - [ ] Alex sees the usual redirect in the Webapp and desktop: the stopped answer, the message row, then the new answer. What a classic CLI prints is checked in the E2E.
   - [ ] Nothing is retried after a fallback.
 - **Out of scope** — interrupting a turn the sender's own session is running (own-session messages are refused).
