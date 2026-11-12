@@ -1,15 +1,21 @@
-"""``hermes intercom`` — send, list, status and log (LLD B9).
+"""``hermes intercom`` — send, list, status, log and reboot hooks (LLD B9).
 
 The CLI is an owner client. It runs ``route.send`` in this process with
 ``script=True``, starts no turn, and has no legacy-socket fallback. ``--reply``
 defaults to ``none``. ``--no-reply`` is not a flag, so argparse reports it as
 a usage error (exit 2).
+
+``reboot-notice`` and ``resume-after-reboot`` are an addition outside the LLD.
+They warn running sessions before a planned reboot and wake them after boot.
+Delivery rules are unchanged: no caps, holds, retries or approval gates, and
+one send per session per boot.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -124,6 +130,42 @@ def register_parser(parser: argparse.ArgumentParser) -> None:
     log.add_argument("--json", action="store_true", help="Print the rows as JSON.")
     log.set_defaults(func=intercom_command)
 
+    notice = subs.add_parser(
+        "reboot-notice",
+        help="Warn running sessions before a reboot",
+        formatter_class=_help_formatter,
+    )
+    notice.add_argument(
+        "--minutes", type=int, required=True,
+        help="Minutes until the reboot (the N in shutdown -r +N).",
+    )
+    notice.add_argument(
+        "--state-file", default=None,
+        help="Record path. Default: plugin-data/intercom/reboot-pending.json.",
+    )
+    notice.add_argument(
+        "--reason", default=None,
+        help="Why the machine will reboot. Default: package updates.",
+    )
+    notice.set_defaults(func=intercom_command)
+
+    resume = subs.add_parser(
+        "resume-after-reboot",
+        help="Wake sessions a reboot cut off",
+        formatter_class=_help_formatter,
+    )
+    resume.add_argument(
+        "--state-file", default=None,
+        help="Record written by reboot-notice.",
+    )
+    resume.add_argument(
+        "--max-age", default=None,
+        help="How recent that record still counts: 30s, 15m, 6h, 7d. Default 6h.",
+    )
+    # Tests pin the boot. Operators take btime from /proc/stat.
+    resume.add_argument("--boot-time", type=int, default=None, help=argparse.SUPPRESS)
+    resume.set_defaults(func=intercom_command)
+
 
 def main(argv=None) -> int:
     """Parse ``argv`` (without the ``intercom`` word) and return the exit code."""
@@ -149,7 +191,15 @@ def intercom_command(args: argparse.Namespace) -> int:
         return _cmd_status(args)
     if verb == "log":
         return _cmd_log(args)
-    print("usage: hermes intercom {send,list,status,log}", file=sys.stderr)
+    if verb == "reboot-notice":
+        return _cmd_reboot_notice(args)
+    if verb == "resume-after-reboot":
+        return _cmd_resume_after_reboot(args)
+    print(
+        "usage: hermes intercom "
+        "{send,list,status,log,reboot-notice,resume-after-reboot}",
+        file=sys.stderr,
+    )
     return 2
 
 
@@ -659,3 +709,513 @@ def _record_row(message_id):
         if row.get("id") == message_id:
             return row
     return None
+
+
+# ── reboot hooks ─────────────────────────────────────────────────────────────
+#
+# reboot-notice records running sessions and steers a warning. resume-after-reboot
+# queues one wake per session per boot, from that record or, when the record is
+# missing or stale, from sessions still mid-turn. A failed send is reported and
+# not repeated. Neither command adds a cap, a hold or an approval gate.
+
+_DEFAULT_REASON = "package updates"
+_NOTICE_SENDER = "reboot-notice"
+_RESUME_SENDER = "resume-after-reboot"
+_PENDING_NAME = "reboot-pending.json"
+# The owner's stored session.list is 200 rows. A limit of 30 would drop the rest.
+_REBOOT_LIST_LIMIT = 10000
+_EXCLUDED_RUNS = frozenset({"cron", "subagent"})
+_OWNER_WAIT_S = 300
+_OWNER_POLL_S = 5
+_DEFAULT_MAX_AGE = 6 * 3600
+_UNPLANNED_WINDOW_S = 900
+_PROC_STAT = Path("/proc/stat")
+_RESUME_TAIL = (
+    "and your turn was cut off. Continue where you left off. "
+    "Processes you started before the reboot (background jobs, systemd-run units, "
+    "tmux windows) did not survive: check them and restart what you still need."
+)
+_LATEST_SQL = (
+    "SELECT role, tool_calls, timestamp FROM messages "
+    "WHERE session_id = ? AND active = 1 ORDER BY id DESC LIMIT 1"
+)
+_AFTER_BOOT_SQL = (
+    "SELECT 1 FROM messages WHERE session_id = ? AND active = 1 AND timestamp > ? LIMIT 1"
+)
+
+
+def _cmd_reboot_notice(args) -> int:
+    reason = _clean_reason(getattr(args, "reason", None))
+    listed = address.list_sessions(include_runs=True, limit=_REBOOT_LIST_LIMIT)
+    if not isinstance(listed, dict) or listed.get("ok") is not True:
+        receipt = listed if isinstance(listed, dict) else {"ok": False, "error": "list-failed"}
+        _print_failure(receipt)
+        return 0
+    running = _running_from(listed.get("sessions"))
+    _atomic_json(_state_path(getattr(args, "state_file", None)), {
+        "written": time.time(),
+        "minutes": args.minutes,
+        "reason": reason,
+        "sessions": running,
+    })
+    if not running:
+        print("no running sessions")
+        return 0
+    _send_notice(running, _notice_text(args.minutes, reason))
+    return 0
+
+
+def _cmd_resume_after_reboot(args) -> int:
+    max_age = _parse_max_age(getattr(args, "max_age", None))
+    if max_age is None:
+        print(f"usage: invalid --max-age {args.max_age}", file=sys.stderr)
+        return 2
+    boot = _resolve_boot(getattr(args, "boot_time", None))
+    if boot is None:
+        print("usage: no boot time; /proc/stat has no btime (Linux only)", file=sys.stderr)
+        return 2
+    state = _state_path(getattr(args, "state_file", None))
+    if _same_boot(_recorded_boot(state), boot):
+        print("already resumed for this boot")
+        return 0
+    owner = _wait_for_owner()
+    if not isinstance(owner, dict) or owner.get("ok") is not True:
+        receipt = owner if isinstance(owner, dict) else {"ok": False, "error": "no-owner"}
+        _print_failure(receipt)
+        if receipt.get("error") in ("no-owner", "owner-restarting", None):
+            return 5
+        return _exit_for(receipt)
+    kind, payload = _classify_pending(state, max_age)
+    if kind == "fresh":
+        targets = _session_rows(payload)
+        text = _resume_text(_boot_clock(boot), _reason_of(payload), unplanned=False)
+    else:
+        targets = _unplanned_targets(boot)
+        if targets is None:
+            return 0
+        text = _resume_text(_boot_clock(boot), None, unplanned=True)
+    if targets:
+        _send_resume(targets, text, boot)
+    else:
+        print("no sessions to resume")
+    _write_done(state, boot, retire=kind in ("fresh", "stale"))
+    return 0
+
+
+def _notice_text(minutes, reason) -> str:
+    return (
+        f"This machine will reboot in about {minutes} minutes ({reason}). "
+        "Your current turn and any processes you started (background jobs, "
+        "systemd-run units, tmux windows) will stop. If it matters, write down "
+        "where you are now. After the reboot you will get a message telling you "
+        "to continue."
+    )
+
+
+def _resume_text(when, reason, *, unplanned: bool) -> str:
+    if unplanned:
+        head = f"This machine restarted unexpectedly at {when}"
+    else:
+        head = f"This machine rebooted at {when} ({reason})"
+    return f"{head} {_RESUME_TAIL}"
+
+
+def _boot_clock(boot: int) -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(boot))
+
+
+def _clean_reason(text) -> str:
+    if isinstance(text, str) and text.strip():
+        return text.strip()
+    return _DEFAULT_REASON
+
+
+def _reason_of(payload) -> str:
+    if not isinstance(payload, dict):
+        return _DEFAULT_REASON
+    return _clean_reason(payload.get("reason"))
+
+
+def _parse_max_age(text):
+    """Seconds, parsed like ``log --since``. ``None`` text is the 6h default.
+
+    A blank or unrecognised value is ``None`` so the caller can exit 2.
+    ``_parse_since`` treats a blank as 24h, which is the wrong default here.
+    """
+    if text is None:
+        return _DEFAULT_MAX_AGE
+    if not isinstance(text, str) or _SINCE.fullmatch(text.strip()) is None:
+        return None
+    return _parse_since(text.strip())
+
+
+def _resolve_boot(override):
+    """``--boot-time`` wins. Otherwise Linux ``btime``. ``None`` if neither works."""
+    if override is not None:
+        if isinstance(override, bool) or not isinstance(override, int):
+            return None
+        return override
+    return _btime_from_proc()
+
+
+def _btime_from_proc():
+    try:
+        text = _PROC_STAT.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] == "btime" and parts[1].isdigit():
+            return int(parts[1])
+    return None
+
+
+def _state_path(arg) -> Path:
+    if isinstance(arg, str) and arg.strip():
+        return Path(arg)
+    return _hermes_home() / "plugin-data" / "intercom" / _PENDING_NAME
+
+
+def _done_path(state: Path) -> Path:
+    name = state.name
+    if name.endswith(".json"):
+        done_name = name[: -len(".json")] + ".done.json"
+    else:
+        done_name = name + ".done.json"
+    return state.with_name(done_name)
+
+
+def _ensure_parent(path: Path) -> None:
+    directory = path.parent
+    directory.mkdir(parents=True, exist_ok=True)
+    reboot_dir = _hermes_home() / "plugin-data" / "intercom"
+    try:
+        same = directory.resolve() == reboot_dir.resolve()
+    except OSError:
+        same = False
+    if same:
+        os.chmod(directory, 0o700)
+
+
+def _atomic_json(path: Path, payload: dict) -> None:
+    """Write ``path`` as 0600 via ``O_EXCL`` and ``os.replace``. The umask stays put.
+
+    The open mode is 0600, then ``fchmod`` puts back any bit a umask cleared.
+    ``plugin-data/intercom`` is 0700. Other parents are only created.
+    """
+    _ensure_parent(path)
+    data = (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    fd = os.open(os.fspath(tmp), flags, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        view = memoryview(data)
+        while view:
+            written = os.write(fd, view)
+            if written <= 0:
+                raise OSError("short write")
+            view = view[written:]
+        os.fsync(fd)
+    except BaseException:
+        os.close(fd)
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    os.close(fd)
+    try:
+        os.replace(os.fspath(tmp), os.fspath(path))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    os.chmod(path, 0o600)
+    try:
+        dir_fd = os.open(os.fspath(path.parent), os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        try:
+            os.fsync(dir_fd)
+        except OSError:
+            pass
+    finally:
+        os.close(dir_fd)
+
+
+def _read_json(path: Path):
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+
+def _recorded_boot(state: Path):
+    payload = _read_json(_done_path(state))
+    if not isinstance(payload, dict):
+        return None
+    return payload.get("boot_time")
+
+
+def _same_boot(recorded, boot: int) -> bool:
+    if isinstance(recorded, bool) or not isinstance(recorded, (int, float)):
+        return False
+    return int(recorded) == int(boot)
+
+
+def _classify_pending(path: Path, max_age: int):
+    """``fresh``, ``stale``, ``absent`` or ``invalid``, and the parsed payload."""
+    if not path.is_file():
+        return "absent", None
+    payload = _read_json(path)
+    sessions = payload.get("sessions") if isinstance(payload, dict) else None
+    if not isinstance(sessions, list):
+        return "invalid", payload
+    if _pending_is_fresh(path, payload, max_age):
+        return "fresh", payload
+    return "stale", payload
+
+
+def _pending_is_fresh(path: Path, payload: dict, max_age: int) -> bool:
+    """Younger than ``max_age``. The file's ``written`` time, else its mtime."""
+    written = payload.get("written")
+    if isinstance(written, bool) or not isinstance(written, (int, float)):
+        try:
+            written = path.stat().st_mtime
+        except OSError:
+            return False
+    return time.time() - float(written) < max_age
+
+
+def _write_done(state: Path, boot: int, *, retire: bool) -> None:
+    done = _done_path(state)
+    _atomic_json(done, {"boot_time": int(boot)})
+    if not retire:
+        return
+    try:
+        if state.resolve() == done.resolve():
+            return
+    except OSError:
+        return
+    try:
+        os.unlink(state)
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        detail = exc.strerror or exc
+        print(
+            f"resume-after-reboot: could not retire {state.name}: {detail}",
+            file=sys.stderr,
+        )
+
+
+def _wait_for_owner():
+    """Poll until the gateway answers. Boot ordering, not a delivery retry.
+
+    ``client.list_sessions`` discovers an endpoint before any connect, so this
+    never calls ``connect_gateway`` itself. ``no-owner`` and ``owner-restarting``
+    keep waiting. Any other result is returned at once. Nothing is sent here.
+    """
+    tries = (_OWNER_WAIT_S // _OWNER_POLL_S) + 1
+    last = {"ok": False, "error": "no-owner"}
+    for attempt in range(tries):
+        found = client.list_sessions("live")
+        if isinstance(found, dict) and found.get("ok") is True:
+            return found
+        last = found if isinstance(found, dict) else {"ok": False, "error": "no-owner"}
+        if last.get("error") not in ("no-owner", "owner-restarting"):
+            return last
+        if attempt + 1 == tries:
+            return last
+        time.sleep(_OWNER_POLL_S)
+    return last
+
+
+def _running_from(rows) -> list:
+    """Running sessions, cron and subagent dropped, oneshot kept."""
+    chosen = []
+    if not isinstance(rows, list):
+        return chosen
+    for row in rows:
+        if not isinstance(row, dict) or row.get("state") != "running":
+            continue
+        source = row.get("source")
+        source = source.strip() if isinstance(source, str) else ""
+        if source in _EXCLUDED_RUNS:
+            continue
+        item = _id_title(row)
+        if item is not None:
+            chosen.append(item)
+    return chosen
+
+
+def _session_rows(payload) -> list:
+    rows = payload.get("sessions") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        return []
+    chosen = []
+    for row in rows:
+        if isinstance(row, dict):
+            item = _id_title(row)
+            if item is not None:
+                chosen.append(item)
+    return chosen
+
+
+def _id_title(row: dict):
+    sid = row.get("id")
+    if not isinstance(sid, str) or not sid.strip():
+        return None
+    title = row.get("title")
+    title = title.strip() if isinstance(title, str) else ""
+    return {"id": sid.strip(), "title": title}
+
+
+def _send_notice(targets, text) -> None:
+    for item in targets:
+        receipt = route.send(
+            _NOTICE_SENDER, item["id"], text, ctx=_ctx(),
+            delivery="steer", reply_mode="none", script=True,
+        )
+        print(_receipt_line(item["id"], receipt))
+
+
+def _send_resume(targets, text, boot: int) -> None:
+    conn = _open_state_ro()
+    try:
+        for item in targets:
+            sid = item["id"]
+            if conn is not None and _active_after(conn, sid, boot):
+                print(f"{sid} skipped: a message was stored after boot")
+                continue
+            receipt = route.send(
+                _RESUME_SENDER, sid, text, ctx=_ctx(),
+                delivery="queue", reply_mode="none", script=True,
+            )
+            print(_receipt_line(sid, receipt))
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _receipt_line(session_id, receipt) -> str:
+    if isinstance(receipt, dict) and receipt.get("ok") is True:
+        title = receipt.get("target_title") or ""
+        mid = receipt.get("message_id")
+        phrase = _applied_phrase(receipt)
+        return f'{session_id} message {mid} → "{title}": {phrase}'
+    if not isinstance(receipt, dict):
+        return f"{session_id} refused"
+    detail = receipt.get("message") or receipt.get("error") or "refused"
+    if not isinstance(detail, str) or not detail:
+        detail = "refused"
+    return f"{session_id} {detail.splitlines()[0]}"
+
+
+def _open_state_ro():
+    """Read-only ``state.db``, or None when it is missing or cannot be opened."""
+    path = _state_db()
+    if not path.is_file():
+        return None
+    try:
+        conn = _ro(path)
+    except sqlite3.Error:
+        return None
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _latest_active(conn, session_id):
+    try:
+        return conn.execute(_LATEST_SQL, (session_id,)).fetchone()
+    except sqlite3.Error:
+        return None
+
+
+def _active_after(conn, session_id, boot: int) -> bool:
+    """True when any active row was stored after boot. A read error is not that."""
+    try:
+        row = conn.execute(_AFTER_BOOT_SQL, (session_id, boot)).fetchone()
+    except sqlite3.Error:
+        return False
+    return row is not None
+
+
+def _unplanned_targets(boot: int):
+    """Sessions (never cron or subagent) mid-turn in the 15 minutes before boot.
+
+    The newest active row's timestamp has to fall in ``[boot - 900, boot]``, and
+    that row must not be a final assistant answer. Listing failure returns None
+    and prints the error; nothing is sent and the done file is left untouched.
+    """
+    listed = address.list_sessions(include_runs=True, limit=_REBOOT_LIST_LIMIT)
+    if not isinstance(listed, dict) or listed.get("ok") is not True:
+        receipt = listed if isinstance(listed, dict) else {"ok": False, "error": "list-failed"}
+        _print_failure(receipt)
+        return None
+    conn = _open_state_ro()
+    try:
+        chosen = []
+        for row in listed.get("sessions") or []:
+            if not isinstance(row, dict):
+                continue
+            source = row.get("source")
+            source = source.strip() if isinstance(source, str) else ""
+            if source in _EXCLUDED_RUNS:
+                continue
+            item = _id_title(row)
+            if item is None or conn is None:
+                continue
+            latest = _latest_active(conn, item["id"])
+            if latest is None or not _in_reboot_window(latest, boot):
+                continue
+            if _is_final_answer(latest["role"], latest["tool_calls"]):
+                continue
+            chosen.append(item)
+        return chosen
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _in_reboot_window(row, boot: int) -> bool:
+    stamp = row["timestamp"]
+    if isinstance(stamp, bool) or not isinstance(stamp, (int, float)):
+        return False
+    return (boot - _UNPLANNED_WINDOW_S) <= stamp <= boot
+
+
+def _is_final_answer(role, tool_calls) -> bool:
+    """An assistant turn that did not call a tool. Anything else is still open."""
+    return role == "assistant" and _tool_calls_empty(tool_calls)
+
+
+def _tool_calls_empty(value) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, (bytes, bytearray)):
+        value = bytes(value).decode("utf-8", "replace")
+    if isinstance(value, (list, tuple)):
+        return len(value) == 0
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    if text in ("", "[]", "null"):
+        return True
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return False
+    return parsed is None or parsed == []
