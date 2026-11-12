@@ -145,6 +145,17 @@
       "entries": [
         "hermes_cli.plugin_session:session_client"
       ]
+    },
+    {
+      "source": "public-api.md § Attaching to the profile's owner",
+      "entries": [
+        "hermes_cli.gateway_runtime:discover_gateway_endpoint",
+        "hermes_cli.gateway_client:connect_gateway",
+        "hermes_cli.gateway_client:GatewayClientError",
+        "hermes_cli.gateway_client:GatewayRPCError",
+        "agent.prompt_builder:CONTROL_FRAME_OPENERS",
+        "hermes_cli.input_sanitize:sanitize_user_prompt_text"
+      ]
     }
   ]
 }
