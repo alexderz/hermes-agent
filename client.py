@@ -51,6 +51,9 @@ ERRORS = {
 # kept, as are permission_denied, unsupported_control and invalid_params.
 _OWNER_CODES = {"runtime_coordination_required": "not-addressable"}
 _STALE = "stale_generation"
+# The gateway client's refusal of a request it never wrote (``GatewayClient.rpc`` on a closed
+# socket). Not a listed name, so its fixed text is matched; PublishedNamesTests pins it.
+_NOT_SENT = "Gateway disconnected before the request was sent; nothing was sent."
 _DISCOVERY_TIMEOUT = 2.0
 
 
@@ -164,9 +167,9 @@ async def _deliver(target, text, delivery, sub_id):
     endpoint, failure = _discover()
     if failure is not None:
         return failure
-    from hermes_cli.gateway_client import GatewayRPCError, connect_gateway
+    from hermes_cli.gateway_client import GatewayClientError, GatewayRPCError, connect_gateway
 
-    owner = _Owner(target, text, sub_id, GatewayRPCError)
+    owner = _Owner(target, text, sub_id, GatewayRPCError, GatewayClientError)
     result = None
     try:
         async with connect_gateway(endpoint) as client:
@@ -185,9 +188,9 @@ async def _deliver(target, text, delivery, sub_id):
 class _Owner:
     """One delivery's call sequence on one attached connection."""
 
-    def __init__(self, target, text, sub_id, rpc_error):
+    def __init__(self, target, text, sub_id, rpc_error, client_error):
         self.target, self.text, self.sub_id = target, text, sub_id
-        self.rpc_error = rpc_error
+        self.rpc_error, self.client_error = rpc_error, client_error
         self.client = None
         self.in_flight = False
 
@@ -198,12 +201,14 @@ class _Owner:
         return snapshot.get("running") is True, snapshot.get("execution_generation")
 
     async def hand(self, method, **params):
-        """A call that may admit the message: in doubt until the owner answers."""
+        """A call that may admit the message: in doubt until the owner answers, or until the
+        gateway client says it never wrote the request."""
         self.in_flight = True
         try:
             answer = await self.client.rpc(method, session_id=self.target, **params)
-        except self.rpc_error:
-            self.in_flight = False
+        except self.client_error as exc:
+            if isinstance(exc, self.rpc_error) or str(exc) == _NOT_SENT:
+                self.in_flight = False
             raise
         self.in_flight = False
         return answer if isinstance(answer, dict) else {}
