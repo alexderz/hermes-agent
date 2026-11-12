@@ -96,7 +96,7 @@ def _echo(texts, platform) -> None:
                                platform or "unknown", row["id"])
                 continue
             _schedule(row["id"], text)
-    except Exception as exc:
+    except Exception as exc:  # health: allow BLE001 -- log the type only; the message can be in the traceback
         logger.warning("intercom: echo hook failed (%s)", type(exc).__name__)
 
 
@@ -110,7 +110,7 @@ def _schedule(message_id: str, text: str) -> None:
 def _post(message_id: str, text: str) -> None:
     try:
         handle = _ctx["ctx"].post_message(text)
-    except Exception as exc:
+    except Exception as exc:  # health: allow BLE001 -- log the type only; the post error can carry the body
         logger.warning("intercom: echo of message %s failed (%s)", message_id, type(exc).__name__)
         return
     if not getattr(handle, "ok", False):
@@ -122,5 +122,5 @@ def _user_name() -> str:
     ctx = _ctx["ctx"]
     try:
         return (ctx.get_config("user_name", default=None) if ctx else None) or route.DEFAULT_USER_NAME
-    except Exception:
+    except Exception:  # health: allow BLE001 -- a config failure uses the default user name
         return route.DEFAULT_USER_NAME

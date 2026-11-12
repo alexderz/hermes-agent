@@ -211,7 +211,7 @@ def _body(args):
         return sys.stdin.read(), None
     path = Path(args.file)
     try:
-        return path.read_text(encoding="utf-8"), None
+        return path.read_text(encoding="utf-8-sig"), None
     except OSError:
         return None, f"usage: cannot read --file {args.file}"
 
@@ -393,7 +393,7 @@ def _status_check(row: dict):
 def _admitted_line(admission_id: str, session_id) -> str:
     try:
         answer = client.receipt(admission_id, session_id=session_id or "")
-    except Exception:
+    except Exception:  # health: allow BLE001 -- a receipt failure is reported as not admitted
         return "not admitted"
     if not isinstance(answer, dict) or answer.get("ok") is not True:
         return "not admitted"

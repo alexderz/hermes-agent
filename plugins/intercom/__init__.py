@@ -53,7 +53,7 @@ def owner_client_available() -> bool:
     try:
         from hermes_cli.gateway_client import connect_gateway
         from hermes_cli.gateway_runtime import discover_gateway_endpoint
-    except Exception:
+    except Exception:  # health: allow BLE001 -- any import failure selects the legacy path
         return False
     return connect_gateway is not None and discover_gateway_endpoint is not None
 
@@ -237,7 +237,7 @@ def _legacy_allowed() -> bool:
     ctx = _runtime.get("ctx")
     try:
         inbound = ctx.get_config("inbound", default="always") if ctx is not None else "always"
-    except Exception:
+    except Exception:  # health: allow BLE001 -- a config failure stays on the permissive default
         inbound = "always"
     return inbound != "never"
 
@@ -256,7 +256,7 @@ def _ensure_legacy_inbox() -> bool:
     try:
         inbox.start()
     except Exception as exc:
-        logger.warning("intercom inbox failed to start: %s", exc)
+        logger.warning("intercom inbox failed to start: %s", exc, exc_info=True)
         return False
     ctx = _runtime.get("ctx")
     if ctx is not None:
@@ -333,7 +333,7 @@ def _on_pre_llm_call(**_kw) -> dict:
     try:
         inbox.set_turn_active(True)
         pending = inbox.take_pending()
-    except Exception:
+    except Exception:  # health: allow BLE001 -- a drain failure must not break the turn
         return {}
     if not pending:
         return {"context": ""}
@@ -344,8 +344,8 @@ def _on_pre_llm_call(**_kw) -> dict:
 def _on_session_end(**_kw) -> None:
     try:
         inbox.set_turn_active(False)
-    except Exception:
-        pass
+    except Exception:  # health: allow BLE001 -- session-end bookkeeping must not raise
+        logger.debug("intercom turn flag was not cleared")
 
 
 def register(ctx) -> None:

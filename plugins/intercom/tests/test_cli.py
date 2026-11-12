@@ -245,7 +245,7 @@ class CliTestBase(unittest.TestCase):
 
 class PluginYamlTests(unittest.TestCase):
     def test_version_and_hooks(self):
-        text = (PACKAGE_DIR / "plugin.yaml").read_text(encoding="utf-8")
+        text = (PACKAGE_DIR / "plugin.yaml").read_text(encoding="utf-8-sig")
         self.assertIn("\nversion: 0.3.0\n", text)
         self.assertIn("provides_tools:\n  - intercom\n", text)
         self.assertIn(
@@ -934,7 +934,7 @@ class CapTests(CliTestBase):
 
         payload = json.dumps({"type": "send", "from_name": "a", "from_cwd": "/", "message": body}) + "\n"
         sock = Sock(payload.encode())
-        with mock.patch.object(inbox, "_peer_uid", return_value=os.getuid()), \
+        with mock.patch.object(inbox, "_peer_uid", return_value=getattr(os, "getuid", None)()), \
              mock.patch.object(inbox, "_deliver_local", return_value="steered") as deliver:
             inbox._serve(sock)
         self.assertIn(body, deliver.call_args.args[0])

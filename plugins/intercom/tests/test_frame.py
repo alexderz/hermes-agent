@@ -683,7 +683,7 @@ class CleaningTests(unittest.TestCase):
         self.assertEqual(line.count("\U0001f4e1"), 1 if line.startswith("\U0001f4e1") else 0)
 
     def test_sanitize_title_is_not_imported(self):
-        source = (PACKAGE_DIR / "frame.py").read_text(encoding="utf-8")
+        source = (PACKAGE_DIR / "frame.py").read_text(encoding="utf-8-sig")
         self.assertNotIn("import hermes_state_titles", source)
         self.assertNotIn("from hermes_state_titles", source)
 
