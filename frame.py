@@ -6,9 +6,11 @@
   the interrupt note, the shared-chat line, the body, the footer and the
   closing line, in the words of ``ux.md``.
 - ``echo`` is header line 1, a blank line and the body (what a private chat is
-  shown). It is not escaped. ``ECHO_ESCAPERS`` is the only list of platforms
-  that may be posted; the echo hook escapes with the target's entry and posts
-  nothing when the platform is missing.
+  shown). B5 describes that text as already escaped. B6 chooses the renderer
+  when the echo is posted, which is the only moment the platform is known, so
+  ``build`` returns the raw echo and ``escape_echo`` is what the hook calls.
+  A platform missing from ``ECHO_ESCAPERS`` returns ``None``; the hook posts
+  nothing.
 
 Every interpolated field is cleaned here. ``sanitize_title`` is copied into
 the plugin, not imported. Model text in the body cannot pass for the user's
@@ -87,12 +89,16 @@ _ZWSP = "\u200b"
 _AT_BROADCAST_RE = re.compile(r"@(everyone|here)\b", re.IGNORECASE)
 _ANGLE_MENTION_RE = re.compile(r"<(?=[@!#])")
 _MD_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^()]*(?:\([^()]*\)[^()]*)*)\)")
+# The label stops at the next tag, so a nested anchor peels from the inside on
+# a later pass. Nothing in the pattern crosses a tag or scans to the end of a
+# body that has no ``</a>`` (that form backtracks cubically).
 _HTML_ANCHOR_RE = re.compile(
-    r"<a\s+[^>]*href\s*=\s*([\"'])(.*?)\1[^>]*>(.*?)</a>",
-    re.IGNORECASE | re.DOTALL,
+    r"<a\s[^>]*?href\s*=\s*([\"'])([^\"'<>]*)\1[^>]*>([^<]*)</a>",
+    re.IGNORECASE,
 )
+# The label is atomic: a missing ``>`` fails once, instead of re-scanning.
 _SLACK_PIPE_RE = re.compile(
-    r"<((?:https?|mailto|tel):[^|>\s]+)\|([^>\n]+)>",
+    r"<((?:https?|mailto|tel):[^|>\s]+)\|((?>[^>\n]+))>",
     re.IGNORECASE,
 )
 # A ``<https://…>`` (with or without ``|label``) that the Slack adapter protects
@@ -117,11 +123,10 @@ _PLATFORM_NAMES = {
 class Sender:
     """Who a frame names.
 
-    ``kind`` is ``session``, ``script`` or ``messaging``. Leave it empty to
-    infer: ``script`` when ``script`` is set or a label has no session id;
-    ``messaging`` when ``platform`` and ``chat_type`` are set; otherwise a
-    session. ``request_id`` is the id an ``ask`` footer tells the target to
-    pass to ``reply``; it defaults to the message id.
+    ``kind`` is ``session``, ``script`` or ``messaging``. It is required, except
+    that ``script=True`` with no kind is a script (the CLI sender). ``request_id``
+    is the id an ``ask`` footer tells the target to pass to ``reply``; it
+    defaults to the message id.
     """
 
     title: str = ""
@@ -259,61 +264,42 @@ def _short_desc(description: str, max_chars: int = 60) -> str:
 
 
 def _sender_dict(sender) -> dict:
-    if isinstance(sender, str):
-        return {"title": sender, "kind": "session", "script": False}
-    if isinstance(sender, dict):
-        data = dict(sender)
-        data.setdefault("script", False)
-        return data
+    if not isinstance(sender, Sender):
+        raise TypeError("sender must be a Sender")
     return {
-        "title": getattr(sender, "title", "") or "",
-        "session_id": getattr(sender, "session_id", "") or "",
-        "label": getattr(sender, "label", "") or "",
-        "platform": getattr(sender, "platform", "") or "",
-        "chat_type": getattr(sender, "chat_type", "") or "",
-        "source": getattr(sender, "source", "") or "",
-        "kind": getattr(sender, "kind", "") or "",
-        "request_id": getattr(sender, "request_id", "") or "",
-        "script": bool(getattr(sender, "script", False)),
+        "title": sender.title or "",
+        "session_id": sender.session_id or "",
+        "label": sender.label or "",
+        "platform": sender.platform or "",
+        "chat_type": sender.chat_type or "",
+        "source": sender.source or "",
+        "kind": sender.kind or "",
+        "request_id": sender.request_id or "",
+        "script": bool(sender.script),
     }
 
 
 def _sender_kind(data: dict) -> str:
+    """``kind`` when it is set. A set ``script`` flag with no kind is a script."""
     kind = str(data.get("kind") or "").strip().casefold()
     if kind in {"session", "script", "messaging"}:
         return kind
     if data.get("script"):
         return "script"
-    if _optional(data.get("platform")) and _optional(data.get("chat_type")):
-        return "messaging"
-    if _optional(data.get("label")) and not _optional(data.get("session_id")):
-        return "script"
-    return "session"
+    raise ValueError("sender.kind must be session, script or messaging")
 
 
 def _scope_parts(scope) -> tuple[str | None, str, str, str]:
-    """``(value, platform, chat_type, title)``. ``value`` is private, shared or None."""
-    if scope is None or scope == "":
+    """``(value, platform, chat_type, title)`` from a ``Scope``, or all empty."""
+    if scope is None:
         return None, "", "", ""
-    if isinstance(scope, str):
-        value = scope if scope in {"private", "shared"} else None
-        return value, "", "", ""
-    if isinstance(scope, dict):
-        value = scope.get("value", scope.get("scope"))
-        return (
-            value,
-            scope.get("platform") or "",
-            scope.get("chat_type") or "",
-            scope.get("title") or "",
-        )
-    value = getattr(scope, "value", None)
-    if value is None:
-        value = getattr(scope, "scope", None)
+    if not isinstance(scope, Scope):
+        raise TypeError("scope must be a Scope or None")
     return (
-        value,
-        getattr(scope, "platform", "") or "",
-        getattr(scope, "chat_type", "") or "",
-        getattr(scope, "title", "") or "",
+        scope.value,
+        scope.platform or "",
+        scope.chat_type or "",
+        scope.title or "",
     )
 
 
@@ -497,14 +483,13 @@ def _footer_bullets(message_id: str, *, reply_mode: str, kind: str, user_name: s
         return bullets
 
     if reply_mode == "none":
-        bullets = [
+        # Nothing is sent back, so there is no reply-destination line. ux.md
+        # replaces footer lines 1–5 with this one line and keeps consent.
+        return [
             "No reply is needed and none will be sent. If something here is wrong or blocks you, "
             f"send a new message with the intercom tool. {_TOOL_HINT_SHORT}",
+            _consent(user_name),
         ]
-        if shared_line:
-            bullets.append(shared_line)
-        bullets.append(_consent(user_name))
-        return bullets
 
     if reply_mode == "optional":
         first = (
@@ -548,11 +533,17 @@ def _rewrite_links(text: str) -> str:
     """One layer of HTML anchors, markdown links and Slack ``<url|label>`` links.
 
     Each becomes ``label (url)``. A nested link leaves the outer layer in
-    place; the caller repeats this until the text settles.
+    place; the caller repeats this until the text settles. A form that cannot
+    close (no ``</a>``, no ``](``, no ``>``) is skipped: the pattern could not
+    match, and scanning it is what a hostile body uses to stall the hook.
     """
-    text = _HTML_ANCHOR_RE.sub(lambda m: f"{m.group(3)} ({m.group(2)})", text)
-    text = _MD_LINK_RE.sub(lambda m: f"{m.group(1)} ({m.group(2)})", text)
-    return _SLACK_PIPE_RE.sub(lambda m: f"{m.group(2)} ({m.group(1)})", text)
+    if "</a" in text.lower():
+        text = _HTML_ANCHOR_RE.sub(lambda m: f"{m.group(3)} ({m.group(2)})", text)
+    if "](" in text:
+        text = _MD_LINK_RE.sub(lambda m: f"{m.group(1)} ({m.group(2)})", text)
+    if ">" in text and "|" in text:
+        text = _SLACK_PIPE_RE.sub(lambda m: f"{m.group(2)} ({m.group(1)})", text)
+    return text
 
 
 def _neutralise(text: str) -> str:
@@ -630,19 +621,43 @@ ECHO_ESCAPERS = {
 }
 
 
+def escape_echo(echo, platform, *, telegram_mode: str = "MarkdownV2") -> str | None:
+    """Escape one echo for the platform it will be posted to.
+
+    B5 calls the echo "Markdown-escaped and with mentions escaped". B6 escapes
+    for the target's renderer, and the platform is known only when the hook
+    posts, so ``build`` returns the raw echo and the hook calls this. Returns
+    ``None`` when ``platform`` is not in :data:`ECHO_ESCAPERS` (the hook logs
+    and posts nothing). ``telegram_mode`` is ``"HTML"`` when that adapter sends
+    HTML; the default is the MarkdownV2 send path.
+    """
+    key = str(platform or "").strip().casefold()
+    if key not in ECHO_ESCAPERS:
+        return None
+    if key == "telegram":
+        return escape_telegram(echo or "", mode=telegram_mode)
+    return ECHO_ESCAPERS[key](echo or "")
+
+
 def build(message_id, sender, body, *, reply_mode, requested_interrupt, kind,
           reply_to, user_name, sender_scope, target_scope) -> tuple[str, str]:
     """Frame one message. Returns ``(text, echo)``.
 
     ``text`` starts with ``📡`` for every variant (session, script, messaging,
     send, reply, ask). ``echo`` is header line 1, a blank line and the body,
-    with no authority line, interrupt note, shared-chat line or footer. Escape
-    it with :data:`ECHO_ESCAPERS` for the target platform before posting.
+    with no authority line, interrupt note, shared-chat line or footer. It is
+    not escaped: :func:`escape_echo` does that for the target platform.
+
+    ``sender`` is a :class:`Sender`. ``sender_scope`` and ``target_scope`` are
+    a :class:`Scope` or ``None``. ``reply_mode`` is ``none``, ``requested``,
+    ``waiting`` or ``optional``, except an ``ask``, which does not use it.
     """
     data = _sender_dict(sender)
     sender_kind = _sender_kind(data)
     mode = str(reply_mode or "").strip().casefold()
     message_kind = str(kind or "send").strip().casefold()
+    if message_kind != "ask" and mode not in _REPLY_LABELS:
+        raise ValueError("reply_mode must be none, requested, waiting or optional")
     user = sanitize_title(user_name)
     mid = sanitize_title(message_id)
     reply = _optional(reply_to)
@@ -663,7 +678,7 @@ def build(message_id, sender, body, *, reply_mode, requested_interrupt, kind,
     if message_kind == "ask":
         reply_label = _ASK_LABEL
     else:
-        reply_label = _REPLY_LABELS.get(mode, sanitize_title(mode))
+        reply_label = _REPLY_LABELS[mode]
 
     header = _header(
         user, reply_label, sender_kind, sender_name, session_id, reply, mid,
