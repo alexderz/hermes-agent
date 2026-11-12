@@ -91,7 +91,7 @@ This design follows Alex's settled decisions 1–12 (brief) and assumes the brie
 
 ### Failures and edge cases
 
-**F1. Ambiguous or unknown address: refused, with candidates.** `to="Orchestrator"` matches five titles: nothing is sent; the receipt lists the five exact titles and ids. `to="Budgetting — Orchestrator"` (a typo) matches nothing: nothing is sent; the closest titles are listed (title, id, last active, and whether it is open, not open, or held by the admin dashboard), or none. With the project feature present, an unknown `@<slug>` (no such unarchived project) is refused the same way, listing up to five of the closest project slugs instead (LLD B3 rule 3). An empty or whitespace-only message is refused the same way. The CLI prints the lists to standard error and exits 3.
+**F1. Ambiguous or unknown address: refused, with candidates.** `to="Orchestrator"` matches five titles: nothing is sent; the receipt lists the five exact titles and ids. `to="Budgetting — Orchestrator"` (a typo) matches nothing: nothing is sent; the closest titles are listed (title, id, last active, and whether it is open or not open), or none. With the project feature present, an unknown `@<slug>` (no such unarchived project) is refused the same way, listing up to five of the closest project slugs instead (LLD B3 rule 3). An empty or whitespace-only message is refused the same way. The CLI prints the lists to standard error and exits 3.
 
 **F1b. A project address that cannot be used.** Both are refused, exit 3, and nothing is recorded as delivered:
 - *The project feature is absent* (the launch state): any `to` starting with `@` returns `refused` (`project-addressing-unavailable`): `Project addressing is not available on this Hermes. Use list (filter by project) and address the session by id.` The tool description never mentions `@project` in this state, so a model only gets here by guessing.
@@ -247,7 +247,7 @@ Every receipt carries the target's session id (`target_session`), the address to
 | `refused` (`reply-missing`, tool only) | `Nothing was sent: choose reply: none, requested or waiting.` Nothing is recorded (LLD B2) |
 | `refused` (`project-addressing-unavailable`) | `Project addressing is not available on this Hermes. Use list (filter by project) and address the session by id.` Nothing was sent. The sentence is the spec's, kept word for word, so it has no "Nothing was sent" prefix; the list filter it names is `list`'s `query` parameter, which matches title or project |
 | `refused` (`no-owner-set`) | `Project @<slug> has no owner session set. Address a session by id (from list).` Nothing was sent. (LLD B3 rule 3's wording) |
-| `refused` (ambiguous / unknown / empty / own session) | `Nothing was sent.` then the reason, and up to five candidate lines where there are any: title, id, last active, and open / not open / admin dashboard |
+| `refused` (ambiguous / unknown / empty / own session) | `Nothing was sent.` then the reason, and up to five candidate lines where there are any: title, id, last active, and open / not open (a chat held by the admin dashboard is refused `not-addressable` only when sent to) |
 | `error` (`refused-by-owner`) | `Not delivered: the gateway refused it (<code>). Nothing was sent.` |
 | `error` (`not-addressable`) | `"<title>" is open in the admin dashboard, which intercom cannot reach. Nothing was sent.` |
 | `error` (`injection-off`) | `Not delivered: intercom may not deliver messages in this Hermes profile (allow_gateway_injection is off). Nothing was sent.` |

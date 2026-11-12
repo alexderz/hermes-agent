@@ -301,8 +301,12 @@ cheap. On v0.23 today, DER-686 is not built, so the check is false and `@project
 `SessionDB` is published (`hermes_state`). The v0.22 **endpoint-name** rule is removed: there
 are no per-process endpoints to name.
 
-**Candidates** (at most 5, display only): title, id, last active, and `open` / `not open` /
-`admin dashboard`. The last comes from the owner's `session.list` (a read; `session:read`).
+**Candidates** (at most 5, display only): title, id, last active, and `open` / `not open`, from the
+owner's `session.list` (a read; `session:read`). v0.23's `session.list` rows carry no holder, so a
+chat held by the admin dashboard shows as `open` or `not open` here and is refused
+`not-addressable` at send time (B1, B9). **Ruling (manager, 2026-11-12, at Build, G4):** the third
+label `admin dashboard` is dropped; no published read can produce it, and adding one would be a core
+change. Closest-title matching uses published `SessionDB` reads only, never private methods.
 
 **`list` (the tool's `list` action and `hermes intercom list`)** is the discovery side of
 addressing. It reads the owner, never intercom's registry:
