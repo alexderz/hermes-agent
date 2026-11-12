@@ -223,19 +223,17 @@ class AddressTests(unittest.TestCase):
         self.assertEqual(first["availability"], "open")
         self.assertEqual(first["last_active"], 111.0)
         self.assertEqual(second["availability"], "not open")
-        self.assertEqual(third["availability"], "admin dashboard")
+        # held_by is not a session.list field, so a stored-only row stays not open.
+        self.assertEqual(third["availability"], "not open")
         self.assertEqual(calls, [("stored", True), ("live", False)])
         for item in result["candidates"]:
             self.assertEqual(set(item), {"title", "id", "last_active", "availability"})
 
-    def test_explicit_availability_and_lister_failure(self):
+    def test_lister_failure_still_returns_the_refusal(self):
         self.open_writer()
         self.add_session("local-amb-a", title="A", started_at=2)
         self.add_session("local-amb-b", title="B", started_at=1)
         self.close_writer()
-        stored = [{"id": "local-amb-a", "availability": "admin dashboard", "last_active_at": 3}]
-        result = address.resolve("local-amb-", lister=_quiet_lister(stored, []))
-        self.assertEqual(result["candidates"][0]["availability"], "admin dashboard")
         failed = address.resolve("local-amb-", lister=_raising_lister)
         self.assertEqual(failed["error"], "ambiguous")
         self.assertIsNone(failed["candidates"][0]["last_active"])
@@ -289,6 +287,17 @@ class AddressTests(unittest.TestCase):
         self.assertEqual(empty["error"], "unknown")
         self.assertEqual(address.resolve(None, lister=_raising_lister)["error"], "unknown")
         self.assertEqual(address.resolve(12, lister=_raising_lister)["error"], "unknown")
+
+    def test_closest_titles_leave_out_runs(self):
+        self.open_writer()
+        self.add_session("local-cron-near", title="Budgeting night", source="cron", started_at=9)
+        self.add_session("local-sub-near", title="Budgeting child", source="subagent", started_at=8)
+        self.add_session("local-once-near", title="Budgeting once", source="oneshot", started_at=7)
+        self.add_session("local-real", title="Budgeting notes", source="cli", started_at=1)
+        self.close_writer()
+        result = address.resolve("Budgeting", lister=_quiet_lister())
+        ids = [item["id"] for item in result["candidates"]]
+        self.assertEqual(ids, ["local-real"])
 
     def test_closest_titles_cap_at_five(self):
         self.open_writer()
@@ -345,12 +354,15 @@ class AddressTests(unittest.TestCase):
                 if path.exists():
                     path.unlink()
                 self.make_projects([{"slug": "budgeting", "name": "Budgeting", "owner": owner}])
-                result = address.resolve("@Budgeting", lister=_raising_lister)
+                result = address.resolve("@budgeting", lister=_raising_lister)
                 self.assertEqual(result["error"], "no-owner-set")
                 self.assertEqual(result["message"], NO_OWNER.format(slug="budgeting"))
                 self.assertEqual(result["candidates"], [])
                 self.assertNotIn("local-orch", repr(result))
                 self.assertNotIn("Nothing was sent", result["message"])
+        other_case = address.resolve("@Budgeting", lister=_raising_lister)
+        self.assertEqual(other_case["error"], "unknown")
+        self.assertNotIn("local-orch", repr(other_case))
 
     def test_unknown_slug_lists_closest_slugs_only(self):
         self.enable_projects()
@@ -764,6 +776,13 @@ class AddressTests(unittest.TestCase):
         ]
         listed = address.list_sessions(lister=_quiet_lister(rows, []))
         self.assertEqual([item["id"] for item in listed["sessions"]], ["s-new", "s-old", "s-none"])
+
+
+class PrivateImportTests(unittest.TestCase):
+    def test_plugin_imports_only_published_names(self):
+        from hermes_cli.plugin_validate_private_imports import private_import_findings
+
+        self.assertEqual(private_import_findings(PACKAGE_DIR), [])
 
 
 class _Ctx:
