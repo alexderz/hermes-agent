@@ -165,3 +165,36 @@ def test_a_name_with_terminal_escapes_is_refused_before_the_card(folder):
         result = json.loads(clarify_tool(QUESTION, callback=_never_called,
                                          secret_file={"name": "XYZ\x1b[31m key", "path": str(folder / "key")}))
     assert "control or invisible character" in result["error"] and card.shown == []
+
+
+def _relative_ask(task_id, card=None):
+    with bind_turn_secret_capture(card or _Card()):
+        return json.loads(clarify_tool(QUESTION, callback=_never_called, task_id=task_id,
+                                       secret_file={"name": "k", "path": "key"}))
+
+
+def test_a_registered_workspace_wins_over_the_recorded_cwd_as_in_the_terminal_tool(tmp_path):
+    from tools.terminal_tool import clear_task_env_overrides, record_session_cwd, register_task_env_overrides
+    (tmp_path / "workspace").mkdir()
+    (tmp_path / "recorded").mkdir()
+    register_task_env_overrides("task-precedence", {"cwd": str(tmp_path / "workspace")})
+    record_session_cwd("task-precedence", str(tmp_path / "recorded"))
+    try:
+        result = _relative_ask("task-precedence")
+    finally:
+        clear_task_env_overrides("task-precedence")
+    assert result["secret_file"]["path"] == str(tmp_path / "workspace" / "key")
+
+
+def test_a_relative_path_falls_back_to_the_configured_terminal_cwd(folder, monkeypatch):
+    monkeypatch.setenv("TERMINAL_CWD", str(folder))
+    assert _relative_ask("task-without-cwd")["secret_file"]["path"] == str(folder / "key")
+
+
+def test_with_no_session_folder_a_relative_path_is_refused_not_put_in_the_gateways_cwd(folder, monkeypatch):
+    monkeypatch.delenv("TERMINAL_CWD", raising=False)
+    monkeypatch.chdir(folder)  # the gateway process's own launch folder
+    card = _Card()
+    result = _relative_ask("task-without-cwd", card)
+    assert "give an absolute path" in result["error"]
+    assert card.shown == [] and os.listdir(folder) == []
