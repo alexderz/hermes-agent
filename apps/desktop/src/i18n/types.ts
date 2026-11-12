@@ -4177,6 +4177,8 @@ export interface Translations extends NoticeTranslations {
     secretTitle: string
     secretDesc: string
     secretPlaceholder: string
+    secretSavedTo: string
+    secretFileFacts: (mode: string, owner: string) => string
     vaultUnlockSendFailed: string
     vaultUnlockTitle: (name: string) => string
     vaultUnlockDesc: (name: string) => string
