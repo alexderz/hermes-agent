@@ -9,7 +9,21 @@
   - **`poc/round3/poc.md` (round 3, v0.23: the base of this design)**.
 - Base: `integrate/session-mail-023`, from `alex/v0.23.1-canary-1110`
 - Tickets this LLD covers: Epic `DER-701`. Items G-1 … G-13 below; the manager files them at Groom
-- Date: `2026-11-11` (round 8: reply modes and `list` with ids; round 7: security notes N6-1, N6-2 and the steered-echo gap GW-4; round 6: security review round 5 folded in; round 5: gateway only, SM-Q20)
+- Date: `2026-11-11` (round 9: project addressing only with the project plugin; round 8: reply modes and `list` with ids; round 7: security notes N6-1, N6-2 and the steered-echo gap GW-4; round 6: security review round 5 folded in; round 5: gateway only, SM-Q20)
+
+## Round 9: project addressing only when the project plugin is present
+
+Alex (2026-11-11): "Project messaging needs to detect if our project plugin is there and not
+offer that if it's not; we can't rely on naming."
+
+| Change | Where |
+|---|---|
+| The title fallback `<name> — Orchestrator` is gone. `@<slug>` resolves only through DER-686's project feature (its plugin enabled **and** `projects.owner_session_id` present); a project with no owner set is refused `no-owner-set`, never guessed | B3 rule 3 |
+| A feature check at `register()` and on every call; without it, a `to` starting with `@` is refused `project-addressing-unavailable` | B3, B9 |
+| The tool description and schema are built at `register()` from the check: no `@project` wording without the feature | B11 |
+| `list` keeps `project`, now from Hermes's own `project_folders` and the session's folder | B3 `list` |
+| SM-Q10 withdrawn: no "Model Master" rename | Land step 4, G-12 |
+| At launch DER-686 is not built on v0.23, so `@project` is not offered; sessions address by id, exact title or `Home` | — |
 
 ## Round 8: reply modes, and `list` with ids
 
@@ -257,10 +271,32 @@ The first rule that matches wins:
 1. `Home`, or an exact title: `SessionDB.get_session_by_title`.
 2. A session id or id prefix (v0.23 `local-…` ids and v0.22 ids alike): `resolve_session_id`.
    More than one match → ambiguous.
-3. `@<slug>`: `projects.db` read-only. `owner_session_id` if the column exists and is set
-   (DER-686), else the exact title `<name> — Orchestrator`. "Model Master" is renamed at deploy
-   (SM-Q10).
+3. `@<slug>`, **only when project addressing is available** (below):
+   - the `projects` row with that `slug` (not archived), else `refused` / `unknown`, with up to 5
+     project slugs as candidates;
+   - its `owner_session_id`, else `refused` / `no-owner-set`: `Project @<slug> has no owner
+     session set. Address a session by id (from list).` Nothing is guessed from titles;
+   - that session id through `resolve_session_id`; a missing session is `unknown`.
+
+   **Without project addressing**, any `to` starting with `@` is `refused` /
+   `project-addressing-unavailable`: `Project addressing is not available on this Hermes. Use
+   list (filter by project) and address the session by id.` It is never tried as a title.
 4. Then `get_compression_tip`.
+
+**Project addressing is available** only when both hold:
+- **the project plugin is enabled** in this profile: `settings.project_plugin` is in the
+  profile's `plugins.enabled`, read fresh as B2 step 3 reads its key. The setting defaults to
+  the id DER-686 ships (not fixed yet; its HLD says `plugins/<projects>/`), and house-infra sets
+  it;
+- **the column exists:** `PRAGMA table_info(projects)` lists `owner_session_id`. The read uses
+  `get_hermes_home() / "projects.db"`, opened `file:…?mode=ro` with `sqlite3`.
+  - It does not use `hermes_cli.projects_db.connect`: that runs migrations (a write) and is not
+    published.
+  - A missing file or any read error means "not available".
+
+`check_project_addressing()` runs at `register()`, which fixes the tool description (B11). It
+runs again on every resolve, so a removed plugin or column is refused at once; both reads are
+cheap. On v0.23 today, DER-686 is not built, so the check is false and `@project` is not offered.
 
 `SessionDB` is published (`hermes_state`). The v0.22 **endpoint-name** rule is removed: there
 are no per-process endpoints to name.
@@ -277,8 +313,12 @@ addressing. It reads the owner, never intercom's registry:
 - **Per session:**
   - `id`: the compression tip's id, the one B3 rule 2 resolves;
   - `title`;
-  - `project`: the `projects.db` project whose orchestrator the session is (B3 rule 3), else the
-    last path part of `workspace`, else empty;
+  - `project`: discovery, not addressing, so no naming rule.
+    - The name of the Hermes project whose `project_folders.path` holds the session's `workspace`
+      (its repo root, else its cwd), longest path first. This is read from `projects.db` the same
+      read-only way, and works with or without DER-686.
+    - Else the last path part of `workspace`, else empty.
+    - Never derived from a title;
   - `last_active`;
   - `state`: `running` (`running` true), `idle` (in the live list, not running) or `closed`
     (stored only; a delivery reopens it).
@@ -537,7 +577,7 @@ run in the owner, so intercom's waiter is resolved **in process**, without its s
 
 | `detail` | When | Exit |
 |---|---|---|
-| `reply-missing` (tool only), `empty`, `ambiguous`, `unknown`, `own-session` | refused (B2 inputs, steps 0–1) | 3 |
+| `reply-missing` (tool only), `empty`, `ambiguous`, `unknown`, `own-session`, `project-addressing-unavailable`, `no-owner-set` | refused (B2 inputs, steps 0–1; B3 rule 3) | 3 |
 | `not-addressable`, `injection-off`, `refused-by-owner` | the owner or the consent cannot take it | 4 |
 | `no-owner`, `owner-restarting`, `not-reachable` | not delivered | 5 |
 | `delivery-unknown` | sent, no answer | 6 |
@@ -585,6 +625,15 @@ The cap tests are rewritten so that 20 identical messages in a minute all arrive
     refuses (`reply-missing`). It is ignored by the other actions;
   - `include_runs`, `query`, `limit` (for `list`);
   - `timeout`, `request_id` (for `ask`).
+- **Built at `register()`:** `register()` runs `check_project_addressing()` (B3) and builds the
+  `to` description and the tool description from it:
+  - **available:** `to` reads "a session id, an exact title, `Home`, or `@<project>` (the
+    project's owner session)";
+  - **not available:** `to` reads "a session id, an exact title, or `Home`", with no `@` anywhere
+    in the schema or description.
+
+  The schema is fixed for the process. A change takes the gateway restart that any plugin change
+  needs, so no session's tool list changes mid-conversation. Calls still re-check (B3).
 - **Description, after the unchanged first sentence,** adds three short sentences:
   - "`reply`: none for a note (nothing comes back), requested for an answer, waiting when you
     need it before you go on.";
@@ -682,13 +731,13 @@ Operator acceptance: pending.
 | G-1 listing PR | `tests/plugins/test_plugin_api_owner_client.py`: a plugin loaded through real discovery attaches with the listed names and runs `session.resume` + `prompt.submit`; `scripts/boundary_lint.py` passes for `plugins/intercom` |
 | G-2 owner client | `test_client.py` against a fake owner: each mode row, fallbacks, `stale_generation` → idle row, error mapping (`runtime_coordination_required` → `not-addressable`), `submission_id` idempotent, error text without URL or ticket; `connect_gateway` never called without an endpoint and `HERMES_TUI_GATEWAY_URL` never read (R5-5); resume sent with `omit_messages` and no transcript or handle field in any receipt, log or error (R5-4). **E2E** (`tests/plugins/intercom/test_e2e_owner.py`, real owner in a temp home, fake model, fake ntfy, CLI under a pty): Trial round 3's 24 cells rebuilt from scratch; also the exact `sessions.source` strings for local and owner sessions (B4); after an owner restart, no intercom socket exists under `$HERMES_HOME/intercom/sessions/` and no drain hook is registered (R5-1) |
 | G-3 send path | `test_route.py`: steps 0–7; `injection-off` for **every** target kind without consent (R5-3); the CLI frames as a script; own-session refused; a stored messaging chat whose user is not on the current allowlist is still delivered (operator power pinned, R5-2 b); every submitted `text` starts with `📡` (N2); a tool `send` without `reply` is refused `reply-missing` and records nothing; `reply_mode` is stored as passed, and the tool cannot pass `optional`; `target_session` is in the receipt for a delivery and for each refusal after step 1 |
-| G-4 addressing | `test_address.py`: title, `Home`, `local-…` and v0.22 id prefixes, ambiguous, `@slug` both ways, compression tip |
+| G-4 addressing | `test_address.py`: title, `Home`, `local-…` and v0.22 id prefixes, ambiguous, compression tip. **Project addressing** against a temp `projects.db`: plugin enabled with the column → `@slug` resolves to `owner_session_id`; owner unset → `no-owner-set`; unknown slug → `unknown` with slugs; plugin not enabled, column missing, or no `projects.db` → `project-addressing-unavailable`, and a session titled `<name> — Orchestrator` is **never** chosen; disabling the plugin after `register()` → refused on the next call; the read opens `mode=ro` and leaves the file unchanged |
 | G-5 chat scope | `test_scope.py`: owner DM private, non-owner DM shared, unlisted group shared, listed group private, other-platform prefix shared, int entry ignored, corrupt `origin_json` shared, missing row shared, local `None`, fresh read |
 | G-6 echo | `test_echo.py`, plus the E2E with fake ntfy: an echo is posted in a private chat from the target's own turn, never in a shared chat, never for a lookalike (O21); the escaping cases (link text, `@everyone`, `<@…>`) through the real ntfy adapter, and per-platform escaper unit tests for the platforms in `echo_chats` (N3); after a delivery into an unlisted group, the fake server received only the turn's answer (N4); a private chat on a platform missing from `ECHO_ESCAPERS` gets no post and one warning (N6-2). **Steered echo (GW-4):** a steer whose turn's next step is the final answer is echoed once, before that answer; a steer that lands during the final request is echoed by the later turn's `pre_llm_call`; retries never post twice |
 | G-7 framing | `test_frame.py`: the exact header and variants, relabel cases (F4), cleaning (a newline in `--from` stays on line 1), echo escaping (F12), `_short_desc` → the 60-character sentence; every variant's text starts with `📡` after `sanitize_user_prompt_text` (N2); the label and footer for each `reply_mode` (`none` has no `[REPLY]` or `[SILENT]` line; `waiting` adds the "cannot go on" line; `optional` asks for a block only) |
 | G-8 record | `test_record.py`: schema, modes on all three files, two writers; `reply_mode` rejects any value outside the four, and there is no `expect_reply` column |
 | G-9 replies and `ask` | `test_replies.py`: block / whole / silence, the record check, the shared-sender rule, SM-Q9 (b), reply via the owner client, in-process `ask` accepted only from the target's `reply` call, `[SILENT]` on `ask`. **Reply modes:** a `none` note steered into a busy turn sends nothing back, even when the turn's answer contains a `[REPLY <id>]` block (no delivery, `reply_state` stays `NULL`); a reply (`optional`) whose answer has no block sends nothing back (`no-block`); a reply with a block is delivered; `requested` and `waiting` still fall back to the whole answer; a `waiting` send returns at once |
-| G-10 CLI | `test_cli.py`: exit codes 0–6; `list` (CLI and tool) leaves out `cron`, `subagent` and `oneshot` sessions by default and returns each session's id (the compression tip's), with `include_runs`, `query`, `limit` (default 30) and the three states; `send` defaults to `--reply none`, and `--no-reply` is a usage error (2); `status` through `prompt.receipt` and the hashed transcript check. **Legacy path (R5-1):** on a build that publishes the owner names, with discovery returning `None`, `starting` or `draining`, `inbox.start()` is never called and no drain hook is registered; on a simulated old build, where importing the names **fails** (N6-1), it starts only where a `HermesCLI` instance exists |
+| G-10 CLI | `test_cli.py`: exit codes 0–6; `list` (CLI and tool) leaves out `cron`, `subagent` and `oneshot` sessions by default and returns each session's id (the compression tip's), with `include_runs`, `query`, `limit` (default 30) and the three states; `send` defaults to `--reply none`, and `--no-reply` is a usage error (2); `--to @x` without project addressing exits 3 with the `project-addressing-unavailable` text; `list`'s `project` comes from `project_folders` (else the folder name) with no project plugin; the tool built by `register()` has no `@` in its schema or description when the check is false, and mentions `@<project>` when it is true; `status` through `prompt.receipt` and the hashed transcript check. **Legacy path (R5-1):** on a build that publishes the owner names, with discovery returning `None`, `starting` or `draining`, `inbox.start()` is never called and no drain hook is registered; on a simulated old build, where importing the names **fails** (N6-1), it starts only where a `HermesCLI` instance exists |
 | G-11 relays | The relay skill text uses `hermes intercom send`; `scripts/dashboard_dispatch.py` is unchanged |
 | G-12 deploy | After the gateway restart: `hermes plugins list` shows intercom enabled in the owner; `hermes intercom send --to Home --message "deploy check" --delivery queue` exits 0; a message to an admin-dashboard chat exits 4 `not-addressable` |
 | Code health | `python scripts/check` (and lefthook, which needs ruff 0.15.22 in the build environment) |
@@ -731,8 +780,8 @@ There is no `dashboard_port` and no `HERMES_*` variable.
    session included, so the window is scheduled and announced. The admin dashboard needs no
    restart unless its plugins change; it would load intercom at its next start, where intercom
    only sends.
-4. The manager switches the relay skills to `hermes intercom send` (G-11) and renames "Model
-   Master" (SM-Q10).
+4. The manager switches the relay skills to `hermes intercom send` (G-11). No session is
+   renamed: SM-Q10 is withdrawn, because titles no longer find owners.
 5. **Rollback:** remove `intercom` from `plugins.enabled` and restart the gateway, or revert the
    fast-forward. The listings are inert.
 
@@ -751,7 +800,7 @@ There is no `dashboard_port` and no `HERMES_*` variable.
 | G-9 | Replies and in-process `ask` `replies.py` (B8) | intercom | **Claude Opus** | G-3 |
 | G-10 | CLI `cli.py` (B9), tool schema (B11), caps removal (B10), the capability-selected legacy path (B12, R5-1) | intercom | Grok 4.7 | G-3, G-8 |
 | G-11 | **Relays:** relay skill text to `hermes intercom send` (the manager edits the live skills at deploy); a note in `scripts/dashboard_dispatch.py`'s docstring that it targets the admin dashboard only | hermes-agent (docstring) + manager | Grok 4.7; manager | G-10 |
-| G-12 | Vendor (subtree), feature branch onto `alex/v0.23.1-canary-1110`, house-infra enable, the announced gateway restart, rename | hermes-agent + house-infra | Grok 4.7; manager for restart | G-1 … G-10 |
+| G-12 | Vendor (subtree), feature branch onto `alex/v0.23.1-canary-1110`, house-infra enable, the announced gateway restart | hermes-agent + house-infra | Grok 4.7; manager for restart | G-1 … G-10 |
 | G-13 | Upstream drafts (#81885 update, majordave pull request, listing pull requests) in `intercom:docs/upstream/` for Alex | intercom | Grok 4.7 | G-1 … G-10 |
 
 **Removed items** (round 4's I-1 … I-4, I-11, I-12):
