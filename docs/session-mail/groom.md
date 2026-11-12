@@ -1,17 +1,12 @@
 # Groom — session-mail: session-to-session messaging, built on intercom (gateway only)
 
-DRAFT (pre-review)
-
-<!-- At freeze, replace the draft marker above with this sentence and
-delete this comment: Frozen record of the plan as reviewed at Groom on
-<YYYY-MM-DD>. Not live: the tracker is the source of truth for tickets,
-blockers and state. -->
+Frozen record of the plan as reviewed at Groom on 2026-11-11. Not live: the tracker is the source of truth for tickets, blockers and state.
 
 - Chunk: `DER-701` · LLD: `docs/session-mail/lld.md` (round 9; accepted by Alex 2026-11-11,
   SM-Q18 "Accepted, go") · Date: `2026-11-11`
-- Review: `<groom reviewer label>` — pass on `<date>` at `<SHA of the reviewed draft commit>`;
-  `pending` until filled at freeze
-- Tickets: `G1` = `<id>`, … (filled at freeze)
+- Review: `groom-reviewer` (fresh Claude Code session) — pass on 2026-11-11 at `73a5524315`
+  (rounds: `reviews/groom-review-r1.md`, `-r2.md`, `-r3.md`)
+- Tickets: `G1` = `DER-716`, `G2` = `DER-717`, `G3` = `DER-722`, `G4` = `DER-718`, `G5` = `DER-719`, `G6` = `DER-724`, `G7` = `DER-720`, `G8` = `DER-721`, `G9` = `DER-723`, `G10` = `DER-725`, `G11` = `DER-726`, `G12` = `DER-729`, `G13` = `DER-727`, `G14` = `DER-728`
 
 **How the items map to the LLD.** `G1` … `G13` are the LLD's G-1 … G-13, in order. There is one
 split:
