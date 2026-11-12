@@ -69,6 +69,26 @@ plugins:
 - Per-peer rate limit (6/min), duplicate suppression (120 s window), pending queue cap with owner-only disk spill
 - Sessions publish their busy/idle state (`turn_active`) to the registry so senders can pick idle peers
 
+## Reboots
+
+The host's reboot path calls two commands. `reboot-notice` warns sessions that are running and records them. `resume-after-reboot` wakes those sessions after boot so they continue on their own. A session restarts its own background jobs, systemd-run units and tmux windows; these commands only deliver the messages.
+
+Before `shutdown -r +N`:
+
+```bash
+hermes intercom reboot-notice --minutes N
+```
+
+`N` is the shutdown delay in minutes. The reason defaults to package updates. The command exits 0 when no session is running and when a delivery fails, so the reboot proceeds either way.
+
+After the gateway has started, a user unit runs:
+
+```bash
+hermes intercom resume-after-reboot
+```
+
+The command waits up to five minutes for the gateway, then queues one message to each recorded session. An idle or closed session starts a turn. When the record is missing or older than six hours, it wakes sessions whose turn was still open in the fifteen minutes before boot. Boot time is read from `/proc/stat` on Linux. Each session gets at most one of these messages per boot; a second run in the same boot sends nothing.
+
 ## Implementation notes
 
 Findings from building this against the real Hermes codebase are in [`docs/findings.md`](docs/findings.md) — most notably that `HermesCLI` is a local of `main()`, so the live instance must be found via GC, and that `HermesCLI._pending_input` is the wake channel that makes idle sessions start turns automatically.
