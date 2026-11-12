@@ -198,3 +198,12 @@ def test_with_no_session_folder_a_relative_path_is_refused_not_put_in_the_gatewa
     result = _relative_ask("task-without-cwd", card)
     assert "give an absolute path" in result["error"]
     assert card.shown == [] and os.listdir(folder) == []
+
+
+def test_bidi_and_zero_width_characters_are_stripped_from_the_question(folder):
+    card = _Card()
+    with bind_turn_secret_capture(card):
+        clarify_tool([{"question": "XYZ \u202ekey\u202c for the\u200b sync\ntimer"}], callback=_never_called,
+                     secret_file={"name": "XYZ key", "path": str(folder / "key")})
+    [(_name, prompt, _metadata)] = card.shown
+    assert prompt.endswith("\n\nXYZ key for the sync\ntimer")
