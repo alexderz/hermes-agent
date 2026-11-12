@@ -812,6 +812,9 @@ class _Ctx:
     def register_hook(self, *args, **kwargs):
         self.hooks.append(args)
 
+    def register_cli_command(self, *args, **kwargs):
+        return None
+
 
 def _load_plugin():
     name = "hermes_intercom_g4_address"
