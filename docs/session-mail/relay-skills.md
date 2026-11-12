@@ -48,7 +48,8 @@ for the tool, in place of the dispatcher command:
 The tool's `list` and `hermes intercom list` show the same ids. `reply` is required
 on the tool and has no default. On the CLI it defaults to `none`. The shell recipes
 below are the CLI. A session that cannot call the tool uses the CLI and sets
-`--from` to its title.
+`--from` to its title. Answers to that send are stored and wake nothing; read them
+with `hermes intercom status MESSAGE_ID`. A debate needs the tool.
 
 The command starts no turn in the sending process. The target's chat stays usable.
 The header names the sender and says it is not Alex. Write the message itself. Do
@@ -94,7 +95,7 @@ No session is renamed. A title is whatever `hermes intercom list` prints.
 | `--reply` | `none` (default), `requested`, or `waiting`. |
 | `--delivery` | `interrupt`, `steer` (default), or `queue`. |
 | `--from` | Script label in the header. Default `cli`, so the header says `hermes@script cli`. A cron job passes its name. |
-| `--json` | Print the receipt as JSON, on success and on failure. The exit code does not change. Errors still go to stderr. |
+| `--json` | Print the receipt as JSON on success and on a refusal or error (exit 3–6). The exit code does not change. Errors still go to stderr. A usage error (exit 2) prints nothing to stdout. |
 
 `--reply none` is a note: nothing comes back. `--reply requested` asks for an
 answer. `--reply waiting` means the sender needs the answer before going on; the
@@ -133,8 +134,8 @@ Refusals and errors go to stderr. Exit codes:
 |---|---|
 | 0 | Delivered: interrupted, steered, queued or started |
 | 2 | Usage: missing `--to`, neither or both of `--message` and `--file`, unknown `--delivery` or `--reply`, or `--file` cannot be read |
-| 3 | Refused: unknown or ambiguous address, empty or whitespace-only body, your own session, or a project address that cannot be used |
-| 4 | `not-addressable`, `injection-off`, or `refused-by-owner` |
+| 3 | Refused: unknown or ambiguous address, empty or whitespace-only body, your own session, a project address that cannot be used, or `no-owner-set` |
+| 4 | `not-addressable`, `injection-off`, `refused-by-owner`, or `no-seam` |
 | 5 | `no-owner`, `owner-restarting`, or `not-reachable` |
 | 6 | Delivery unknown: handed over, no result recorded |
 
@@ -209,7 +210,7 @@ hermes intercom send --to SESSION --reply none --delivery steer --file note.txt 
 
 - Write only something new. No thanks, "got it", "agreed", restating, or "I'll look later". If you have nothing new, do not send.
 - A session that was asked for a reply and has nothing new ends its turn with `[SILENT]`. Nothing is sent.
-- Debates are allowed. With `--reply requested` or `waiting`, an answer comes back as a new message. A `none` note gets nothing back.
+- Debates are allowed. With the tool's `reply = requested` or `waiting`, an answer comes back as a new message. A CLI send is from a script: its answer is stored and wakes nothing; read it with `hermes intercom status MESSAGE_ID`. A `none` note gets nothing back.
 - Default delivery is steer. Queue when the message can wait. Interrupt only with the sentence above.
 - Do not send an empty or whitespace-only body.
 - Batch questions into one message.
