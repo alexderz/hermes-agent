@@ -45,7 +45,7 @@ This design follows Alex's settled decisions 1–12 (brief) and assumes the brie
 **J1. An orchestrator asks another project's owner a question and gets the answer.**
 1. In "Hermes Improvement — Orchestrator" the model calls `intercom(action="send", to="@budgeting", reply="requested", message="Which month did the bank export format change? I need it for the importer fix.")`. No `delivery`, so `steer`.
 2. The receipt comes back at once: applied `steered` (or `queued`, or `started` if Budgeting was idle), with the message id, Budgeting's full title and its session id, which Hermes Improvement uses for any follow-up.
-3. In "Budgeting — Orchestrator" the message arrives as a user row whose first line is `📡 Not Alex · reply requested · hermes@Hermes Improvement — Orchestrator says (session 20261109_071203_a1b2 · message 3f2a9c):`.
+3. In "Budgeting — Orchestrator" the message arrives as a user row whose first line is `📡 Not Alex · reply requested · hermes@Hermes Improvement — Orchestrator says (session local-7f3a91c2 · message 3f2a9c):`.
 4. Budgeting answers inside `[REPLY 3f2a9c] … [/REPLY]` at the end of its turn.
 5. That block comes back to Hermes Improvement as a new message, `📡 Not Alex · reply optional · hermes@Budgeting — Orchestrator says (… · reply to your message 3f2a9c · message 8e41b0):`, steered into its turn (or started). Hermes Improvement acts on it.
 6. Hermes Improvement's final answer is a report for Alex. A reply (`reply optional`) goes back only from an explicit `[REPLY 8e41b0]` block, never from the whole answer, so with no block nothing goes back, the record says "no reply" for 8e41b0, and the exchange is over. No `[SILENT]` is needed.
@@ -70,7 +70,7 @@ This design follows Alex's settled decisions 1–12 (brief) and assumes the brie
 **J7. Alex sees a message arrive on his phone mid-conversation** (the Webapp in a phone browser). A message is steered into his running turn with Budgeting. It shows as its own user row, before the final answer, starting `📡 Not Alex · reply requested · hermes@Hermes Improvement — Orchestrator says …`. The answer serves Alex first; the part for the message is in a `[REPLY 3f2a9c]` block he can see too. Nothing was held back while he was active.
 
 **J8. Interrupt, meant: stop work that is wrong.**
-1. The orchestrator learns that Budgeting is importing with a format it just found to be wrong. It sends `intercom(action="send", to="@budgeting", delivery="interrupt", message="Stop the import: the March export uses the new column order, so every amount since March is shifted. Re-run from the raw files once you have the new mapping.")`.
+1. The orchestrator learns that Budgeting is importing with a format it just found to be wrong. It sends `intercom(action="send", to="@budgeting", reply="requested", delivery="interrupt", message="Stop the import: the March export uses the new column order, so every amount since March is shifted. Re-run from the raw files once you have the new mapping.")`.
 2. The owner redirects the running turn: the current turn stops and the message runs now. If the owner refuses the redirect, it stops the turn hard and the message runs as the next turn (J9).
 3. Receipt: applied `interrupted`.
 4. Budgeting's row says so in its first line: `📡 Not Alex · interrupt asked · reply requested · hermes@… says (…):`, followed by a line saying that if its previous work was stopped for this message, it decides itself whether to go back to it.
@@ -84,7 +84,7 @@ This design follows Alex's settled decisions 1–12 (brief) and assumes the brie
 
 **J12. `ask`: wait for an explicit answer.**
 1. A session calls `intercom(action="ask", to="Home", message="Is the deploy window tonight still 22:00?", timeout=600)`. Its tool call waits.
-2. The target's row reads `📡 Not Alex · waiting on your reply (ask) · hermes@… says (…):`, and its footer says to answer with `intercom(action="reply", …)`, naming the `to` and `request_id`.
+2. The target's row reads `📡 Not Alex · sender paused: use intercom reply · hermes@… says (…):`, and its footer says to answer with `intercom(action="reply", …)`, naming the `to` and `request_id`.
 3. The target calls `reply`. The asker's tool call returns with the answer. No automatic reply is sent for an `ask` (SM-Q16 a).
 4. If no reply comes before the timeout, the asker's call returns intercom's timeout result; the record shows the message with "no reply recorded".
 
@@ -169,7 +169,7 @@ So:
 - **The first sentence is at most 60 characters and carries the job and the core rule,** because the catalog clips it there (`tools/tool_search_catalog.py`, `_short_desc`, 60 characters on a word boundary): `Message another Hermes session; never send an empty message.` (60).
 - **Every footer names the tool and how to reach it** (footer line 1), so a session that receives a message learns it can send, and how.
 
-Relay-skill line (HLD O11, settled: the manager puts it in the relay skills at deploy, in place of the dispatcher command): `To message another session, use the intercom tool (if it is not in your tool list, tool_describe it, then tool_call it): action="send", to = @<project-slug>, an exact title, an id or Home, message = your text. Write only something new; the answer comes back as a message.`
+Relay-skill line (HLD O11, settled: the manager puts it in the relay skills at deploy, in place of the dispatcher command): `To message another session, use the intercom tool (if it is not in your tool list, tool_describe it, then tool_call it): action="send", to = a session id (from list or a receipt), @<project-slug>, an exact title or Home, reply = none (a note), requested or waiting (required), message = your text. Write only something new; an answer comes back as a message.`
 
 #### Tool description (`intercom`)
 
@@ -190,11 +190,11 @@ Parameters (intercom's, extended; the HLD fixes names and types):
 
 Description, exactly (with Tool Search off every word is sent on every call; with it on, the first sentence is the catalog line):
 
-> Message another Hermes session; never send an empty message. send delivers now; ask delivers and blocks your turn until an explicit reply, so use it only when this turn cannot go on without the answer; reply answers an ask; list shows sessions with their ids.
+> Message another Hermes session; never send an empty message. send delivers now; ask delivers and pauses your turn until an explicit reply: use it only when this turn cannot go on without the answer, otherwise send with reply: waiting. reply answers an ask; list shows sessions with their ids.
 >
-> to: a session id (best for follow-ups: list and every receipt give it, and it stays valid after compaction), @<project-slug>, an exact title, or Home. If several match, or none, nothing is sent and you get the closest.
+> to: a session id (best for follow-ups: list and receipts give it; it survives compaction), @<project-slug>, an exact title, or Home. If several match, or none, nothing is sent and you get the closest.
 >
-> reply (required for send): none for a one-way note (nothing comes back); requested if you want an answer; waiting if you need it before you can go on (your call still returns at once; the answer arrives as a new message).
+> reply (required for send): none for a one-way note (nothing comes back); requested if you want an answer; waiting if they should answer first but your turn can go on (your call returns; the answer arrives as a new message).
 >
 > delivery: steer (default) joins the other session's running turn; queue runs after it; interrupt stops it and runs your message now. Only use interrupt when you intend to stop what the other session is doing right now (it is wrong, or the work is obsolete). Otherwise use steer (default) or queue. An idle session starts a turn.
 >
@@ -221,11 +221,12 @@ Every receipt carries the target's session id (`target_session`), the address to
 | `started` | `"Budgeting — Orchestrator" was idle. Message 3f2a9c started a turn there. Its answer will come back to you as a new message.` |
 | any of the above, weaker than asked | Same sentence, then `You asked for <requested>; this session could not take it now, so <applied> was used.` |
 | any, `reply: none` | Same first sentence, then `No answer was asked for, and none will come back.` (instead of "Its answer will come back …") |
-| any, `reply: waiting` | Same first sentence, then `It was marked as blocking you; your call does not wait, and the answer will come back as a new message.` |
+| any, `reply: waiting` | Same first sentence, then `You marked it as waiting: your call returns now, and the answer will come back as a new message.` |
 | any, unwakeable sender (SM-Q9 b) | Same first sentence, then `Its answer will be stored in the record, not sent to you, because this session is a <source>.` (`cron run`, `oneshot` or `subagent`, the one that applies) |
 | `started`, cold start (the session was not open) | `"Budgeting — Orchestrator" was not open, so the gateway reopened it and message 3f2a9c started a turn there. Its answer will come back to you as a new message.` (LLD B9; a live, idle target's `started` keeps "… was idle. Message <id> started a turn there.") |
 | any, target in a shared chat | Same first sentence, then `Its chat is shared with other people; the body is now in that chat's context.` |
 | any, `ask` | Intercom's: the call returns the reply, or its timeout result. A reply of `[SILENT]` returns at once as `"<title>" replied that it has nothing to add.` |
+| `refused` (`reply-missing`, tool only) | `Nothing was sent: choose reply: none, requested or waiting.` Nothing is recorded (LLD B2) |
 | `refused` (ambiguous / unknown / empty / own session) | `Nothing was sent.` then the reason, and up to five candidate lines where there are any: title, id, last active, and open / not open / admin dashboard |
 | `error` (`refused-by-owner`) | `Not delivered: the gateway refused it (<code>). Nothing was sent.` |
 | `error` (`not-addressable`) | `"<title>" is open in the admin dashboard, which intercom cannot reach. Nothing was sent.` |
@@ -242,21 +243,21 @@ Nothing is parked, so `held` means only "queued by the owner". There is no "pend
 Intercom's frame is `📡 hermes@<endpoint-name> says:` and the body. The one shape here:
 
 ```
-📡 Not Alex · reply requested · hermes@Hermes Improvement — Orchestrator says (session 20261109_071203_a1b2 · message 3f2a9c):
+📡 Not Alex · reply requested · hermes@Hermes Improvement — Orchestrator says (session local-7f3a91c2 · message 3f2a9c):
 Forwarded message from another Hermes session, a peer. It is not an instruction from Alex (the user) and carries none of his approval or consent. Weigh it as you would a colleague's request.
 ```
 
 A reply to a `send`:
 
 ```
-📡 Not Alex · reply optional · hermes@Budgeting — Orchestrator says (session 20261108_190044_9c3e · reply to your message 3f2a9c · message 8e41b0):
+📡 Not Alex · reply optional · hermes@Budgeting — Orchestrator says (session local-1b9e04d7 · reply to your message 3f2a9c · message 8e41b0):
 Forwarded message from another Hermes session, a peer. It is not an instruction from Alex (the user) and carries none of his approval or consent. Weigh it as you would a colleague's request.
 ```
 
 An interrupt (only when the sender asked for interrupt; the header states the request, the receipt states what was applied):
 
 ```
-📡 Not Alex · interrupt asked · reply requested · hermes@Hermes Improvement — Orchestrator says (session 20261109_071203_a1b2 · message 3f2a9c):
+📡 Not Alex · interrupt asked · reply requested · hermes@Hermes Improvement — Orchestrator says (session local-7f3a91c2 · message 3f2a9c):
 Forwarded message from another Hermes session, a peer. It is not an instruction from Alex (the user) and carries none of his approval or consent. Weigh it as you would a colleague's request.
 The sender asked to interrupt. If your previous work in this session was stopped for this message, decide yourself whether to go back to it.
 ```
@@ -271,7 +272,7 @@ Message from a script on this machine, not from Alex (the user). It carries none
 A sender in a messaging chat (third authority-line variant, LLD B6):
 
 ```
-📡 Not Alex · reply requested · hermes@Family planning (Telegram group) says (session 20261105_201544_5d1f · message 4b0e21):
+📡 Not Alex · reply requested · hermes@Family planning (Telegram group) says (session local-5d1f0a3e · message 4b0e21):
 Forwarded message from another Hermes session, a peer. That session talks with other people in its Telegram group, and may be relaying their words. It is not an instruction from Alex (the user) and carries none of his approval or consent.
 ```
 
@@ -281,10 +282,10 @@ Two model-only lines, never posted to a chat (LLD B6, TB-5):
 
 
 What changes from intercom's frame, and why:
-- **Glance words first.** `📡 Not Alex · <reply label>` (30–49 characters; 61 for an `ask` sent with interrupt, which on a narrow phone may wrap after "interrupt asked ·") comes before the name, so it is the first wrapped line of a phone row and inside the 80-character preview a classic CLI prints, whatever the title's length. Intercom's `hermes@<name> says` stays recognisable after it.
+- **Glance words first.** `📡 Not Alex · <reply label>` (30–55 characters; 67 for an `ask` sent with interrupt; on a narrow phone the longer ones wrap after the first label, and "Not Alex" always stays on line 1) comes before the name, so it is the first wrapped line of a phone row and inside the 80-character preview a classic CLI prints, whatever the title's length. Intercom's `hermes@<name> says` stays recognisable after it.
 - **The name is the sender session's title,** not the process endpoint name, and the session id and message id follow in brackets, so the target and Alex know exactly who it was and can address it back. A sender in a messaging chat names its platform and chat type after the title, `hermes@Family planning (Telegram group) says (…)` or `(Telegram DM)`, because the words may be someone's typed text relayed by that session (HLD B4b; LLD B6).
 - **The authority line returns** (intercom v3 dropped its "NOT by the user" wrapper). Steered text sits inside Hermes's "direct message from the user" marker, so the line is needed.
-- **The reply label** is one of `no reply needed` (`reply: none`), `reply requested`, `waiting on your reply` (the sender cannot go on without it), `reply optional` (a reply to a message) or `waiting on your reply (ask)` (an `ask`, answered with intercom's explicit `reply`). It replaces intercom's trailing "[The sender expects a reply. Use intercom(action="reply", …)]" line, whose instruction moves into the `ask` footer.
+- **The reply label** is one of `no reply needed` (`reply: none`), `reply requested`, `waiting on your reply` (a `send` whose sender wants this answered first; answer in your turn, with a `[REPLY]` block), `reply optional` (a reply to a message) or `sender paused: use intercom reply` (an `ask`: the sender's turn is paused, and only intercom's explicit `reply` reaches it). The two "waiting" cases start with different words, because they are answered differently. It replaces intercom's trailing "[The sender expects a reply. Use intercom(action="reply", …)]" line, whose instruction moves into the `ask` footer.
 - **The frame is built before the owner reports what it applied** (LLD, final header shape), so line 1 states only the request (`interrupt asked`), and line 3 is worded to be true either way. The receipt, the record and the CLI state the applied mode exactly.
 - **Lookalikes in the body.** Every body line that starts with `📡`, and every line that starts like one of Hermes's own control frames (for example `[/OUT-OF-BAND USER MESSAGE]`), is relabelled. This is required (Trial Q2: a body's close marker passed through and closed the steer wrapper early; HLD B2). It widens intercom's zero-width-space defence, which today covers only its legacy `📡 INTERCOM` tag. Intercom's echo stripping stays, with its pattern updated to the new header.
 - The header is the very first text of the message (brief A5). In a row with nothing else in it, that makes it the first line on every surface. A row Hermes joined with other text may start with that text (F10).
@@ -315,9 +316,9 @@ Variants (only the named lines change):
 | Sender is a script | 1 | `Your final answer is stored in the record for script "nightly-backup". It wakes no one; do not call intercom send to answer. (intercom is the tool for new messages; …)` |
 | Sender is a cron run, oneshot or subagent (SM-Q9 b) | 1 | `Your final answer is stored in the record for session "<title>", a <source>. It wakes no one; do not call intercom send to answer. (…)` |
 | `reply: waiting` (`waiting on your reply`) | after 1 | One added line: `The sender cannot go on until you answer: answer this first, briefly.` Everything else as `requested` |
-| `reply: none` (`no reply needed`) | 1–5 | Replaced by one line: `No reply is needed and none will be sent. If something here is wrong or blocks you, send a new message with the intercom tool.` No `[SILENT]` is needed, because nothing goes back. Line 6 (the consent rule) and the closing line stay |
-| A reply (`reply optional`) | 2, 5 | Line 2: `Only text between [REPLY <id>] and [/REPLY] is sent back; with no block, nothing is sent.` Line 5: `If you have nothing new, write no block. That is the right way to end.` (no whole-answer fallback for replies) |
-| `ask` (`waiting on your reply (ask)`) | 1–2, 5 | Lines 1–2: `The sender is waiting for your answer. Answer once with intercom(action="reply", to="<asker>", request_id="<id>", message="…"); your final answer is not sent. If you cannot answer, say so in that reply.` Line 5: `If you have nothing to add, reply once with message="[SILENT]"; the asker gets "nothing to add" at once instead of waiting.` (lines 3–4 and 6 stay) |
+| `reply: none` (`no reply needed`) | 1–5 | Replaced by one line: `No reply is needed and none will be sent. If something here is wrong or blocks you, send a new message with the intercom tool. (If it is not in your tool list, tool_describe it, then tool_call it.)` No `[SILENT]` is needed, because nothing goes back. Line 6 (the consent rule) and the closing line stay |
+| A reply (`reply optional`) | 1–2, 5 | Lines 1–2 become one line: `Only a [REPLY <id>] … [/REPLY] block is sent back to session "<sender title>"; nothing else is. Write one only if you have more to say. Do not call intercom send to answer. (intercom is the tool for new messages; if it is not in your tool list, tool_describe it, then tool_call it.)` Line 5: `If you have nothing new, write no block (or a [SILENT] one). That is the right way to end.` There is no whole-answer fallback for a reply |
+| `ask` (`sender paused: use intercom reply`) | 1–2, 5 | Lines 1–2: `The sender's turn is paused until you answer. Answer once with intercom(action="reply", to="<asker>", request_id="<id>", message="…"); your final answer is not sent. If you cannot answer, say so in that reply.` Line 5: `If you have nothing to add, reply once with message="[SILENT]"; the asker gets "nothing to add" at once instead of waiting.` (lines 3–4 and 6 stay) |
 
 The closing line is the message's last line. Anything after it in the same row is not part of the message (F10).
 
@@ -397,7 +398,7 @@ hermes intercom log [--to TARGET] [--from LABEL] [--since DURATION] [--json]   #
 ```
 message 7c1d02
   from      script "nightly-backup"
-  to        "Hermes Improvement — Orchestrator" (20261109_071203_a1b2)
+  to        "Hermes Improvement — Orchestrator" (local-7f3a91c2)
   sent      2026-11-09 07:00:03
   delivery  queued (asked: steer)
   reply     no reply recorded
@@ -460,7 +461,7 @@ The shared record is the architect's [`comparables.md`](comparables.md). What th
 For the architect and the manager; none reopens a settled decision.
 
 - **CLI verbs:** `send`, `list` (this profile's sessions, as the tool's `list` shows), `status` and `log` (the record), as LLD round 5 B9 now has them (U3). The brief's example was `send|list|status`.
-- **Reply modes** (2026-11-11, decided by the manager on Alex's "you decide"): `reply: none | requested | waiting` is required on `send` and replaces `expect_reply`; replies carry `reply optional` and go back only from an explicit block; an `ask` reads `waiting on your reply (ask)`.
+- **Reply modes** (2026-11-11, decided by the manager on Alex's "you decide"): `reply: none | requested | waiting` is required on `send` and replaces `expect_reply`; replies carry `reply optional` and go back only from an explicit block; an `ask` reads `sender paused: use intercom reply`.
 - **The CLI's readable line** by default, with the receipt object behind `--json`, and exit codes 0–6.
 - **Tool Search.** The brief's "Tool list of a resumed session" expects one cache miss per resumed session. The Trial (Q8) showed plugin tools are deferred when Tool Search is on, so pre-deploy sessions pay no miss but are never told the name. This design follows the Trial (sm-16).
 
@@ -468,7 +469,7 @@ For the architect and the manager; none reopens a settled decision.
 
 - Meaning is in words: "Not Alex", "interrupt asked", "reply requested", "steered". `📡` is decoration (a screen reader says "satellite antenna"); nothing depends on it.
 - No colour-only status anywhere.
-- `📡 Not Alex · <reply label>` (30–49 characters, or 61 for an `ask` sent with interrupt, which may wrap after "interrupt asked ·" on a narrow phone) comes first, so it is the first wrapped line on a phone and inside a terminal's 80-character preview, whatever the title.
+- `📡 Not Alex · <reply label>` (30–55 characters, or 67 for an `ask` sent with interrupt; the longer ones wrap after the first label on a narrow phone, with "Not Alex" always on line 1) comes first, so it is the first wrapped line on a phone and inside a terminal's 80-character preview, whatever the title.
 
 ## Open questions
 
@@ -482,7 +483,7 @@ Where a different answer from Alex changes what a person or a session sees:
 | **SM-Q10** | `@model-testing` before DER-686 | Rename | **Refuse:** `@model-testing` is `refused` (unknown). **Alias map:** the header keeps "Model Master". |
 | **SM-Q11** | "Looks like a row you typed" in the Webapp on the phone, and an interrupt looking like any redirect | Accept for v1 (carried over from Hermes Mobile to the Webapp, SM-Q22) | **No:** needs a Webapp change outside this chunk. |
 | **SM-Q15** | Telegram: show the message in the topic | (b) | **(a):** the topic shows only the answer, out of nowhere; sm-20 shrinks to "the answer appears in the topic". |
-| **SM-Q16** | `ask` / `reply` next to automatic replies | (a) | **(b):** an automatic reply would also resolve a waiting `ask`; the `ask` footer would change to the `send` one. **(c):** `ask`, `reply`, the `waiting on your reply (ask)` label and sm-21 go away. |
+| **SM-Q16** | `ask` / `reply` next to automatic replies | (a) | **(b):** an automatic reply would also resolve a waiting `ask`; the `ask` footer would change to the `send` one. **(c):** `ask`, `reply`, the `sender paused: use intercom reply` label and sm-21 go away. |
 | **U1** | Header opening words | `📡 Not Alex · …` | **Bot Mode's `Message from 🤖 …`:** a neat desktop notice, but the desktop folds the next answer, including Alex's. |
 | **U2** | How the sender says whether it wants an answer | Settled 2026-11-11: required `reply: none \| requested \| waiting` (replaces `expect_reply`) | — |
 | **U3** (new) | CLI verb for the record | `log`, so `list` matches the tool | **`list` for the record:** `hermes intercom list` and `intercom(action="list")` mean different things. |
@@ -507,7 +508,9 @@ Where a different answer from Alex changes what a person or a session sees:
 
 ## For the architect
 
-LLD round 7 (`32db590f88`) now covers every item this list carried, including the steered echo (UX review GW-4: B6 posts it from `pre_api_request`, so it is echoed whether the turn's next step is a tool call or the answer). One item remains, none of it a cap, hold, retry or gate:
+LLD round 7 (`32db590f88`) now covers every item this list carried, including the steered echo (UX review GW-4: B6 posts it from `pre_api_request`, so it is echoed whether the turn's next step is a tool call or the answer). What remains, none of it a cap, hold, retry or gate:
 
 1. **A bare `[SILENT]` answer in a messaging chat.** On v0.22, injected turns were internal notifications, so `gateway/response_filters.py` kept a bare `[SILENT]` out of the chat (Trial round 2, R4). On v0.23 the owner admits the message as an operator prompt. The LLD does not say whether a bare `[SILENT]` answer is still kept out of the topic, or posted. `ux.md` lists it under "Still to check".
+2. **The missing-`reply` refusal text** (UX review RM-4). LLD B2 says a tool `send` without `reply` is refused (`reply-missing`) "with a one-line hint naming the three values". The wording is `Nothing was sent: choose reply: none, requested or waiting.` (`ux.md` § "Receipts"). Please quote it in B2, or point to `ux.md`.
+3. **The `ask` label and footer wording** (UX review RM-2). B5 leaves the `ask` label to `ux.md`. It is now `sender paused: use intercom reply`, so it no longer looks like `waiting on your reply`; the `ask` footer's line 1 now reads "The sender's turn is paused until you answer." B5's "unchanged" for the `ask` footer should read "as `ux.md` has it".
 

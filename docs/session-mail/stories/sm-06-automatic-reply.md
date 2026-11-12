@@ -12,7 +12,7 @@
 - **Done when**
   - [ ] When a turn that received a `send` with `reply: requested` or `waiting` ends, the content of its `[REPLY <id>] … [/REPLY]` block goes to that message's sender as a new message whose line 1 starts `📡 Not Alex · reply optional ·` and names `reply to your message <id>`.
   - [ ] A `reply: none` note never sends anything back: no block is captured and there is no whole-answer fallback.
-  - [ ] A reply (`reply optional`) is answered only from an explicit `[REPLY <id>]` block, never from the whole answer.
+  - [ ] A reply (`reply optional`) is answered only from an explicit `[REPLY <id>]` block, never from the whole answer, and its footer says so in line 1 ("Only a [REPLY <id>] … [/REPLY] block is sent back …; nothing else is"), with no line saying the final answer goes back.
   - [ ] For a `requested` or `waiting` message with no block, the whole final answer is sent, except to a sender in a shared chat: then nothing is sent, and the record says `stored (shared chat, no [REPLY] block)`.
   - [ ] Two messages with two blocks in one turn: each block goes to its own sender, nothing else to either.
   - [ ] For a message that has its own block, only that block is mailed; a `[SILENT]` block sends nothing, even in a turn that also answers Alex.
