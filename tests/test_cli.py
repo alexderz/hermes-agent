@@ -297,9 +297,17 @@ class SchemaTests(CliTestBase):
         self.plugin.register(self.ctx)
         schema = self.schema()
         self.assertEqual(schema["parameters"]["properties"]["to"]["description"], TO_ON)
-        self.assertIn("@<project>", json.dumps(schema))
-        self.assertNotIn("@", schema["description"])
-        self.assertEqual(schema["description"], before)
+        self.assertIn("@<project>", schema["parameters"]["properties"]["to"]["description"])
+        on_sentence = (
+            "to: a session id (best for follow-ups: list and receipts give it; it survives compaction), "
+            "@<project-slug> (that project's owner session), an exact title, or Home. "
+            "If several match, or none, nothing is sent and you get the closest."
+        )
+        self.assertEqual(self.plugin._TO_PARAGRAPH_ON, on_sentence)
+        self.assertIn(on_sentence, schema["description"])
+        self.assertEqual(self.ctx.tools[-1]["description"], schema["description"])
+        self.assertNotIn("@", before)
+        self.assertEqual(schema["description"].replace(on_sentence, self.plugin._TO_PARAGRAPH_OFF), before)
         self.assertTrue(self.plugin.address.registered_project_addressing)
 
     def test_help_carries_the_interrupt_sentence(self):

@@ -529,7 +529,10 @@ class AddressTests(unittest.TestCase):
             echo = sys.modules[plugin.__name__ + ".echo"]
             self.assertEqual([hook[1] for hook in ctx.hooks[1:]],
                              [echo.on_pre_llm_call, echo.on_pre_api_request])
-            self.assertNotIn("@", ctx.tools[0]["schema"]["description"])
+            self.assertIn(
+                "@<project-slug> (that project's owner session)",
+                ctx.tools[0]["schema"]["description"],
+            )
             addr = sys.modules[plugin.__name__ + ".address"]
             self.assertTrue(addr.registered_project_addressing)
             self.write_config(enabled=[], plugin="projects")
