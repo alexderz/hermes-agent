@@ -160,6 +160,10 @@ def register(ctx) -> None:
     from .address import note_registration
 
     note_registration()
+    # B8: the reply hook, in the owner. ask and reply are its handlers.
+    from . import replies
+
+    replies.register(ctx)
     inbound = ctx.get_config("inbound", default="always")
     inbox_enabled = inbound != "never"
 

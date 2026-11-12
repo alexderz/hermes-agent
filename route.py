@@ -71,13 +71,14 @@ def cold_start_sentence(title: str, message_id: str) -> str:
 
 
 def send(sender, to, message, *, ctx, delivery="steer", reply_mode=None, kind="send",
-         reply_to=None, script=False, lister=None) -> dict:
+         reply_to=None, script=False, lister=None, on_inserted=None) -> dict:
     """Send *message* from *sender* to the one session *to* resolves to. Returns the B9 receipt.
 
     *sender* is the calling session's id, or with ``script=True`` a script label (the CLI, which
     always frames as a script and never names a session as sender). *ctx* reads the plugin's
     settings. *lister* is ``session.list`` (tests pass their own); it decorates candidates and
-    tells a cold start from an idle one.
+    tells a cold start from an idle one. *on_inserted* is called with the message id and the
+    target session once the row exists, before delivery (the ``ask`` waiter, B8).
     """
     if delivery not in client.DELIVERIES:
         raise ValueError(f"delivery must be one of {', '.join(client.DELIVERIES)}")
@@ -128,6 +129,8 @@ def send(sender, to, message, *, ctx, delivery="steer", reply_mode=None, kind="s
 
     # 4. the row before delivery
     record.insert(**row)
+    if on_inserted is not None:
+        on_inserted(message_id, target)
 
     # 5. frame, sanitise once, hash the span
     user_name = ctx.get_config("user_name", default=None) or DEFAULT_USER_NAME
