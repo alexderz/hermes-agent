@@ -32,17 +32,13 @@ logger = logging.getLogger(__name__)
 
 _DIR_NAME = "intercom"
 _REGISTRY = "sessions"
-_MAX_MSG_CHARS = 8000
+# B10: message length, rate and dedupe caps are gone. The pending cap stays
+# only on this legacy inbox (B12), which a v0.23 build never starts.
 _PENDING_CAP = 10
-_RATE_WINDOW_S = 60
-_RATE_MAX_PER_PEER = 6
-_DEDUPE_WINDOW_S = 120
 
 _lock = threading.Lock()
 _state: dict = {}          # session-scoped singleton state
 _pending_by_peer: dict[str, list[dict]] = {}   # peer_name -> [envelopes]
-_rate: dict[str, list[float]] = {}             # peer_name -> timestamps
-_dedupe: dict[str, list[tuple[int, float]]] = {}  # peer_name -> [(hash, ts)]
 
 
 def _human_view(header: str, body: str) -> str:
@@ -489,7 +485,12 @@ def _exchange(meta: dict, payload: dict) -> dict:
 
 def send_to(target: str, message: str, from_name: str = "", from_cwd: str = "",
             payload_extra: dict | None = None, *, dedupe: bool = True) -> dict:
-    """Send `message` to peer `target`. Returns status dict."""
+    """Send `message` to peer `target`. Returns status dict.
+
+    ``dedupe`` is accepted so ``reply_to`` can still pass it. It does not
+    filter: twenty identical messages in a minute all go out (B10).
+    """
+    del dedupe
     resolved_target = resolve_target(target)
     if not resolved_target.get("ok"):
         return resolved_target
@@ -498,26 +499,11 @@ def send_to(target: str, message: str, from_name: str = "", from_cwd: str = "",
     if int(meta.get("pid", -1)) == os.getpid():
         return {"ok": False, "error": "target is the current session"}
 
-    now = time.time()
-    with _lock:
-        window = [t for t in _rate.get(name, []) if now - t < _RATE_WINDOW_S]
-        if len(window) >= _RATE_MAX_PER_PEER:
-            return {"ok": False, "error": "rate limit reached for this peer"}
-        window.append(now)
-        _rate[name] = window
-        if dedupe:
-            seen = [(h, t) for h, t in _dedupe.get(name, []) if now - t < _DEDUPE_WINDOW_S]
-            digest = hash(message)
-            if any(h == digest for h, _ in seen):
-                return {"ok": False, "error": "identical message already sent recently"}
-            seen.append((digest, now))
-            _dedupe[name] = seen
-
     payload = {
         "type": "send",
         "from_name": from_name,
         "from_cwd": from_cwd,
-        "message": message[:_MAX_MSG_CHARS],
+        "message": message,
         **(payload_extra or {}),
     }
     reply = _exchange(meta, payload)
@@ -574,8 +560,6 @@ def _serve(conn: socket.socket) -> None:
             if not chunk:
                 break
             data += chunk
-            if len(data) > _MAX_MSG_CHARS * 4:
-                break
         line = data.split(b"\n", 1)[0].decode(errors="replace").strip()
         req = json.loads(line) if line else {}
         req_type = req.get("type", "send")
@@ -594,7 +578,7 @@ def _serve(conn: socket.socket) -> None:
             return
         sender = _sanitize_name(req.get("from_name") or "unknown")
         header, body = _frame_parts(sender, req.get("from_cwd") or "?",
-                                    str(req.get("message", ""))[:_MAX_MSG_CHARS])
+                                    str(req.get("message", "")))
         text = f"{header}\n{body}"
         if req_type == "ask" and req.get("request_id"):
             # Tell the receiving agent this needs a reply, and how.
