@@ -1,0 +1,1380 @@
+{
+  "note": "run 6 = full (Q1, Q2 per kind and mode, Q3, cold); run 7 = Q1 + dashboard paths (q2_dash). Runs 0-5 fixed the harness.",
+  "live_layout_readonly": {
+    "units": [
+      "hermes-dashboard.service (dashboard on 127.0.0.1:9119 behind the edge proxy; agent turns run in this process: its children include the embedded /chat Ink client and agent terminal shells)",
+      "hermes-gateway.service (separate process)"
+    ]
+  },
+  "placeholders": {
+    "<temp-home>": "throwaway HERMES_HOME",
+    "<run-dir>": "trial run dir outside git",
+    "<repo>": "this worktree",
+    "<intercom-clone>": "alexderz/hermes-intercom clone",
+    "<port>": "free loopback port"
+  },
+  "run6": {
+    "checks": [
+      {
+        "q": "Q1",
+        "name": "owner_attached turns run in the owner process",
+        "pass": true,
+        "detail": {
+          "session": "local-db56e067f4a2581f1a30d66bd0020ff9c5f0a4f386f0bf1121b1c5cfb48489d0",
+          "turn_pid": 1373276
+        }
+      },
+      {
+        "q": "Q1",
+        "name": "classic_cli turns run in the owner process",
+        "pass": true,
+        "detail": {
+          "session": "local-989c9baf40bbdd805fe6c1b950e1d2cb77cfa3a5b056e7491a4fa0da4d423f37",
+          "cli_pid": 1376400,
+          "turn_pid": 1373276
+        }
+      },
+      {
+        "q": "Q1",
+        "name": "messaging_ntfy turns run in the owner process",
+        "pass": true,
+        "detail": {
+          "session": "20261110_222038_94765d9b",
+          "platform": "ntfy",
+          "turn_pid": 1373276
+        }
+      },
+      {
+        "q": "Q1",
+        "name": "dashboard chat turns: host recorded",
+        "pass": true,
+        "detail": {
+          "session": "20261110_221837_bba3ef",
+          "live_id": "f2383098",
+          "create": "ok",
+          "submit": "streaming",
+          "turn_pid": 1374800
+        }
+      },
+      {
+        "q": "Q2",
+        "name": "owner_attached: steer from inside the owner via canonical verbs",
+        "pass": true,
+        "detail": {
+          "result": {
+            "ok": true,
+            "applied": "steer",
+            "calls": [
+              "session.resume",
+              "session.steer"
+            ],
+            "seconds": 0.032
+          },
+          "steered_into_turn": true,
+          "ran_as_own_turn": false,
+          "long_turn_steps": 4
+        }
+      },
+      {
+        "q": "Q2",
+        "name": "owner_attached: queue from inside the owner via canonical verbs",
+        "pass": true,
+        "detail": {
+          "result": {
+            "ok": true,
+            "applied": "queue",
+            "calls": [
+              "session.resume",
+              "prompt.submit"
+            ],
+            "raw": "queued",
+            "seconds": 0.039
+          },
+          "steered_into_turn": false,
+          "ran_as_own_turn": true,
+          "long_turn_steps": 6
+        }
+      },
+      {
+        "q": "Q2",
+        "name": "owner_attached: interrupt from inside the owner via canonical verbs",
+        "pass": true,
+        "detail": {
+          "result": {
+            "ok": true,
+            "applied": "interrupt",
+            "detail": "redirect",
+            "calls": [
+              "session.resume",
+              "session.redirect"
+            ],
+            "seconds": 0.031
+          },
+          "steered_into_turn": false,
+          "ran_as_own_turn": true,
+          "long_turn_steps": 1
+        }
+      },
+      {
+        "q": "Q2",
+        "name": "owner_attached: idle start from inside the owner",
+        "pass": true,
+        "detail": {
+          "result": {
+            "ok": true,
+            "applied": "start",
+            "calls": [
+              "session.resume",
+              "prompt.submit"
+            ],
+            "raw": "queued",
+            "seconds": 0.048
+          },
+          "ran_as_own_turn": true
+        }
+      },
+      {
+        "q": "Q2",
+        "name": "classic_cli: steer from inside the owner via canonical verbs",
+        "pass": true,
+        "detail": {
+          "result": {
+            "ok": true,
+            "applied": "steer",
+            "calls": [
+              "session.resume",
+              "session.steer"
+            ],
+            "seconds": 0.1
+          },
+          "steered_into_turn": true,
+          "ran_as_own_turn": false,
+          "long_turn_steps": 4
+        }
+      },
+      {
+        "q": "Q2",
+        "name": "classic_cli: queue from inside the owner via canonical verbs",
+        "pass": true,
+        "detail": {
+          "result": {
+            "ok": true,
+            "applied": "queue",
+            "calls": [
+              "session.resume",
+              "prompt.submit"
+            ],
+            "raw": "queued",
+            "seconds": 0.077
+          },
+          "steered_into_turn": false,
+          "ran_as_own_turn": true,
+          "long_turn_steps": 6
+        }
+      },
+      {
+        "q": "Q2",
+        "name": "classic_cli: interrupt from inside the owner via canonical verbs",
+        "pass": true,
+        "detail": {
+          "result": {
+            "ok": true,
+            "applied": "interrupt",
+            "detail": "redirect",
+            "calls": [
+              "session.resume",
+              "session.redirect"
+            ],
+            "seconds": 0.059
+          },
+          "steered_into_turn": false,
+          "ran_as_own_turn": true,
+          "long_turn_steps": 1
+        }
+      },
+      {
+        "q": "Q2",
+        "name": "classic_cli: idle start from inside the owner",
+        "pass": true,
+        "detail": {
+          "result": {
+            "ok": true,
+            "applied": "start",
+            "calls": [
+              "session.resume",
+              "prompt.submit"
+            ],
+            "raw": "queued",
+            "seconds": 0.064
+          },
+          "ran_as_own_turn": true
+        }
+      },
+      {
+        "q": "Q2",
+        "name": "messaging_ntfy: steer from inside the owner via canonical verbs",
+        "pass": true,
+        "detail": {
+          "result": {
+            "ok": true,
+            "applied": "steer",
+            "calls": [
+              "session.resume",
+              "session.steer"
+            ],
+            "seconds": 0.026
+          },
+          "steered_into_turn": true,
+          "ran_as_own_turn": false,
+          "long_turn_steps": 3
+        }
+      },
+      {
+        "q": "Q2",
+        "name": "messaging_ntfy: queue from inside the owner via canonical verbs",
+        "pass": true,
+        "detail": {
+          "result": {
+            "ok": true,
+            "applied": "queue",
+            "calls": [
+              "session.resume",
+              "prompt.submit"
+            ],
+            "raw": "queued",
+            "seconds": 0.025
+          },
+          "steered_into_turn": false,
+          "ran_as_own_turn": true,
+          "long_turn_steps": 6
+        }
+      },
+      {
+        "q": "Q2",
+        "name": "messaging_ntfy: interrupt from inside the owner via canonical verbs",
+        "pass": true,
+        "detail": {
+          "result": {
+            "ok": true,
+            "applied": "interrupt",
+            "detail": "redirect",
+            "calls": [
+              "session.resume",
+              "session.redirect"
+            ],
+            "seconds": 0.013
+          },
+          "steered_into_turn": false,
+          "ran_as_own_turn": true,
+          "long_turn_steps": 1
+        }
+      },
+      {
+        "q": "Q2",
+        "name": "messaging_ntfy: idle start from inside the owner",
+        "pass": true,
+        "detail": {
+          "result": {
+            "ok": true,
+            "applied": "start",
+            "calls": [
+              "session.resume",
+              "prompt.submit"
+            ],
+            "raw": "queued",
+            "seconds": 0.023
+          },
+          "ran_as_own_turn": true
+        }
+      },
+      {
+        "q": "Q2",
+        "name": "dashboard_chat: steer from inside the owner via canonical verbs",
+        "pass": false,
+        "detail": {
+          "result": {
+            "ok": false,
+            "error": "GatewayRPCError: runtime_coordination_required",
+            "seconds": 0.016
+          },
+          "steered_into_turn": false,
+          "ran_as_own_turn": false,
+          "long_turn_steps": 6
+        }
+      },
+      {
+        "q": "Q2",
+        "name": "dashboard_chat: queue from inside the owner via canonical verbs",
+        "pass": false,
+        "detail": {
+          "result": {
+            "ok": false,
+            "error": "GatewayRPCError: runtime_coordination_required",
+            "seconds": 0.017
+          },
+          "steered_into_turn": false,
+          "ran_as_own_turn": false,
+          "long_turn_steps": 6
+        }
+      },
+      {
+        "q": "Q2",
+        "name": "dashboard_chat: interrupt from inside the owner via canonical verbs",
+        "pass": false,
+        "detail": {
+          "result": {
+            "ok": false,
+            "error": "GatewayRPCError: runtime_coordination_required",
+            "seconds": 0.016
+          },
+          "steered_into_turn": false,
+          "ran_as_own_turn": false,
+          "long_turn_steps": 6
+        }
+      },
+      {
+        "q": "Q2",
+        "name": "dashboard_chat: idle start from inside the owner",
+        "pass": false,
+        "detail": {
+          "result": {
+            "ok": false,
+            "error": "GatewayRPCError: runtime_coordination_required",
+            "seconds": 0.015
+          },
+          "ran_as_own_turn": false
+        }
+      },
+      {
+        "q": "Q3",
+        "name": "reply from a classic_cli turn's post_llm_call reached the owner_attached sender",
+        "pass": true,
+        "detail": {
+          "send": {
+            "ok": true,
+            "applied": "start",
+            "calls": [
+              "session.resume",
+              "prompt.submit"
+            ],
+            "raw": "queued",
+            "seconds": 0.114
+          },
+          "reply": {
+            "from_session": "local-989c9baf40bbdd805fe6c1b950e1d2cb77cfa3a5b056e7491a4fa0da4d423f37",
+            "to": "local-db56e067f4a2581f1a30d66bd0020ff9c5f0a4f386f0bf1121b1c5cfb48489d0",
+            "result": {
+              "ok": true,
+              "applied": "start",
+              "calls": [
+                "session.resume",
+                "prompt.submit"
+              ],
+              "raw": "queued",
+              "seconds": 0.041
+            },
+            "kind": "reply",
+            "t": 1794371152.8383646,
+            "pid": 1373276
+          },
+          "reply_reached_model": true
+        }
+      },
+      {
+        "q": "Q3",
+        "name": "reply from a messaging_ntfy turn's post_llm_call reached the owner_attached sender",
+        "pass": true,
+        "detail": {
+          "send": {
+            "ok": true,
+            "applied": "start",
+            "calls": [
+              "session.resume",
+              "prompt.submit"
+            ],
+            "raw": "queued",
+            "seconds": 0.022
+          },
+          "reply": {
+            "from_session": "20261110_222038_94765d9b",
+            "to": "local-db56e067f4a2581f1a30d66bd0020ff9c5f0a4f386f0bf1121b1c5cfb48489d0",
+            "result": {
+              "ok": true,
+              "applied": "start",
+              "calls": [
+                "session.resume",
+                "prompt.submit"
+              ],
+              "raw": "queued",
+              "seconds": 0.038
+            },
+            "kind": "reply",
+            "t": 1794371156.615128,
+            "pid": 1373276
+          },
+          "reply_reached_model": true
+        }
+      },
+      {
+        "q": "Q3",
+        "name": "reply from a owner_attached turn's post_llm_call reached the messaging_ntfy sender",
+        "pass": true,
+        "detail": {
+          "send": {
+            "ok": true,
+            "applied": "start",
+            "calls": [
+              "session.resume",
+              "prompt.submit"
+            ],
+            "raw": "queued",
+            "seconds": 0.037
+          },
+          "reply": {
+            "from_session": "local-db56e067f4a2581f1a30d66bd0020ff9c5f0a4f386f0bf1121b1c5cfb48489d0",
+            "to": "20261110_222038_94765d9b",
+            "result": {
+              "ok": true,
+              "applied": "start",
+              "calls": [
+                "session.resume",
+                "prompt.submit"
+              ],
+              "raw": "queued",
+              "seconds": 0.029
+            },
+            "kind": "reply",
+            "t": 1794371160.3935049,
+            "pid": 1373276
+          },
+          "reply_reached_model": true
+        }
+      },
+      {
+        "q": "Q2",
+        "name": "cold session (owner restarted, session not loaded) started from inside the owner",
+        "pass": true,
+        "detail": {
+          "ok": true,
+          "applied": "start",
+          "calls": [
+            "session.resume",
+            "prompt.submit"
+          ],
+          "raw": "queued",
+          "seconds": 0.695
+        }
+      }
+    ],
+    "obs": {
+      "owner_create_before_dashboard": "local-d3850838fccdea89885e16a1e9ce7f19d3907d1291f61accd28eb8c11a1aad16",
+      "pids": {
+        "owner": 1373276,
+        "dashboard": 1374800
+      },
+      "whoami": {
+        "owner": {
+          "ok": true,
+          "pid": 1373276,
+          "gateway_injector": true,
+          "tui_injector": false
+        },
+        "dashboard": {
+          "ok": true,
+          "pid": 1374800,
+          "gateway_injector": false,
+          "tui_injector": true
+        }
+      },
+      "Q1_hosts": {
+        "owner_attached": {
+          "session": "local-db56e067f4a2581f1a30d66bd0020ff9c5f0a4f386f0bf1121b1c5cfb48489d0",
+          "turn_pid": 1373276
+        },
+        "dashboard_chat": {
+          "session": "20261110_221837_bba3ef",
+          "live_id": "f2383098",
+          "create": "ok",
+          "submit": "streaming",
+          "turn_pid": 1374800
+        },
+        "classic_cli": {
+          "session": "local-989c9baf40bbdd805fe6c1b950e1d2cb77cfa3a5b056e7491a4fa0da4d423f37",
+          "cli_pid": 1376400,
+          "turn_pid": 1373276
+        },
+        "messaging_ntfy": {
+          "session": "20261110_222038_94765d9b",
+          "platform": "ntfy",
+          "turn_pid": 1373276
+        },
+        "leases": [
+          {
+            "lease_id": "0f69e1f2f6cd4f1d9f221e51e4bfa339",
+            "metadata": {
+              "live_session_id": "f2383098"
+            },
+            "pid": 1374800,
+            "process_start_time": 1794370663.54,
+            "session_id": "20261110_221837_bba3ef",
+            "started_at": 1794370717.8199399,
+            "surface": "tui",
+            "updated_at": 1794370717.8199399
+          },
+          {
+            "lease_id": "83d1977bb963483c975ef335514d5ecf",
+            "metadata": {
+              "live_session_id": "20261110_222015_6178d0"
+            },
+            "pid": 1376400,
+            "process_start_time": 1794370719.78,
+            "session_id": "20261110_222015_6178d0",
+            "started_at": 1794370815.3947966,
+            "surface": "cli",
+            "updated_at": 1794370815.3947966
+          },
+          {
+            "lease_id": "5a830b045d23423fb6c97aee8b09c7c9",
+            "metadata": {
+              "chat_id": "probe-in",
+              "live_session_id": "agent:main:ntfy:dm:probe-in",
+              "platform": "ntfy",
+              "user_id": "probe-in"
+            },
+            "pid": 1373276,
+            "process_start_time": 1794370656.19,
+            "session_id": "agent:main:ntfy:dm:probe-in",
+            "started_at": 1794370838.565794,
+            "surface": "gateway:ntfy",
+            "updated_at": 1794370838.565794
+          }
+        ]
+      },
+      "Q2_owner_attached": {
+        "steer": {
+          "result": {
+            "ok": true,
+            "applied": "steer",
+            "calls": [
+              "session.resume",
+              "session.steer"
+            ],
+            "seconds": 0.032
+          },
+          "steered_into_turn": true,
+          "ran_as_own_turn": false,
+          "long_turn_steps": 4
+        },
+        "queue": {
+          "result": {
+            "ok": true,
+            "applied": "queue",
+            "calls": [
+              "session.resume",
+              "prompt.submit"
+            ],
+            "raw": "queued",
+            "seconds": 0.039
+          },
+          "steered_into_turn": false,
+          "ran_as_own_turn": true,
+          "long_turn_steps": 6
+        },
+        "interrupt": {
+          "result": {
+            "ok": true,
+            "applied": "interrupt",
+            "detail": "redirect",
+            "calls": [
+              "session.resume",
+              "session.redirect"
+            ],
+            "seconds": 0.031
+          },
+          "steered_into_turn": false,
+          "ran_as_own_turn": true,
+          "long_turn_steps": 1
+        },
+        "idle": {
+          "result": {
+            "ok": true,
+            "applied": "start",
+            "calls": [
+              "session.resume",
+              "prompt.submit"
+            ],
+            "raw": "queued",
+            "seconds": 0.048
+          },
+          "ran_as_own_turn": true
+        },
+        "ctx_inject_idle": {
+          "result": {
+            "ok": true,
+            "applied": "queue-or-start",
+            "calls": [
+              "ctx.inject_message"
+            ]
+          },
+          "ran_as_own_turn": false
+        }
+      },
+      "Q2_classic_cli": {
+        "steer": {
+          "result": {
+            "ok": true,
+            "applied": "steer",
+            "calls": [
+              "session.resume",
+              "session.steer"
+            ],
+            "seconds": 0.1
+          },
+          "steered_into_turn": true,
+          "ran_as_own_turn": false,
+          "long_turn_steps": 4
+        },
+        "queue": {
+          "result": {
+            "ok": true,
+            "applied": "queue",
+            "calls": [
+              "session.resume",
+              "prompt.submit"
+            ],
+            "raw": "queued",
+            "seconds": 0.077
+          },
+          "steered_into_turn": false,
+          "ran_as_own_turn": true,
+          "long_turn_steps": 6
+        },
+        "interrupt": {
+          "result": {
+            "ok": true,
+            "applied": "interrupt",
+            "detail": "redirect",
+            "calls": [
+              "session.resume",
+              "session.redirect"
+            ],
+            "seconds": 0.059
+          },
+          "steered_into_turn": false,
+          "ran_as_own_turn": true,
+          "long_turn_steps": 1
+        },
+        "idle": {
+          "result": {
+            "ok": true,
+            "applied": "start",
+            "calls": [
+              "session.resume",
+              "prompt.submit"
+            ],
+            "raw": "queued",
+            "seconds": 0.064
+          },
+          "ran_as_own_turn": true
+        },
+        "ctx_inject_idle": {
+          "result": {
+            "ok": true,
+            "applied": "queue-or-start",
+            "calls": [
+              "ctx.inject_message"
+            ]
+          },
+          "ran_as_own_turn": false
+        }
+      },
+      "Q2_messaging_ntfy": {
+        "steer": {
+          "result": {
+            "ok": true,
+            "applied": "steer",
+            "calls": [
+              "session.resume",
+              "session.steer"
+            ],
+            "seconds": 0.026
+          },
+          "steered_into_turn": true,
+          "ran_as_own_turn": false,
+          "long_turn_steps": 3
+        },
+        "queue": {
+          "result": {
+            "ok": true,
+            "applied": "queue",
+            "calls": [
+              "session.resume",
+              "prompt.submit"
+            ],
+            "raw": "queued",
+            "seconds": 0.025
+          },
+          "steered_into_turn": false,
+          "ran_as_own_turn": true,
+          "long_turn_steps": 6
+        },
+        "interrupt": {
+          "result": {
+            "ok": true,
+            "applied": "interrupt",
+            "detail": "redirect",
+            "calls": [
+              "session.resume",
+              "session.redirect"
+            ],
+            "seconds": 0.013
+          },
+          "steered_into_turn": false,
+          "ran_as_own_turn": true,
+          "long_turn_steps": 1
+        },
+        "idle": {
+          "result": {
+            "ok": true,
+            "applied": "start",
+            "calls": [
+              "session.resume",
+              "prompt.submit"
+            ],
+            "raw": "queued",
+            "seconds": 0.023
+          },
+          "ran_as_own_turn": true
+        },
+        "ctx_inject_idle": {
+          "result": {
+            "ok": true,
+            "applied": "queue-or-start",
+            "calls": [
+              "ctx.inject_message"
+            ]
+          },
+          "ran_as_own_turn": false
+        }
+      },
+      "Q2_dashboard_chat": {
+        "steer": {
+          "result": {
+            "ok": false,
+            "error": "GatewayRPCError: runtime_coordination_required",
+            "seconds": 0.016
+          },
+          "steered_into_turn": false,
+          "ran_as_own_turn": false,
+          "long_turn_steps": 6
+        },
+        "queue": {
+          "result": {
+            "ok": false,
+            "error": "GatewayRPCError: runtime_coordination_required",
+            "seconds": 0.017
+          },
+          "steered_into_turn": false,
+          "ran_as_own_turn": false,
+          "long_turn_steps": 6
+        },
+        "interrupt": {
+          "result": {
+            "ok": false,
+            "error": "GatewayRPCError: runtime_coordination_required",
+            "seconds": 0.016
+          },
+          "steered_into_turn": false,
+          "ran_as_own_turn": false,
+          "long_turn_steps": 6
+        },
+        "idle": {
+          "result": {
+            "ok": false,
+            "error": "GatewayRPCError: runtime_coordination_required",
+            "seconds": 0.015
+          },
+          "ran_as_own_turn": false
+        },
+        "ctx_inject_idle": {
+          "result": {
+            "ok": true,
+            "applied": "queue-or-start",
+            "calls": [
+              "ctx.inject_message"
+            ]
+          },
+          "ran_as_own_turn": false
+        }
+      },
+      "Q3": {
+        "classic_cli->owner_attached": {
+          "send": {
+            "ok": true,
+            "applied": "start",
+            "calls": [
+              "session.resume",
+              "prompt.submit"
+            ],
+            "raw": "queued",
+            "seconds": 0.114
+          },
+          "reply": {
+            "from_session": "local-989c9baf40bbdd805fe6c1b950e1d2cb77cfa3a5b056e7491a4fa0da4d423f37",
+            "to": "local-db56e067f4a2581f1a30d66bd0020ff9c5f0a4f386f0bf1121b1c5cfb48489d0",
+            "result": {
+              "ok": true,
+              "applied": "start",
+              "calls": [
+                "session.resume",
+                "prompt.submit"
+              ],
+              "raw": "queued",
+              "seconds": 0.041
+            },
+            "kind": "reply",
+            "t": 1794371152.8383646,
+            "pid": 1373276
+          },
+          "reply_reached_model": true
+        },
+        "messaging_ntfy->owner_attached": {
+          "send": {
+            "ok": true,
+            "applied": "start",
+            "calls": [
+              "session.resume",
+              "prompt.submit"
+            ],
+            "raw": "queued",
+            "seconds": 0.022
+          },
+          "reply": {
+            "from_session": "20261110_222038_94765d9b",
+            "to": "local-db56e067f4a2581f1a30d66bd0020ff9c5f0a4f386f0bf1121b1c5cfb48489d0",
+            "result": {
+              "ok": true,
+              "applied": "start",
+              "calls": [
+                "session.resume",
+                "prompt.submit"
+              ],
+              "raw": "queued",
+              "seconds": 0.038
+            },
+            "kind": "reply",
+            "t": 1794371156.615128,
+            "pid": 1373276
+          },
+          "reply_reached_model": true
+        },
+        "owner_attached->messaging_ntfy": {
+          "send": {
+            "ok": true,
+            "applied": "start",
+            "calls": [
+              "session.resume",
+              "prompt.submit"
+            ],
+            "raw": "queued",
+            "seconds": 0.037
+          },
+          "reply": {
+            "from_session": "local-db56e067f4a2581f1a30d66bd0020ff9c5f0a4f386f0bf1121b1c5cfb48489d0",
+            "to": "20261110_222038_94765d9b",
+            "result": {
+              "ok": true,
+              "applied": "start",
+              "calls": [
+                "session.resume",
+                "prompt.submit"
+              ],
+              "raw": "queued",
+              "seconds": 0.029
+            },
+            "kind": "reply",
+            "t": 1794371160.3935049,
+            "pid": 1373276
+          },
+          "reply_reached_model": true
+        }
+      },
+      "Q2_cold": {
+        "ok": true,
+        "applied": "start",
+        "calls": [
+          "session.resume",
+          "prompt.submit"
+        ],
+        "raw": "queued",
+        "seconds": 0.695
+      }
+    },
+    "sha": "9aa6dbc600",
+    "intercom_sha": "ae90a2a",
+    "hooks": [
+      {
+        "pid": 1373276,
+        "session_id": "local-db56e067f4a2581f1a30d66bd0020ff9c5f0a4f386f0bf1121b1c5cfb48489d0",
+        "platform": "tui",
+        "gateway_injector": true,
+        "tui_injector": false
+      },
+      {
+        "pid": 1374800,
+        "session_id": "20261110_221837_bba3ef",
+        "platform": "tui",
+        "gateway_injector": false,
+        "tui_injector": true
+      },
+      {
+        "pid": 1373276,
+        "session_id": "local-989c9baf40bbdd805fe6c1b950e1d2cb77cfa3a5b056e7491a4fa0da4d423f37",
+        "platform": "cli",
+        "gateway_injector": true,
+        "tui_injector": false
+      },
+      {
+        "pid": 1373276,
+        "session_id": "20261110_222038_94765d9b",
+        "platform": "ntfy",
+        "gateway_injector": true,
+        "tui_injector": false
+      },
+      {
+        "pid": 1373276,
+        "session_id": "local-db56e067f4a2581f1a30d66bd0020ff9c5f0a4f386f0bf1121b1c5cfb48489d0",
+        "platform": "tui",
+        "gateway_injector": true,
+        "tui_injector": false
+      },
+      {
+        "pid": 1373276,
+        "session_id": "local-db56e067f4a2581f1a30d66bd0020ff9c5f0a4f386f0bf1121b1c5cfb48489d0",
+        "platform": "tui",
+        "gateway_injector": true,
+        "tui_injector": false
+      },
+      {
+        "pid": 1373276,
+        "session_id": "local-db56e067f4a2581f1a30d66bd0020ff9c5f0a4f386f0bf1121b1c5cfb48489d0",
+        "platform": "tui",
+        "gateway_injector": true,
+        "tui_injector": false
+      },
+      {
+        "pid": 1373276,
+        "session_id": "local-db56e067f4a2581f1a30d66bd0020ff9c5f0a4f386f0bf1121b1c5cfb48489d0",
+        "platform": "tui",
+        "gateway_injector": true,
+        "tui_injector": false
+      },
+      {
+        "pid": 1373276,
+        "session_id": "local-db56e067f4a2581f1a30d66bd0020ff9c5f0a4f386f0bf1121b1c5cfb48489d0",
+        "platform": "tui",
+        "gateway_injector": true,
+        "tui_injector": false
+      },
+      {
+        "pid": 1373276,
+        "session_id": "local-989c9baf40bbdd805fe6c1b950e1d2cb77cfa3a5b056e7491a4fa0da4d423f37",
+        "platform": "cli",
+        "gateway_injector": true,
+        "tui_injector": false
+      },
+      {
+        "pid": 1373276,
+        "session_id": "local-989c9baf40bbdd805fe6c1b950e1d2cb77cfa3a5b056e7491a4fa0da4d423f37",
+        "platform": "cli",
+        "gateway_injector": true,
+        "tui_injector": false
+      },
+      {
+        "pid": 1373276,
+        "session_id": "local-989c9baf40bbdd805fe6c1b950e1d2cb77cfa3a5b056e7491a4fa0da4d423f37",
+        "platform": "cli",
+        "gateway_injector": true,
+        "tui_injector": false
+      },
+      {
+        "pid": 1373276,
+        "session_id": "local-989c9baf40bbdd805fe6c1b950e1d2cb77cfa3a5b056e7491a4fa0da4d423f37",
+        "platform": "cli",
+        "gateway_injector": true,
+        "tui_injector": false
+      },
+      {
+        "pid": 1373276,
+        "session_id": "local-989c9baf40bbdd805fe6c1b950e1d2cb77cfa3a5b056e7491a4fa0da4d423f37",
+        "platform": "cli",
+        "gateway_injector": true,
+        "tui_injector": false
+      },
+      {
+        "pid": 1373276,
+        "session_id": "20261110_222038_94765d9b",
+        "platform": "ntfy",
+        "gateway_injector": true,
+        "tui_injector": false
+      },
+      {
+        "pid": 1373276,
+        "session_id": "20261110_222038_94765d9b",
+        "platform": "ntfy",
+        "gateway_injector": true,
+        "tui_injector": false
+      },
+      {
+        "pid": 1373276,
+        "session_id": "20261110_222038_94765d9b",
+        "platform": "ntfy",
+        "gateway_injector": true,
+        "tui_injector": false
+      },
+      {
+        "pid": 1373276,
+        "session_id": "20261110_222038_94765d9b",
+        "platform": "ntfy",
+        "gateway_injector": true,
+        "tui_injector": false
+      },
+      {
+        "pid": 1373276,
+        "session_id": "20261110_222038_94765d9b",
+        "platform": "ntfy",
+        "gateway_injector": true,
+        "tui_injector": false
+      },
+      {
+        "pid": 1374800,
+        "session_id": "20261110_221837_bba3ef",
+        "platform": "tui",
+        "gateway_injector": false,
+        "tui_injector": true
+      },
+      {
+        "pid": 1374800,
+        "session_id": "20261110_221837_bba3ef",
+        "platform": "tui",
+        "gateway_injector": false,
+        "tui_injector": true
+      },
+      {
+        "pid": 1374800,
+        "session_id": "20261110_221837_bba3ef",
+        "platform": "tui",
+        "gateway_injector": false,
+        "tui_injector": true
+      },
+      {
+        "pid": 1373276,
+        "session_id": "local-989c9baf40bbdd805fe6c1b950e1d2cb77cfa3a5b056e7491a4fa0da4d423f37",
+        "platform": "cli",
+        "gateway_injector": true,
+        "tui_injector": false
+      },
+      {
+        "pid": 1373276,
+        "session_id": "local-db56e067f4a2581f1a30d66bd0020ff9c5f0a4f386f0bf1121b1c5cfb48489d0",
+        "platform": "tui",
+        "gateway_injector": true,
+        "tui_injector": false
+      },
+      {
+        "pid": 1373276,
+        "session_id": "20261110_222038_94765d9b",
+        "platform": "ntfy",
+        "gateway_injector": true,
+        "tui_injector": false
+      },
+      {
+        "pid": 1373276,
+        "session_id": "local-db56e067f4a2581f1a30d66bd0020ff9c5f0a4f386f0bf1121b1c5cfb48489d0",
+        "platform": "tui",
+        "gateway_injector": true,
+        "tui_injector": false
+      },
+      {
+        "pid": 1373276,
+        "session_id": "local-db56e067f4a2581f1a30d66bd0020ff9c5f0a4f386f0bf1121b1c5cfb48489d0",
+        "platform": "tui",
+        "gateway_injector": true,
+        "tui_injector": false
+      },
+      {
+        "pid": 1373276,
+        "session_id": "20261110_222038_94765d9b",
+        "platform": "ntfy",
+        "gateway_injector": true,
+        "tui_injector": false
+      }
+    ],
+    "passed": 20,
+    "total": 24,
+    "model_requests": 89
+  },
+  "run7": {
+    "checks": [
+      {
+        "q": "Q1",
+        "name": "owner_attached turns run in the owner process",
+        "pass": true,
+        "detail": {
+          "session": "local-582fb4fd5d4e8a902c65ce2e216d2aafe635a8bf0cee4299d2da1a83afb6eabd",
+          "turn_pid": 1381460
+        }
+      },
+      {
+        "q": "Q1",
+        "name": "classic_cli turns run in the owner process",
+        "pass": true,
+        "detail": {
+          "session": "local-bc97ab784a9f10b5cd35be44d8517dc1361531f4f9b9cf4e0f390264f72d5b99",
+          "cli_pid": 1383023,
+          "turn_pid": 1381460
+        }
+      },
+      {
+        "q": "Q1",
+        "name": "messaging_ntfy turns run in the owner process",
+        "pass": true,
+        "detail": {
+          "session": "20261110_222936_8daaef4e",
+          "platform": "ntfy",
+          "turn_pid": 1381460
+        }
+      },
+      {
+        "q": "Q1",
+        "name": "dashboard chat turns: host recorded",
+        "pass": true,
+        "detail": {
+          "session": "20261110_222735_c86df8",
+          "live_id": "93aae135",
+          "create": "ok",
+          "submit": "streaming",
+          "turn_pid": 1381708
+        }
+      },
+      {
+        "q": "Q2",
+        "name": "dashboard chat: its own process's ctx.inject_message (tui host) runs the message",
+        "pass": true,
+        "detail": {
+          "ok": true,
+          "applied": "queue-or-start",
+          "calls": [
+            "ctx.inject_message"
+          ],
+          "ran": true
+        }
+      },
+      {
+        "q": "Q2",
+        "name": "dashboard chat: steer and queue via the dashboard's own socket (agent key)",
+        "pass": true,
+        "detail": {
+          "dashboard_plugin_ctx_inject_idle": {
+            "ok": true,
+            "applied": "queue-or-start",
+            "calls": [
+              "ctx.inject_message"
+            ],
+            "ran": true
+          },
+          "ws_steer": {
+            "rpc": {
+              "status": "queued",
+              "text": "MAIL6ba6e573 steered"
+            },
+            "steered": true,
+            "own_turn": false
+          },
+          "ws_queue": {
+            "rpc": {
+              "status": "queued"
+            },
+            "steered": false,
+            "own_turn": true
+          }
+        }
+      }
+    ],
+    "obs": {
+      "owner_create_before_dashboard": "local-e0b0207fcb0f1776fb36977d28c59bcbc30dbcec36f27b7b79bd1f4e0115e214",
+      "pids": {
+        "owner": 1381460,
+        "dashboard": 1381708
+      },
+      "whoami": {
+        "owner": {
+          "ok": true,
+          "pid": 1381460,
+          "gateway_injector": true,
+          "tui_injector": false
+        },
+        "dashboard": {
+          "ok": true,
+          "pid": 1381708,
+          "gateway_injector": false,
+          "tui_injector": true
+        }
+      },
+      "Q1_hosts": {
+        "owner_attached": {
+          "session": "local-582fb4fd5d4e8a902c65ce2e216d2aafe635a8bf0cee4299d2da1a83afb6eabd",
+          "turn_pid": 1381460
+        },
+        "dashboard_chat": {
+          "session": "20261110_222735_c86df8",
+          "live_id": "93aae135",
+          "create": "ok",
+          "submit": "streaming",
+          "turn_pid": 1381708
+        },
+        "classic_cli": {
+          "session": "local-bc97ab784a9f10b5cd35be44d8517dc1361531f4f9b9cf4e0f390264f72d5b99",
+          "cli_pid": 1383023,
+          "turn_pid": 1381460
+        },
+        "messaging_ntfy": {
+          "session": "20261110_222936_8daaef4e",
+          "platform": "ntfy",
+          "turn_pid": 1381460
+        },
+        "leases": [
+          {
+            "lease_id": "fab9603a48ec42b0aba7181a8d113dd8",
+            "metadata": {
+              "live_session_id": "93aae135"
+            },
+            "pid": 1381708,
+            "process_start_time": 1794371218.29,
+            "session_id": "20261110_222735_c86df8",
+            "started_at": 1794371255.5674374,
+            "surface": "tui",
+            "updated_at": 1794371255.5674374
+          },
+          {
+            "lease_id": "3c081906f9404c21a7448b66651299cf",
+            "metadata": {
+              "live_session_id": "20261110_222913_081bfa"
+            },
+            "pid": 1383023,
+            "process_start_time": 1794371257.53,
+            "session_id": "20261110_222913_081bfa",
+            "started_at": 1794371353.1668851,
+            "surface": "cli",
+            "updated_at": 1794371353.1668851
+          },
+          {
+            "lease_id": "a22ad5ee0ceb41c59cf69644e9ae9e02",
+            "metadata": {
+              "chat_id": "probe-in",
+              "live_session_id": "agent:main:ntfy:dm:probe-in",
+              "platform": "ntfy",
+              "user_id": "probe-in"
+            },
+            "pid": 1381460,
+            "process_start_time": 1794371211.18,
+            "session_id": "agent:main:ntfy:dm:probe-in",
+            "started_at": 1794371376.3263845,
+            "surface": "gateway:ntfy",
+            "updated_at": 1794371376.3263845
+          }
+        ]
+      },
+      "Q2_dashboard_paths": {
+        "dashboard_plugin_ctx_inject_idle": {
+          "ok": true,
+          "applied": "queue-or-start",
+          "calls": [
+            "ctx.inject_message"
+          ],
+          "ran": true
+        },
+        "ws_steer": {
+          "rpc": {
+            "status": "queued",
+            "text": "MAIL6ba6e573 steered"
+          },
+          "steered": true,
+          "own_turn": false
+        },
+        "ws_queue": {
+          "rpc": {
+            "status": "queued"
+          },
+          "steered": false,
+          "own_turn": true
+        }
+      }
+    },
+    "sha": "9aa6dbc600",
+    "intercom_sha": "ae90a2a",
+    "hooks": [
+      {
+        "pid": 1381460,
+        "session_id": "local-582fb4fd5d4e8a902c65ce2e216d2aafe635a8bf0cee4299d2da1a83afb6eabd",
+        "platform": "tui",
+        "gateway_injector": true,
+        "tui_injector": false
+      },
+      {
+        "pid": 1381708,
+        "session_id": "20261110_222735_c86df8",
+        "platform": "tui",
+        "gateway_injector": false,
+        "tui_injector": true
+      },
+      {
+        "pid": 1381460,
+        "session_id": "local-bc97ab784a9f10b5cd35be44d8517dc1361531f4f9b9cf4e0f390264f72d5b99",
+        "platform": "cli",
+        "gateway_injector": true,
+        "tui_injector": false
+      },
+      {
+        "pid": 1381460,
+        "session_id": "20261110_222936_8daaef4e",
+        "platform": "ntfy",
+        "gateway_injector": true,
+        "tui_injector": false
+      },
+      {
+        "pid": 1381708,
+        "session_id": "20261110_222735_c86df8",
+        "platform": "tui",
+        "gateway_injector": false,
+        "tui_injector": true
+      },
+      {
+        "pid": 1381708,
+        "session_id": "20261110_222735_c86df8",
+        "platform": "tui",
+        "gateway_injector": false,
+        "tui_injector": true
+      },
+      {
+        "pid": 1381708,
+        "session_id": "20261110_222735_c86df8",
+        "platform": "tui",
+        "gateway_injector": false,
+        "tui_injector": true
+      },
+      {
+        "pid": 1381708,
+        "session_id": "20261110_222735_c86df8",
+        "platform": "tui",
+        "gateway_injector": false,
+        "tui_injector": true
+      }
+    ],
+    "passed": 6,
+    "total": 6,
+    "model_requests": 20
+  },
+  "passed": 26,
+  "total": 30
+}
