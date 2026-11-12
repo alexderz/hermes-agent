@@ -523,8 +523,12 @@ class AddressTests(unittest.TestCase):
         try:
             ctx = _Ctx()
             plugin.register(ctx)
-            # Only G9's reply hook: with inbound "never" no legacy drain is registered.
-            self.assertEqual([hook[0] for hook in ctx.hooks], ["post_llm_call"])
+            # G9's reply hook and G6's echo hooks: with inbound "never" no legacy drain is registered.
+            self.assertEqual([hook[0] for hook in ctx.hooks],
+                             ["post_llm_call", "pre_llm_call", "pre_api_request"])
+            echo = sys.modules[plugin.__name__ + ".echo"]
+            self.assertEqual([hook[1] for hook in ctx.hooks[1:]],
+                             [echo.on_pre_llm_call, echo.on_pre_api_request])
             self.assertNotIn("@", ctx.tools[0]["schema"]["description"])
             addr = sys.modules[plugin.__name__ + ".address"]
             self.assertTrue(addr.registered_project_addressing)

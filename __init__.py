@@ -164,6 +164,10 @@ def register(ctx) -> None:
     from . import replies
 
     replies.register(ctx)
+    # B6: the echo into a private chat, posted from the target's own turn.
+    from . import echo
+
+    echo.register(ctx)
     inbound = ctx.get_config("inbound", default="always")
     inbox_enabled = inbound != "never"
 
