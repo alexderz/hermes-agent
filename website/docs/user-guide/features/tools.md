@@ -324,3 +324,17 @@ is also masked if a tool result ever echoes it.
 The CLI shows a 🔑 panel, while the TUI and the desktop app show their secret dialog. Messaging
 platforms have no masked input, so the agent refuses there. It tells you to set the key from a local
 CLI, TUI or desktop session, or to add it to the profile's `.env` yourself. Never send keys in chat.
+
+When a secret belongs in a file instead (a token another program reads, for example), the agent uses
+`secret_file`: it names the secret, a path and an access level. Before you type anything, the prompt
+shows where the value will be saved: the full path, the mode, and the owner and group. A relative path
+is resolved in the session's working directory. `private` (the default) saves it as `0600`, readable
+only by the user Hermes runs as. `standard` saves it as `0640`, also readable by a group that user
+belongs to. A file is never world-readable, and the owner is always the user Hermes runs as. The agent
+only gets the path, mode, owner and size back.
+
+Hermes refuses before showing the prompt if it cannot save the file. That covers a missing or
+unwritable folder, a symbolic link on the path, a group the Hermes user is not in, and a file that
+already exists: a secret file is never overwritten. To replace one, the agent deletes the old file and
+asks again, or asks for a new file (such as `api-key.v2`) and swaps it in. Hermes writes the file with
+its own permissions, never with `sudo`, so it can only save where its user can already write.
