@@ -329,8 +329,10 @@ When a secret belongs in a file instead (a token another program reads, for exam
 `secret_file`: it names the secret, a path and an access level. This works in the Webapp and the
 desktop app, whose secret dialog shows where the value will be saved before you type anything: the
 full path, the mode, and the owner and group. The CLI and TUI refuse it, because their prompts can only
-show text the agent wrote. A relative path is resolved in the session's working directory; with none,
-the agent must give an absolute path. `private` (the default) saves it as `0600`, readable only by the
+show text the agent wrote: they never open the prompt for it. When one of them is attached to the same
+session as the Webapp or desktop app, it shows a one-line notice instead, and the secret must be
+entered in the Webapp or desktop app. A relative path is resolved in the session's working
+directory; with none, the agent must give an absolute path. `private` (the default) saves it as `0600`, readable only by the
 user Hermes runs as. `standard` saves it as `0640`, also readable by a group that user belongs to. A
 file is never world-readable, even in a folder with a default ACL, and the owner is always the user
 Hermes runs as. The agent only gets the path, mode, owner and size back.
