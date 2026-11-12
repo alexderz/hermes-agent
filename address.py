@@ -260,12 +260,10 @@ def _unknown_titles(db, text: str, lister) -> dict:
     # SessionDB._read_all is private. list_sessions_rich(search_query=) is a
     # case-folded substring that also matches ids, and the owner's session.list
     # is one page, so neither can rank a typo (UX F1). G-12 lists this seam or
-    # accepts it. Run sources stay out, the same set list hides.
+    # accepts it.
     rows = db._read_all(
         "SELECT id, title, started_at FROM sessions "
-        "WHERE title IS NOT NULL AND title != '' "
-        f"AND COALESCE(source, '') NOT IN ({','.join('?' for _ in RUN_SOURCES)})",
-        tuple(sorted(RUN_SOURCES)),
+        "WHERE title IS NOT NULL AND title != ''"
     )
     best: dict[str, dict] = {}
     for row in rows:
