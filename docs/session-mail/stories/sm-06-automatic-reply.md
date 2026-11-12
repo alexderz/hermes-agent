@@ -16,7 +16,7 @@
   - [ ] For a message that has its own block, only that block is mailed; a `[SILENT]` block sends nothing, even in a turn that also answers Alex.
   - [ ] Footer line 2 tells the model to always write the block when the turn also answers Alex or other work.
   - [ ] A sender acting on a reply can end the exchange with `[REPLY <reply id>][SILENT][/REPLY]` while reporting to Alex (J1 step 6).
-  - [ ] The reply is delivered with the default `steer` by the sender's host (or wakes it), and the record links it to the message it answers.
+  - [ ] The reply is delivered with the default `steer` by the gateway owner (which reopens the sender's session if it is not open), and the record links it to the message it answers.
   - [ ] Messages sent with `ask` get no automatic reply (sm-21).
   - [ ] Ending the target's turn does not wait for the reply to be delivered.
 - **Out of scope** — replies by calling `send` (SM-Q8 option 3); redelivering a reply lost in a restart.

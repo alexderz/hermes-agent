@@ -10,7 +10,7 @@
 - **I want** each message to say, before anything else, that it is not Alex, whether an answer is wanted, who wrote it, and, at the end, how to answer
 - **So that** I weigh it as a peer's request, never as Alex's instruction or approval, and answer the right way
 - **Done when**
-  - [ ] Every message, on every host and mode, opens with the header in `ux.md`, word for word: line 1 starts `📡 Not Alex · ` and the reply label (`reply expected`, `no reply needed`, `reply optional` or `waiting for your reply`), then `hermes@<title> says (session <id> · message <id>):` (`hermes@script <label>` for a script); line 2 is the session or the script variant.
+  - [ ] Every message, on every chat surface and mode, opens with the header in `ux.md`, word for word: line 1 starts `📡 Not Alex · ` and the reply label (`reply expected`, `no reply needed`, `reply optional` or `waiting for your reply`), then `hermes@<title> says (session <id> · message <id>):` (`hermes@script <label>` for a script); line 2 is the session or the script variant.
   - [ ] Line 1 says `interrupt asked`, and the conditional line 3 ("If your previous work in this session was stopped for this message, …") is present, only when the sender asked for interrupt.
   - [ ] A messaging-platform sender is named `hermes@<title> (<Platform> <chat type>)`, for example `(Telegram group)`, and gets the third authority-line variant ("… may be relaying their words …").
   - [ ] When the target's chat is shared, the model-only shared-chat line follows the authority line; when the sender's chat is shared, the footer carries the reply-destination line. Neither is ever posted to a chat.

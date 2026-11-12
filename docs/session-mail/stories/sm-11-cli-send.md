@@ -12,7 +12,7 @@
 - **Done when**
   - [ ] `send` takes `--to`, one of `--message`, `--file PATH` or `--file -`, and optional `--delivery` (default `steer`), `--from`, `--no-reply` and `--json`.
   - [ ] A delivery prints `message <id> → "<title>": <applied> (<reason>)`, with `asked: <requested>` when weaker, and exits 0.
-  - [ ] Exit codes are 2 (usage: missing `--to`, neither or both of `--message` and `--file`, unknown `--delivery`), 3 (refused: ambiguous or unknown address, empty or whitespace-only body, own session), 4 (the host cannot take it), 5 (not delivered: no host, or not handed over), 6 (delivery unknown); error text goes to standard error.
+  - [ ] Exit codes are 2 (usage: missing `--to`, neither or both of `--message` and `--file`, unknown `--delivery`), 3 (refused: ambiguous or unknown address, empty or whitespace-only body, own session), 4 (`not-addressable`, `injection-off`, `refused-by-owner`), 5 (`no-owner`, `owner-restarting`, `not-reachable`), 6 (delivery unknown); error text goes to standard error.
   - [ ] `--json` prints the receipt object, on success and failure, with the same exit codes.
   - [ ] The header names the sender `hermes@script <--from>`, or `hermes@script cli` without `--from`.
   - [ ] `hermes intercom send --help` shows, for `--delivery`, Alex's sentence on interrupt word for word.
