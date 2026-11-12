@@ -4724,6 +4724,8 @@ export const en: Translations = {
     secretTitle: 'Secret required',
     secretDesc: 'Hermes needs a credential to continue.',
     secretPlaceholder: 'secret value',
+    secretSavedTo: 'Will be saved to',
+    secretFileFacts: (mode, owner) => `Mode ${mode}, owner ${owner}`,
     vaultUnlockSendFailed: 'Could not send master password',
     vaultUnlockTitle: name => `Unlock ${name}`,
     vaultUnlockDesc: name =>

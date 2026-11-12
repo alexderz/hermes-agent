@@ -28,6 +28,7 @@ import {
   clearVaultCodeRequest,
   clearVaultSaveLoginRequest,
   clearVaultUnlockRequest,
+  type SecretFileDestination,
   sessionSecretRequest,
   sessionSudoRequest,
   sessionVaultCodeRequest,
@@ -241,6 +242,8 @@ function SecretDialog({ sessionId }: { sessionId: string | null }) {
           <DialogDescription>{request.prompt || copy.secretDesc}</DialogDescription>
         </DialogHeader>
 
+        {request.destination && <SecretDestination destination={request.destination} />}
+
         <form className="grid gap-3" onSubmit={onSubmit}>
           <Input
             autoFocus
@@ -261,6 +264,21 @@ function SecretDialog({ sessionId }: { sessionId: string | null }) {
         </form>
       </DialogContent>
     </Dialog>
+  )
+}
+
+/** Where a `clarify(secret_file=...)` answer will be written, shown before the user types it. */
+function SecretDestination({ destination }: { destination: SecretFileDestination }) {
+  const { t } = useI18n()
+  const copy = t.prompts
+  const owner = destination.group ? `${destination.owner}:${destination.group}` : destination.owner
+
+  return (
+    <section aria-label={copy.secretSavedTo} className="grid gap-1 rounded-md border bg-muted/40 px-3 py-2 text-xs">
+      <span className="text-muted-foreground">{copy.secretSavedTo}</span>
+      <code className="font-mono break-all whitespace-pre-wrap">{destination.path}</code>
+      <span className="text-muted-foreground">{copy.secretFileFacts(destination.mode, owner)}</span>
+    </section>
   )
 }
 

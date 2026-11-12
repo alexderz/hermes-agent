@@ -1022,6 +1022,8 @@
   "profiles.status.unread": ["ar","ja","ru","zh","zh-hant"],
   "profiles.status.working": ["ar","ja","ru","zh","zh-hant"],
   "prompts.reconnect": ["ar","ja","ru","zh","zh-hant"],
+  "prompts.secretFileFacts": ["ar","de","es","fr","ja","ru","zh","zh-hant"],
+  "prompts.secretSavedTo": ["ar","de","es","fr","ja","ru","zh","zh-hant"],
   "prompts.vaultCodeConfirm": ["ru"],
   "prompts.vaultCodeDesc": ["ru"],
   "prompts.vaultCodeFootnote": ["ru"],

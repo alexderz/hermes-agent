@@ -26,6 +26,7 @@ import { dispatchNativeNotification } from '@/store/native-notifications'
 import type { PreviewOwner } from '@/store/preview-ownership'
 import {
   receiveApprovalRequest,
+  type SecretFileDestination,
   setSecretRequest,
   setSudoRequest,
   setVaultCodeRequest,
@@ -460,6 +461,17 @@ const displayInstallSudo: Handler = ctx => {
   notifyInput(ctx, translateNow('prompts.sudoInstallDesc'))
 }
 
+/** `metadata.destination` of a `clarify(secret_file=...)` request; anything else saves to `.env`. */
+function secretFileDestination(metadata: unknown): SecretFileDestination | undefined {
+  const dest = (metadata as { destination?: Record<string, unknown> } | null)?.destination
+
+  if (!dest || dest.kind !== 'file' || !str(dest.path)) {
+    return undefined
+  }
+
+  return { group: str(dest.group), mode: str(dest.mode), owner: str(dest.owner), path: str(dest.path) }
+}
+
 const secret: Handler = ctx => {
   const p = ctx.request.params
   const envVar = str(p.env_var)
@@ -470,7 +482,13 @@ const secret: Handler = ctx => {
   }
 
   rememberServerRequest(ctx.request)
-  setSecretRequest({ envVar, prompt: promptText, requestId: ctx.request.id, sessionId: ctx.sessionId || null })
+  setSecretRequest({
+    destination: secretFileDestination(p.metadata),
+    envVar,
+    prompt: promptText,
+    requestId: ctx.request.id,
+    sessionId: ctx.sessionId || null
+  })
   markNeedsInput(ctx)
   notifyInput(ctx, promptText || envVar || translateNow('notifications.native.inputBody'))
 }
