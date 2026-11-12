@@ -257,14 +257,7 @@ def _resolve_slug(db, slug_text: str, lister) -> dict:
 def _unknown_titles(db, text: str, lister) -> dict:
     if db is None or not text:
         return _refusal("unknown", UNKNOWN_MESSAGE)
-    # SessionDB._read_all is private. list_sessions_rich(search_query=) is a
-    # case-folded substring that also matches ids, and the owner's session.list
-    # is one page, so neither can rank a typo (UX F1). G-12 lists this seam or
-    # accepts it.
-    rows = db._read_all(
-        "SELECT id, title, started_at FROM sessions "
-        "WHERE title IS NOT NULL AND title != ''"
-    )
+    rows = _titled_rows(db)
     best: dict[str, dict] = {}
     for row in rows:
         title = row["title"]
@@ -376,9 +369,7 @@ def _safe_index(db, lister) -> dict:
 
 
 def _summarize_listing(pairs: list) -> dict:
-    # CanonicalSessionListRow has no dashboard flag, so a candidate is open when
-    # its id is in the live list and not open otherwise. "admin dashboard" needs
-    # a real wire field before it can be reported.
+    # A candidate is open when its id is in the live list, and not open otherwise.
     live_rows = [row for row, is_live in pairs if is_live]
     last = _first_last_active(row for row, is_live in pairs if not is_live)
     if last is None:
@@ -666,6 +657,43 @@ def _open_state():
         return SessionDB(read_only=True)
     except Exception:
         return None
+
+
+def _titled_rows(db) -> list[dict]:
+    """Every titled session, through the published listing.
+
+    ``list_sessions_rich`` is one page and its search is a substring, so a typo
+    is ranked here after the pages are walked.
+    """
+    offset = 0
+    seen: set[str] = set()
+    titled = []
+    while True:
+        page = db.list_sessions_rich(
+            include_children=True,
+            include_archived=True,
+            include_hidden=True,
+            include_subagents=True,
+            compact_rows=True,
+            limit=_PREFIX_PAGE,
+            offset=offset,
+        )
+        if not page:
+            break
+        fresh = 0
+        for row in page:
+            sid = row.get("id")
+            if not isinstance(sid, str) or sid in seen:
+                continue
+            seen.add(sid)
+            fresh += 1
+            title = row.get("title")
+            if isinstance(title, str) and title:
+                titled.append(row)
+        if len(page) < _PREFIX_PAGE or fresh == 0:
+            break
+        offset += len(page)
+    return titled
 
 
 def _prefix_matches(db, text: str) -> list[dict]:
