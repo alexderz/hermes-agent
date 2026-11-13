@@ -483,6 +483,8 @@ const secret: Handler = ctx => {
 
   rememberServerRequest(ctx.request)
   setSecretRequest({
+    connectionId: ctx.request.connectionId,
+    profile: ctx.request.profile,
     destination: secretFileDestination(p.metadata),
     envVar,
     prompt: promptText,

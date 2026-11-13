@@ -110,6 +110,37 @@ def test_interactive_secret_wait_has_no_deadline_and_interrupts(monkeypatch):
     assert any(f.get('params', {}).get('payload', {}).get('reason') == 'interrupted' for f in peer.frames)
 
 
+def test_interactive_secret_replays_after_viewer_reconnect():
+    from gateway.session_finite import finite_turn_scope
+    from gateway.session_secret_prompt import secret_prompt_scope
+    from gateway.session_server_requests import open_requests, resolve
+    from tools.skills_tool_setup import _capture_required_environment_variables
+    from tools.thread_context import propagate_context_to_thread
+
+    turn, peer = _turn(Platform.LOCAL)
+    events = turn._approval_owner[0].sessions['s1'].event_stream
+    events.fanout.detach(peer)
+    agent = SimpleNamespace(_interrupt_requested=False)
+    out = {}
+    with finite_turn_scope(False), secret_prompt_scope(turn, agent):
+        worker = threading.Thread(target=propagate_context_to_thread(lambda: out.update(
+            _capture_required_environment_variables('hab-skill', [{'name': 'HAB_KEY', 'prompt': 'p'}]))))
+        worker.start()
+        try:
+            _wait_for(lambda: bool(open_requests(events, 's1')))
+            request = open_requests(events, 's1')[0]
+            assert request['method'] == 'secret'
+            assert request['params']['env_var'] == 'HAB_KEY'
+            events.fanout.attach(peer)
+            assert resolve({'id': request['id'], 'result': {'value': ''}})
+        finally:
+            agent._interrupt_requested = True
+            worker.join(5)
+    assert not worker.is_alive()
+    assert out['setup_skipped'] is True
+    assert open_requests(events, 's1') == []
+
+
 def test_finite_secret_with_no_viewer_refuses_without_waiting():
     from gateway.session_finite import finite_turn_scope
     from gateway.session_secret_prompt import secret_prompt_scope
