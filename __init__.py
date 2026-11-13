@@ -18,15 +18,15 @@ logger = logging.getLogger(__name__)
 
 # Tool-text sentences that follow the catalog sentence. Plain text: the model
 # reads them as written, so there is no markdown here.
-_B11_REPLY = (
+_REPLY_SENTENCE = (
     "reply: none for a note (nothing comes back), requested for an answer, "
     "waiting when you need it before you go on."
 )
-_B11_ASK = (
+_ASK_SENTENCE = (
     "Use ask only when this turn cannot continue without the answer; "
     "otherwise send with reply: waiting."
 )
-_B11_FOLLOW = (
+_FOLLOW_SENTENCE = (
     "For follow-ups, address by session id: list and every receipt give it, "
     "and it stays valid after compaction."
 )
@@ -85,9 +85,9 @@ def _tool_description(projects: bool, user_name: str = "the user") -> str:
 
     lead = " ".join([
         CATALOG_SENTENCE,
-        _B11_REPLY,
-        _B11_ASK,
-        _B11_FOLLOW,
+        _REPLY_SENTENCE,
+        _ASK_SENTENCE,
+        _FOLLOW_SENTENCE,
         "send delivers now; ask delivers and pauses your turn until an explicit reply: "
         "use it only when this turn cannot go on without the answer, otherwise send with "
         "reply: waiting. reply answers an ask; list shows sessions with their ids.",
@@ -149,7 +149,7 @@ def _schema(projects: bool, user_name: str = "the user") -> dict:
                 "reply": {
                     "type": "string",
                     "enum": ["none", "requested", "waiting"],
-                    "description": _B11_REPLY + " Required for send; ignored by the other actions.",
+                    "description": _REPLY_SENTENCE + " Required for send; ignored by the other actions.",
                 },
                 "include_runs": {
                     "type": "boolean",
