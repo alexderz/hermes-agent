@@ -213,7 +213,7 @@ def _desktop_entry(package_dir: Path, name: str) -> tuple[Path, os.stat_result] 
     return None
 
 
-def materialize_desktop_half(package_dir: Path, app_root: Path, name: str) -> Path | None:
+def materialize_desktop_half(package_dir: Path, app_root: Path, name: str, *, default_enabled: bool = False) -> Path | None:
     """Copy *package_dir*'s desktop half to ``<app_root>/<name>/``: its ``desktop/`` folder, or the
     package root (minus :data:`ROOT_LAYOUT_SKIP`) when ``plugin.js`` sits at the root, as the
     installers publish a root-layout repository. Returns the folder when it was copied or adopted, ``None`` when it is
@@ -240,6 +240,7 @@ def materialize_desktop_half(package_dir: Path, app_root: Path, name: str) -> Pa
         "sourceMtimeMs": mtime_ms(entry_stat),
         **({"linked": True} if linked else {}),
         **_package_origin(package_dir),
+        **({"defaultEnabled": True} if default_enabled else {}),
     }
 
     if target.exists():
@@ -255,6 +256,7 @@ def materialize_desktop_half(package_dir: Path, app_root: Path, name: str) -> Pa
             and not target_is_link
             and existing["source"] == str(source_dir)
             and bool(existing.get("linked")) == linked
+            and bool(existing.get("defaultEnabled")) == default_enabled
             and (
                 _same_file(target / "plugin.js", entry)
                 if linked
@@ -373,7 +375,9 @@ def reconcile_desktop_halves_report(hermes_root: Path, app_root: Path) -> dict:
             if name in seen:
                 continue
             try:
-                result = materialize_desktop_half(package, app_root, name)
+                # This package is already explicitly enabled in plugins.enabled;
+                # carry that opt-in to a fresh browser's desktop loader too.
+                result = materialize_desktop_half(package, app_root, name, default_enabled=True)
             except OSError as exc:
                 logger.warning("desktop-plugins: skipping bundled package %s: %s", name, exc)
                 refused.append({"name": name, "reason": str(exc)})
