@@ -2,7 +2,7 @@ import { atom, computed, type ReadableAtom } from 'nanostores'
 
 import { $clarifyRequest, $clarifyRequests } from './clarify'
 import { isSessionGone, isSessionGoneForBackgroundPolling, markSessionGone } from './runtime-gone'
-import { respondToServerRequest } from './server-requests'
+import { hasOpenServerRequest, respondToServerRequest } from './server-requests'
 import { $activeSessionId } from './session'
 import { ambientRequestFor } from './session-gone-latch'
 import { requestForOwnedSession } from './session-states'
@@ -124,6 +124,8 @@ export interface SecretFileDestination {
 }
 
 export interface SecretRequest extends KeyedPrompt {
+  connectionId?: string
+  profile?: string
   envVar: string
   prompt: string
   requestId: string
@@ -436,10 +438,47 @@ export const $sudoRequests = sudo.$all
 export const setSudoRequest = sudo.set
 export const clearSudoRequest = sudo.clear
 
+// Drafts are deliberately process memory only; never put these in a session or transcript store.
+const secretDrafts = new Map<string, string>()
+
+const secretDraftKey = (request: SecretRequest) =>
+  JSON.stringify([request.connectionId ?? '', request.profile ?? '', request.sessionId, request.requestId])
+
+export const readSecretDraft = (request: SecretRequest) => secretDrafts.get(secretDraftKey(request)) ?? ''
+
+export const writeSecretDraft = (request: SecretRequest, value: string) => {
+  if (value) {
+    secretDrafts.set(secretDraftKey(request), value)
+  } else {
+    secretDrafts.delete(secretDraftKey(request))
+  }
+}
+
 export const $secretRequest = secret.$active
 export const $secretRequests = secret.$all
-export const setSecretRequest = secret.set
-export const clearSecretRequest = secret.clear
+
+export const setSecretRequest = (request: SecretRequest) => {
+  const previous = secret.$all.get()[keyFor(request.sessionId)]
+
+  if (previous && secretDraftKey(previous) !== secretDraftKey(request)) {
+    secretDrafts.delete(secretDraftKey(previous))
+  }
+
+  secret.set(request)
+}
+
+export const clearSecretRequest = (sessionId?: string | null, requestId?: string) => {
+  for (const request of Object.values(secret.$all.get())) {
+    if (
+      (sessionId === undefined || request.sessionId === sessionId) &&
+      (!requestId || request.requestId === requestId)
+    ) {
+      secretDrafts.delete(secretDraftKey(request))
+    }
+  }
+
+  secret.clear(sessionId, requestId)
+}
 
 export const $vaultUnlockRequest = vaultUnlock.$active
 export const setVaultUnlockRequest = vaultUnlock.set
@@ -531,11 +570,11 @@ export function sessionAwaitingInput(sessionId: string | null) {
 
 // Drop in-flight prompts for `sessionId` (a turn ended) across all three kinds —
 // or every parked prompt when no session is given (global reset / tests).
-export function clearAllPrompts(sessionId?: string | null): void {
+export function clearAllPrompts(sessionId?: string | null, preserveOpenSecret = false): void {
   if (sessionId === undefined) {
     approval.reset()
     sudo.reset()
-    secret.reset()
+    clearSecretRequest()
     vaultUnlock.reset()
     vaultSave.reset()
     vaultCode.reset()
@@ -545,7 +584,12 @@ export function clearAllPrompts(sessionId?: string | null): void {
 
   approval.clear(sessionId)
   sudo.clear(sessionId)
-  secret.clear(sessionId)
+  const pendingSecret = secret.$all.get()[keyFor(sessionId)]
+
+  if (!preserveOpenSecret || !pendingSecret || !hasOpenServerRequest(pendingSecret.requestId)) {
+    clearSecretRequest(sessionId)
+  }
+
   vaultUnlock.clear(sessionId)
   vaultSave.clear(sessionId)
   vaultCode.clear(sessionId)

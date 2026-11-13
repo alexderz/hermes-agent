@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { $sudoRequest, clearSudoRequest } from '@/store/prompts'
+import {
+  $secretRequest,
+  $sudoRequest,
+  clearAllPrompts,
+  clearSudoRequest,
+  readSecretDraft,
+  setSecretRequest,
+  writeSecretDraft
+} from '@/store/prompts'
 import { resetServerRequestsForTests } from '@/store/server-requests'
 import { $activeSessionId } from '@/store/session'
 
@@ -28,6 +36,35 @@ function cancel(requestId: string, routedSession: string | null): GatewayEventCo
     sessionId: routedSession
   }
 }
+
+describe('secret withdrawal', () => {
+  afterEach(() => {
+    clearAllPrompts()
+    resetServerRequestsForTests()
+    $activeSessionId.set(null)
+  })
+
+  it.each(['resolved', 'interrupted', 'timeout'])('clears the request and draft on %s from the gateway', reason => {
+    $activeSessionId.set('s1')
+
+    const request = {
+      requestId: 'secret-1',
+      sessionId: 's1',
+      envVar: 'DUMMY',
+      prompt: 'test',
+      profile: 'default',
+      connectionId: 'a'
+    }
+
+    setSecretRequest(request)
+    writeSecretDraft(request, 'dummy-value')
+    const ctx = cancel('secret-1', 's1')
+    ctx.payload = { id: 'secret-1', method: 'secret', reason } as GatewayEventContext['payload']
+    expect(handleInputRequestEvent(ctx)).toBe(true)
+    expect($secretRequest.get()).toBeNull()
+    expect(readSecretDraft(request)).toBe('')
+  })
+})
 
 describe('Bot Screen install password card', () => {
   afterEach(() => {

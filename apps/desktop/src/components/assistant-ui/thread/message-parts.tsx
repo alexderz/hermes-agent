@@ -12,6 +12,7 @@ import { type ComponentProps, type FC, type ReactNode, useEffect, useMemo, useRe
 import { useSessionView } from '@/app/chat/session-view'
 import { CatalogInstallTool } from '@/components/assistant-ui/catalog-install-tool'
 import { ClarifyTool } from '@/components/assistant-ui/clarify'
+import { SecretCard } from '@/components/assistant-ui/clarify/secret-card'
 import { ConnectorExecution, ConnectorTool } from '@/components/assistant-ui/connector-tool'
 import { MarkdownText, MarkdownTextContent } from '@/components/assistant-ui/markdown-text'
 import { McpSetupTool } from '@/components/assistant-ui/mcp-setup-tool'
@@ -36,6 +37,7 @@ import { type CardToolName, isCardTool, isCardToolName } from '@/lib/tool-render
 import { useEnterAnimation } from '@/lib/use-enter-animation'
 import { cn } from '@/lib/utils'
 import { onboardingChatStore } from '@/store/onboarding-session'
+import { sessionSecretRequest } from '@/store/prompts'
 import { $reasoningCollapsedByDefault, $showReasoning } from '@/store/reasoning-disclosure'
 import { useForcedTextDirection } from '@/store/text-direction'
 import { $showToolActivity } from '@/store/tool-activity'
@@ -88,6 +90,20 @@ const DelegateToolPart: FC<TimelineToolCallProps> = props => {
 }
 
 const ClarifyToolPart: FC<TimelineToolCallProps> = props => {
+  const sessionId = useStore(useSessionView().$runtimeId)
+  const secretStore = useMemo(() => sessionSecretRequest(sessionId), [sessionId])
+  const secret = useStore(secretStore)
+  const requestId = (props as TimelineToolCallProps & { clarifyRequestId?: string }).clarifyRequestId
+
+  if (secret && requestId === secret.requestId) {
+    return (
+      <SecretCard
+        key={JSON.stringify([secret.connectionId, secret.profile, secret.sessionId, secret.requestId])}
+        request={secret}
+      />
+    )
+  }
+
   // Stopped on this question, never answered: history. ClarifyTool reads
   // the session's live clarify request, so a later turn's question would
   // otherwise paint onto this row as a second live card.

@@ -1,3 +1,4 @@
+import { useStore } from '@nanostores/react'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -5,14 +6,14 @@ import {
   handleServerRequest,
   type ServerRequestContext
 } from '@/app/session/hooks/use-message-stream/gateway-event/server-requests'
+import { SecretCard } from '@/components/assistant-ui/clarify/secret-card'
 import { I18nProvider } from '@/i18n'
 import { createClientSessionState } from '@/lib/chat-runtime'
 import { $gateway } from '@/store/gateway'
 import { clearAllPrompts } from '@/store/prompts'
+import { $secretRequest } from '@/store/prompts'
 import { resetServerRequestsForTests } from '@/store/server-requests'
 import { $activeSessionId } from '@/store/session'
-
-import { PromptOverlays } from './prompt-overlays'
 
 vi.mock('@/lib/haptics', () => ({ triggerHaptic: vi.fn() }))
 vi.mock('@/store/notifications', () => ({ notifyError: vi.fn() }))
@@ -23,6 +24,12 @@ const deps: ServerRequestContext['deps'] = {
   sessionStateByRuntimeIdRef: { current: new Map() },
   updateSessionState: (_sid, update) => update(createClientSessionState('s1')),
   upsertToolCall: () => undefined
+}
+
+function SecretHarness() {
+  const request = useStore($secretRequest)
+
+  return request ? <SecretCard request={request} /> : null
 }
 
 function openSecretCard(params: Record<string, unknown>, respond = vi.fn()) {
@@ -42,7 +49,7 @@ function openSecretCard(params: Record<string, unknown>, respond = vi.fn()) {
   )
   render(
     <I18nProvider configClient={null}>
-      <PromptOverlays sessionId="s1" />
+      <SecretHarness />
     </I18nProvider>
   )
 
@@ -81,7 +88,7 @@ describe('SecretDialog file destination', () => {
     expect(input.getAttribute('autocomplete')).toBe('off') // no offer to save it as a site password
 
     fireEvent.change(input, { target: { value: 'dummy-value' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     expect(respond).toHaveBeenCalledExactlyOnceWith({ value: 'dummy-value' })
   })
 
