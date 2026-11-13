@@ -26,15 +26,15 @@ INTERRUPT = (
     "Only use interrupt when you intend to stop what the other session is doing right now "
     "(it is wrong, or the work is obsolete). Otherwise use steer (default) or queue."
 )
-B11_REPLY = (
+REPLY_SENTENCE = (
     "reply: none for a note (nothing comes back), requested for an answer, "
     "waiting when you need it before you go on."
 )
-B11_ASK = (
+ASK_SENTENCE = (
     "Use ask only when this turn cannot continue without the answer; "
     "otherwise send with reply: waiting."
 )
-B11_FOLLOW = (
+FOLLOW_SENTENCE = (
     "For follow-ups, address by session id: list and every receipt give it, "
     "and it stays valid after compaction."
 )
@@ -266,7 +266,7 @@ class SchemaTests(CliTestBase):
         self.assertEqual(len(CATALOG), 60)
         self.assertEqual(self.plugin.frame._short_desc(description), CATALOG)
         self.assertEqual(self.plugin.frame._short_desc(description, 80), CATALOG)
-        for sentence in (B11_REPLY, B11_ASK, B11_FOLLOW, INTERRUPT):
+        for sentence in (REPLY_SENTENCE, ASK_SENTENCE, FOLLOW_SENTENCE, INTERRUPT):
             self.assertIn(sentence, description)
         self.assertEqual(schema["parameters"]["properties"]["to"]["description"], TO_OFF)
         props = schema["parameters"]["properties"]

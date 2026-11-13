@@ -37,7 +37,7 @@ _BREAK = frozenset({"Zl", "Zp"})
 # control characters rather than in this set.
 _INVISIBLE = frozenset({"Cf", "Zs", "Mn"})
 
-# The catalog sentence the tool description leads with 60 characters,
+# The catalog sentence the tool description leads with. It is 60 characters,
 # so a 60- or 80-character clip returns it whole.
 CATALOG_SENTENCE = "Message another Hermes session; never send an empty message."
 

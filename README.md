@@ -159,7 +159,7 @@ Exit codes:
 | 5 | the owner is not reachable (`no-owner`, `owner-restarting`, `not-reachable`) |
 | 6 | `delivery-unknown`: the connection was lost while the owner was admitting it; check `status` before sending again |
 
-`reboot-notice` always exits 0. `resume-after-reboot` exits 0, 2 (usage, or no boot time) or 5 (no owner after waiting).
+`reboot-notice` exits 0 once its arguments parse (2 on a usage error). `resume-after-reboot` exits 0, 2 (usage, or no boot time), 5 (no owner after waiting), or 4 if the gateway refuses the listing.
 
 ## Trust model
 
