@@ -1,4 +1,4 @@
-"""intercom chat scope — the one chat rule for messaging sessions (LLD B4).
+"""intercom chat scope — the one chat rule for messaging sessions (README, "Trust model").
 
 ``chat_scope(session_id, ctx)`` is ``"private"``, ``"shared"`` or ``None`` (a local session):
 

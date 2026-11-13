@@ -1,4 +1,4 @@
-"""intercom owner client — deliver through the profile's gateway owner (LLD B1).
+"""intercom owner client — deliver through the profile's gateway owner.
 
 Every chat surface of a v0.23 profile runs in its gateway owner, so intercom reaches a session
 with the owner's existing canonical verbs over its ticketed socket:
@@ -63,7 +63,8 @@ def submission_id(message_id: str) -> str:
 
 
 def deliver_sync(target: str, text: str, delivery: str, submission_id: str) -> dict:
-    """Deliver *text* to session *target* with the B1 mode table.
+    """Deliver *text* to session *target* using the mode table at the top
+    of this module.
 
     Returns ``{"ok": True, "applied", "applied_detail", "admission_id"}``; ``admission_id`` is
     ``prompt.submit``'s id when the sequence ended in a submit, else ``None``. On failure:
@@ -197,7 +198,8 @@ class _Owner:
     async def resume(self):
         snapshot = await self.client.rpc("session.resume", session_id=self.target, omit_messages=True)
         snapshot = snapshot if isinstance(snapshot, dict) else {}
-        # R5-4: these two fields only; the rest of the handle is dropped here.
+        # Keep these two fields only: the rest of the snapshot can carry session
+        # content, and nothing here needs it.
         return snapshot.get("running") is True, snapshot.get("execution_generation")
 
     async def hand(self, method, **params):

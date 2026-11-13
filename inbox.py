@@ -32,8 +32,9 @@ logger = logging.getLogger(__name__)
 
 _DIR_NAME = "intercom"
 _REGISTRY = "sessions"
-# B10: message length, rate and dedupe caps are gone. The pending cap stays
-# only on this legacy inbox (B12), which a v0.23 build never starts.
+# Message length, rate and dedupe caps are gone (README, "What changed from 0.2").
+# The pending cap stays only on this legacy inbox, which a build with the gateway
+# owner client never starts.
 _PENDING_CAP = 10
 
 _lock = threading.Lock()
@@ -166,8 +167,8 @@ def _sanitize_boundary(text: str) -> str:
 
     Sender names and message bodies travel inside the INTERCOM wrapper; a
     malicious peer could embed ``[/INTERCOM MESSAGE]`` to break out of the
-    frame and have the trailing text read as ordinary context (upstream
-    analog: Walkie Talkie SEC-R2). Insert zero-width spaces into any
+    frame and have the trailing text read as ordinary context (the
+    Walkie Talkie plugin defends against the same thing). Insert zero-width spaces into any
     boundary-like tag so it no longer parses as one.
     """
     # Header forgery: a body line mimicking our new header format gets broken
@@ -502,7 +503,7 @@ def send_to(target: str, message: str, from_name: str = "", from_cwd: str = "",
     """Send `message` to peer `target`. Returns status dict.
 
     ``dedupe`` is accepted so ``reply_to`` can still pass it. It does not
-    filter: twenty identical messages in a minute all go out (B10).
+    filter: twenty identical messages in a minute all go out (README, "What changed from 0.2").
     """
     del dedupe
     resolved_target = resolve_target(target)
