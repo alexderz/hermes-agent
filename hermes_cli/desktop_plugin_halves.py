@@ -289,6 +289,48 @@ def _source_gone(name: str, entry: Path) -> bool:
     return False
 
 
+def _enabled_bundled_packages(hermes_root: Path) -> list[Path]:
+    """Bundled plugin packages (``plugins/<name>/`` in the install) that the default home enables
+    in ``plugins.enabled`` and that carry a desktop half. A bundled plugin never lives under
+    ``<home>/plugins``, so without this its desktop half (e.g. a status-bar meter) never reaches
+    the Webapp. Disabled or unlisted bundled plugins are not published."""
+    try:
+        import yaml
+
+        from hermes_cli.plugins import get_bundled_plugins_dir
+
+        raw = yaml.safe_load((hermes_root / "config.yaml").read_text(encoding="utf-8")) or {}
+        section = raw.get("plugins") if isinstance(raw, dict) else None
+        enabled = section.get("enabled") if isinstance(section, dict) else None
+        disabled = section.get("disabled") if isinstance(section, dict) else None
+        names = {str(n) for n in enabled} if isinstance(enabled, list) else set()
+        names -= {str(n) for n in disabled} if isinstance(disabled, list) else set()
+        bundled = get_bundled_plugins_dir()
+    except Exception as exc:  # no config, unreadable YAML: publish nothing extra
+        logger.debug("desktop-plugins: bundled halves skipped: %s", exc)
+        return []
+    out = []
+    for name in sorted(names):
+        if "/" in name or name.startswith("."):
+            continue
+        package = bundled / name
+        if package.is_dir() and desktop_source(package) is not None:
+            out.append(package)
+    return out
+
+
+def _bundled_and_disabled(source: str, enabled_sources: set[str]) -> bool:
+    """A published copy of a bundled plugin's half whose plugin is no longer enabled."""
+    try:
+        from hermes_cli.plugins import get_bundled_plugins_dir
+
+        bundled = get_bundled_plugins_dir().resolve()
+        path = Path(source).resolve()
+    except Exception:
+        return False
+    return path.is_relative_to(bundled) and str(source) not in enabled_sources
+
+
 def reconcile_desktop_halves(hermes_root: Path, app_root: Path) -> list[str]:
     """Materialize every local home's desktop halves into *app_root* (first home wins for a name in
     several profiles, the default home first) and drop copies whose package is gone. Returns the
@@ -322,12 +364,31 @@ def reconcile_desktop_halves_report(hermes_root: Path, app_root: Path) -> dict:
                 if result is not None:
                     touched.append(str(result))
 
+        # Enabled bundled plugins come after every home: a home's own package of the same name wins.
+        bundled_packages = _enabled_bundled_packages(hermes_root)
+        bundled_sources = {str(package / "desktop") for package in bundled_packages} | {
+            str(package) for package in bundled_packages}
+        for package in bundled_packages:
+            name = package.name
+            if name in seen:
+                continue
+            try:
+                result = materialize_desktop_half(package, app_root, name)
+            except OSError as exc:
+                logger.warning("desktop-plugins: skipping bundled package %s: %s", name, exc)
+                refused.append({"name": name, "reason": str(exc)})
+                continue
+            seen.add(name)
+            if result is not None:
+                touched.append(str(result))
+
         # Links count too: a marker read through one is an earlier copy of a linked checkout that kept
         # the link. Only the link goes, never the folder it points at.
         for name in _list_dirs(app_root, follow_links=True):
             folder = app_root / name
             marker = read_package_marker(folder)
-            if marker and _source_gone(name, Path(marker["source"]) / "plugin.js"):
+            if marker and (_source_gone(name, Path(marker["source"]) / "plugin.js")
+                           or _bundled_and_disabled(marker["source"], bundled_sources)):
                 if _is_link(folder):
                     folder.unlink(missing_ok=True)
                 else:
