@@ -76,6 +76,53 @@ def test_local_viewer_turn_prompts_and_saves_the_secret(monkeypatch):
     assert not any('sekrit' in repr(f) for f in peer.frames)
 
 
+def test_interactive_secret_wait_has_no_deadline_and_interrupts(monkeypatch):
+    from gateway import session_server_requests
+    from gateway.session_finite import finite_turn_scope
+    from gateway.session_secret_prompt import secret_prompt_scope
+    from tools.skills_tool_setup import _capture_required_environment_variables
+    from tools.thread_context import propagate_context_to_thread
+
+    turn, peer = _turn(Platform.LOCAL)
+    agent = SimpleNamespace(_interrupt_requested=False)
+    options = {}
+    original = session_server_requests.ask_viewer
+
+    def capture_options(*args, **kwargs):
+        options.update(kwargs)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(session_server_requests, 'ask_viewer', capture_options)
+    out = {}
+    with finite_turn_scope(False), secret_prompt_scope(turn, agent):
+        worker = threading.Thread(target=propagate_context_to_thread(lambda: out.update(
+            _capture_required_environment_variables('hab-skill', [{'name': 'HAB_KEY', 'prompt': 'p'}]))))
+        worker.start()
+        try:
+            _wait_for(lambda: any(f.get('method') == 'secret' for f in peer.frames))
+            assert options['timeout'] is None
+            assert options['wait_for_viewer'] is True
+        finally:
+            agent._interrupt_requested = True
+            worker.join(5)
+    assert not worker.is_alive()
+    assert out['setup_skipped'] is True
+    assert any(f.get('params', {}).get('payload', {}).get('reason') == 'interrupted' for f in peer.frames)
+
+
+def test_finite_secret_with_no_viewer_refuses_without_waiting():
+    from gateway.session_finite import finite_turn_scope
+    from gateway.session_secret_prompt import secret_prompt_scope
+    from tools.skills_tool_setup import _capture_required_environment_variables
+
+    turn, peer = _turn(Platform.LOCAL)
+    turn._approval_owner[0].sessions['s1'].event_stream.fanout.detach(peer)
+    with finite_turn_scope(True), secret_prompt_scope(turn, SimpleNamespace()):
+        out = _capture_required_environment_variables('hab-skill', [{'name': 'HAB_KEY', 'prompt': 'p'}])
+    assert out['setup_skipped'] is True
+    assert peer.frames == []
+
+
 def test_skipped_secret_stays_missing(monkeypatch):
     from gateway.session_secret_prompt import secret_prompt_scope
     from tools.skills_tool_setup import _capture_required_environment_variables
