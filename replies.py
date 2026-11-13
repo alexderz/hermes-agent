@@ -1,4 +1,4 @@
-"""intercom replies — the reply hook and the in-process ``ask`` waiter (LLD B8).
+"""intercom replies — the reply hook and the in-process ``ask`` waiter.
 
 ``on_post_llm_call`` is registered as ``post_llm_call`` in the owner. For each turn:
 
@@ -17,7 +17,7 @@
 5. silence: an empty or ``[SILENT]`` text (whole, first line or last line) is ``silent``;
 6. store, then deliver on a fresh thread through ``route.send(..., delivery="steer",
    reply_mode="optional", reply_to=id)``. ``cron``, ``subagent``, ``oneshot`` and script
-   senders are stored only (SM-Q9 b). Nothing retries;
+   senders are stored only: their run is over and nothing can wake it. Nothing retries;
 7. stopped and failed turns fire no hook, so nothing is sent for them.
 
 ``ask`` and ``reply`` are the tool handlers for those actions. An ``ask`` is delivered by
@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 
 SILENT = "[SILENT]"
 STEER_DISPLAY_KIND = "steer"
-# Senders that are not woken: their reply is stored only (SM-Q9 b).
+# Senders that are not woken (their run is over): their reply is stored only.
 UNWAKEABLE_SOURCES = frozenset({"cron", "subagent", "oneshot", route.SCRIPT_SOURCE})
 DEFAULT_TIMEOUT = 600
 MIN_TIMEOUT, MAX_TIMEOUT = 10, 3600
@@ -65,7 +65,7 @@ def register(ctx) -> None:
     ctx.register_hook("post_llm_call", on_post_llm_call)
 
 
-# ── span finder (B8 step 2; the echo reuses it) ──────────────────────────────
+# ── span finder (step 2 above; the echo reuses it) ──────────────────────────────
 
 
 @dataclass(frozen=True)
@@ -109,7 +109,7 @@ def find_messages(texts) -> list[tuple[dict, Span]]:
 
 
 def turn_rows(user_message, conversation_history) -> list[str]:
-    """B8 step 1: the turn's prompt, plus the steer rows after the turn's prompt."""
+    """Step 1: the turn's prompt, plus the steer rows after the turn's prompt."""
     rows = [_text(user_message)]
     steers = []
     for message in reversed(conversation_history or []):
@@ -158,7 +158,7 @@ def is_silent(text) -> bool:
 
 
 def reply_for(row: dict, answer: str) -> tuple[str, str | None, str | None]:
-    """B8 steps 4-5 for one candidate: ``(reply_state, reply text, detail)``.
+    """Steps 4-5 for one candidate: ``(reply_state, reply text, detail)``.
 
     ``reply_state`` is ``sent`` (to be delivered or stored), ``silent``, ``stored`` or
     ``no-block``.
@@ -223,7 +223,7 @@ def _deliver(row: dict, text: str, session_id: str) -> None:
         record.update(row["id"], reply_message_id=receipt["message_id"])
 
 
-# ── ask and reply (the tool handlers G10 dispatches to) ──────────────────────
+# ── ask and reply (the tool handlers the plugin dispatches to) ──────────────────────
 
 
 class _Waiter:

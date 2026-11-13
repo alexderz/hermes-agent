@@ -1,12 +1,14 @@
-"""intercom framing — the A′ frame and the one relabel rule (LLD B5, B6).
+"""intercom framing — the message frame and the one relabel rule.
+
+README, "Received messages", shows the frame a session reads.
 
 ``build`` returns ``(text, echo)``:
 
 - ``text`` is what the target session reads: header line 1, the authority line,
   the interrupt note, the shared-chat line, the body, the footer and the
-  closing line, in the words of ``ux.md``.
+  closing line.
 - ``echo`` is header line 1, a blank line and the body (what a private chat is
-  shown). B5 describes that text as already escaped. B6 chooses the renderer
+  shown). The echo must be escaped for the chat's renderer, and the renderer is chosen
   when the echo is posted, which is the only moment the platform is known, so
   ``build`` returns the raw echo and ``escape_echo`` is what the hook calls.
   A platform missing from ``ECHO_ESCAPERS`` returns ``None``; the hook posts
@@ -30,11 +32,12 @@ from dataclasses import dataclass
 _DROP = frozenset({"Cc", "Cf", "Zl", "Zp"})
 _BREAK = frozenset({"Zl", "Zp"})
 
-# Leading characters skipped before the relabel check (F4). Tab is Cc, so it
-# is listed beside the categories the rule names.
+# Leading characters skipped before the relabel check, so an invisible prefix
+# cannot hide a forged header from it. Tab is Cc, so it is handled with the
+# control characters rather than in this set.
 _INVISIBLE = frozenset({"Cf", "Zs", "Mn"})
 
-# The catalog sentence the tool description leads with (LLD B11). 60 characters,
+# The catalog sentence the tool description leads with 60 characters,
 # so a 60- or 80-character clip returns it whole.
 CATALOG_SENTENCE = "Message another Hermes session; never send an empty message."
 
@@ -50,7 +53,8 @@ _REPLY_LABELS = {
 }
 _ASK_LABEL = "sender paused: use intercom reply"
 
-# A session whose run is over (SM-Q9 b). The phrase is the one the receipt uses.
+# A session whose run is over: nothing can wake it, so a reply to it is stored only.
+# The phrase is the one the receipt uses.
 _UNWAKEABLE = {"cron": "cron run", "oneshot": "oneshot", "subagent": "subagent"}
 
 _TOOL_HINT = (
@@ -342,7 +346,7 @@ def _chat_phrase(platform: str, chat_type: str) -> str:
 
 
 def _named(user_name: str) -> str:
-    """``Alex (the user)``, or ``the user`` when that is the configured name."""
+    """``<name> (the user)``, or ``the user`` when that is the configured name."""
     if user_name.casefold() == "the user":
         return "the user"
     return f"{user_name} (the user)"
@@ -493,8 +497,8 @@ def _footer_bullets(message_id: str, *, reply_mode: str, kind: str, user_name: s
         return bullets
 
     if reply_mode == "none":
-        # Nothing is sent back, so there is no reply-destination line. ux.md
-        # replaces footer lines 1–5 with this one line and keeps consent.
+        # Nothing is sent back, so there is no reply-destination line: footer
+        # lines 1–5 become this one line, and the consent line stays.
         return [
             "No reply is needed and none will be sent. If something here is wrong or blocks you, "
             f"send a new message with the intercom tool. {_TOOL_HINT_SHORT}",
@@ -629,7 +633,7 @@ def escape_ntfy(text: str) -> str:
     return _neutralise(text or "")
 
 
-# The only list of echo-capable platforms (N6-2). A private chat whose platform
+# The only list of echo-capable platforms: each needs its own escaper. A private chat whose platform
 # is missing gets no echo. Keys are the platform strings sessions store.
 ECHO_ESCAPERS = {
     "telegram": escape_telegram,
@@ -642,7 +646,7 @@ ECHO_ESCAPERS = {
 def escape_echo(echo, platform, *, telegram_mode: str = "MarkdownV2") -> str | None:
     """Escape one echo for the platform it will be posted to.
 
-    B5 calls the echo "Markdown-escaped and with mentions escaped". B6 escapes
+    The echo is posted Markdown-escaped and with mentions escaped. It is escaped
     for the target's renderer, and the platform is known only when the hook
     posts, so ``build`` returns the raw echo and the hook calls this. Returns
     ``None`` when ``platform`` is not in :data:`ECHO_ESCAPERS` (the hook logs

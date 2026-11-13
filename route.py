@@ -1,11 +1,11 @@
-"""intercom send path — one message from a session or a script to one resolved target (LLD B2).
+"""intercom send path — one message from a session or a script to one resolved target.
 
-``send(...)`` runs B2's steps in order:
+``send(...)`` runs these steps in order:
 
 - inputs: a ``reply_mode`` outside ``none`` / ``requested`` / ``waiting`` is ``reply-missing``
-  and records nothing. ``optional`` is only for a reply (``reply_to`` set, B8);
+  and records nothing. ``optional`` is only for a reply (``reply_to`` set, from the reply hook);
 - 0 an empty or whitespace-only message is ``empty``;
-- 1 ``address.resolve(to)``: ``ambiguous`` / ``unknown`` with candidates, the B3 project refusals,
+- 1 ``address.resolve(to)``: ``ambiguous`` / ``unknown`` with candidates, the project-addressing refusals,
   and ``own-session`` when the target is the sender's own session;
 - 2 the chat scopes of the target and of a session sender (``scope.chat_scope``);
 - 3 consent for **every** delivery: ``plugins.entries.intercom.allow_gateway_injection`` must
@@ -14,13 +14,13 @@
 - 5 ``frame.build``, ``sanitize_user_prompt_text`` once, then ``header_sha`` over the span from
   header line 1 to the closing line, stored in the row;
 - 6 ``client.deliver_sync``;
-- 7 ``record.update`` and the B9 receipt.
+- 7 ``record.update`` and the receipt.
 
 Refusals of steps 0-3 are recorded as ``delivery_path='refused'`` rows; ``reply-missing`` is not.
 
-Operator power (R5-2, accepted SM-Q23): a stored messaging chat is delivered whatever its
+Operator power, deliberately: a stored messaging chat is delivered whatever its
 platform's allowlist says now. Its scope is ``shared`` unless listed, so the frame carries the
-shared-chat line.
+shared-chat line. Sending is the operator's choice; the frame tells the target who else reads.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ REPLY_MODES = ("none", "requested", "waiting")
 DEFAULT_USER_NAME = "the user"
 SCRIPT_SOURCE = "script"
 
-# Readable sentences (ux.md § Receipts). Refusals not listed here use address's sentence.
+# Readable receipt sentences (README, "The CLI"). Refusals not listed here use address's sentence.
 REPLY_MISSING = "Nothing was sent: choose reply: none, requested or waiting."
 NOTHING_SENT = "Nothing was sent."
 EMPTY_REASON = "The message is empty."
@@ -75,13 +75,13 @@ def cold_start_sentence(title: str, message_id: str) -> str:
 
 def send(sender, to, message, *, ctx, delivery="steer", reply_mode=None, kind="send",
          reply_to=None, script=False, lister=None, on_inserted=None) -> dict:
-    """Send *message* from *sender* to the one session *to* resolves to. Returns the B9 receipt.
+    """Send *message* from *sender* to the one session *to* resolves to. Returns the receipt.
 
     *sender* is the calling session's id, or with ``script=True`` a script label (the CLI, which
     always frames as a script and never names a session as sender). *ctx* reads the plugin's
     settings. *lister* is ``session.list`` (tests pass their own); it decorates candidates and
     tells a cold start from an idle one. *on_inserted* is called with the message id and the
-    target session once the row exists, before delivery (the ``ask`` waiter, B8).
+    target session once the row exists, before delivery (the ``ask`` waiter).
     """
     if delivery not in client.DELIVERIES:
         raise ValueError(f"delivery must be one of {', '.join(client.DELIVERIES)}")
@@ -196,7 +196,7 @@ def header_sha(text: str, message_id: str) -> str:
 
 
 class _Receipt:
-    """B9's receipt fields, filled in as the steps run."""
+    """The receipt fields, filled in as the steps run."""
 
     def __init__(self, *, to, requested, reply):
         self.to, self.requested, self.reply = to, requested, reply

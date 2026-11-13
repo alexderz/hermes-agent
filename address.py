@@ -1,4 +1,4 @@
-"""Addressing: resolve a ``to`` string to one session, and list sessions (LLD B3).
+"""Addressing: resolve a ``to`` string to one session, and list sessions (README, "The tool").
 
 The first rule that matches wins: an exact title (including ``Home``), then a session id
 or id prefix, then ``@<slug>`` when project addressing is available. A successful id is
@@ -13,7 +13,7 @@ import os
 import sqlite3
 from pathlib import Path
 
-# Pinned sentences (UX F1b). Refusals do not add a "Nothing was sent." prefix; that is the route.
+# Fixed sentences: tests and receipts compare them word for word. Refusals do not add a "Nothing was sent." prefix; that is the route.
 PROJECT_UNAVAILABLE = (
     "Project addressing is not available on this Hermes. Use "
     "list (filter by project) and address the session by id."
@@ -28,7 +28,8 @@ FUZZY_CUTOFF = 0.6
 RUN_SOURCES = frozenset({"cron", "subagent", "oneshot"})
 _PREFIX_PAGE = 200
 
-# Snapshot taken at register() for the tool text (G10). resolve() does not read it.
+# Snapshot taken at register() for the tool text, which is fixed for the process.
+# resolve() does not read it: it checks again on every call.
 registered_project_addressing: bool | None = None
 
 
@@ -746,7 +747,7 @@ def _started_desc(row: dict):
 
 
 def _owner_lister(scope: str = "live", picker: bool = False) -> dict:
-    """Production lister: G2's ``client.list_sessions``. Tests pass their own."""
+    """Production lister: ``client.list_sessions``. Tests pass their own."""
     try:
         from . import client as owner_client
     except ImportError:
