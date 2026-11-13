@@ -127,6 +127,10 @@ export function installBrowserDesktopBridge(): boolean {
 
     if (target?.kind === 'web') {
       window.open(target.url, '_blank', 'noopener,noreferrer')
+    } else if (target?.kind === 'app') {
+      // An allow-listed app scheme (t3code://…): navigating hands it to the OS,
+      // which opens the app (Android intent / desktop handler); the page stays.
+      window.location.assign(target.url)
     }
   }
 

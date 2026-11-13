@@ -9,9 +9,19 @@
 
 const WEB_PROTOCOLS = new Set(['http:', 'https:', 'mailto:'])
 
+/**
+ * Custom URL schemes registered by apps the operator uses, which a chat link may
+ * hand to the OS (Android / desktop route them to the app). An explicit allow-list:
+ * `javascript:`, `data:`, `vbscript:` and every unlisted scheme stay refused.
+ * - `t3code`: the T3 Code app (`t3code://threads/<env>/<thread>[/files/<path>]`).
+ */
+export const APP_LINK_SCHEMES: readonly string[] = ['t3code']
+
+const APP_PROTOCOLS = new Set(APP_LINK_SCHEMES.map(scheme => `${scheme}:`))
+
 export interface ExternalUrlTarget {
-  kind: 'file' | 'web'
-  /** `web`: the normalized URL. `file`: the trimmed input, left for the host's file opener to parse. */
+  kind: 'app' | 'file' | 'web'
+  /** `web`: the normalized URL. `file` / `app`: the trimmed input, left for the host to hand on. */
   url: string
 }
 
@@ -33,6 +43,10 @@ export function externalUrlTarget(rawUrl: string): ExternalUrlTarget | null {
 
   if (parsed.protocol === 'file:') {
     return { kind: 'file', url: raw }
+  }
+
+  if (APP_PROTOCOLS.has(parsed.protocol.toLowerCase())) {
+    return { kind: 'app', url: raw }
   }
 
   return WEB_PROTOCOLS.has(parsed.protocol) ? { kind: 'web', url: parsed.toString() } : null

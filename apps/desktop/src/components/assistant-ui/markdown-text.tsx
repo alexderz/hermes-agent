@@ -19,7 +19,8 @@ import {
   useMemo,
   useState
 } from 'react'
-import { defaultRemarkPlugins } from 'streamdown'
+import { externalUrlTarget } from '@hermes/shared'
+import { defaultRehypePlugins, defaultRemarkPlugins } from 'streamdown'
 
 import { useSessionView } from '@/app/chat/session-view'
 import { ExpandableBlock } from '@/components/chat/expandable-block'
@@ -28,6 +29,7 @@ import { chunkByLines, SyntaxHighlighter } from '@/components/chat/shiki-highlig
 import { TranscriptVideo } from '@/components/chat/transcript-video'
 import { ZoomableImage } from '@/components/chat/zoomable-image'
 import { ErrorBoundary } from '@/components/error-boundary'
+import { appLinkSanitizeSchema, remarkAppLinks } from '@/lib/app-links'
 import { useContributions } from '@/contrib'
 import { useMediaImage } from '@/hooks/use-media-image'
 import { useMediaPlaybackSrc } from '@/hooks/use-media-playback-src'
@@ -112,7 +114,21 @@ function useCodePlugin(): CodePlugin | null {
   return plugin
 }
 
-const REMARK_PLUGINS = [...Object.values(defaultRemarkPlugins), remarkTranscriptDirectives, remarkSoftBreaks]
+const REMARK_PLUGINS = [
+  ...Object.values(defaultRemarkPlugins),
+  remarkTranscriptDirectives,
+  remarkAppLinks,
+  remarkSoftBreaks
+]
+
+// Streamdown's own rehype chain (raw, sanitize, harden), with the sanitizer's
+// `href` protocols widened by the allow-listed app schemes (lib/app-links.ts).
+const REHYPE_PLUGINS = Object.values({
+  ...defaultRehypePlugins,
+  sanitize: (([plugin, schema]) => [plugin, appLinkSanitizeSchema(schema)])(
+    defaultRehypePlugins.sanitize as unknown as [unknown, { protocols?: Record<string, readonly string[]> }]
+  )
+}) as unknown as typeof defaultRehypePlugins[string][]
 
 // Replaces Streamdown's `parseIncompleteMarkdown` (full-text remend per
 // flush) with a tail-bounded repair. Must stay module-scope so the prop
@@ -342,6 +358,16 @@ function MarkdownLink({ children, className, href, ...props }: ComponentProps<'a
   }
 
   const target = href ? normalizeExternalUrl(href) : href
+
+  // An allow-listed app scheme (t3code://…): the host hands it to the OS, which
+  // opens the app. A plain anchor would open a blank tab first in the browser.
+  if (target && externalUrlTarget(target)?.kind === 'app') {
+    return (
+      <ExternalLink className={cn('wrap-anywhere', className)} href={target} native>
+        {children}
+      </ExternalLink>
+    )
+  }
 
   if (!target || !/^https?:\/\//i.test(target)) {
     // A plain filesystem href (`[report](/home/user/report.md)`, `file://…`,
@@ -858,6 +884,7 @@ function MarkdownTextSurface({
         parseMarkdownIntoBlocksFn={parseMarkdownIntoBlocksCached}
         plugins={plugins}
         preprocess={preprocessWithTailRepair}
+        rehypePlugins={REHYPE_PLUGINS}
         remarkPlugins={REMARK_PLUGINS}
       />
     </ErrorBoundary>
