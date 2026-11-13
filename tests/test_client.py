@@ -264,7 +264,7 @@ class ClientTests(unittest.TestCase):
                 self.assertEqual(self.owner.methods(), ["session.resume", "session.steer", "prompt.submit"])
                 self.assertEqual(len(self.owner.endpoints), 1)
 
-    # ── discovery and the endpoint (R5-5) ──
+    # ── discovery and the endpoint ──
 
     def test_discovery_uses_the_calling_profile_home_with_two_seconds(self):
         self.script(session_resume=[handle(False)], prompt_submit=[submitted()])
@@ -385,7 +385,7 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(getattr(started[0], "__name__", None), "run")
         self.assertIsInstance(getattr(started[0], "__self__", None), contextvars.Context)
 
-    # ── resume (R5-4) ──
+    # ── resume: only running and execution_generation are kept ──
 
     def test_resume_omits_messages_and_no_handle_field_escapes(self):
         cases = [

@@ -1,4 +1,4 @@
-"""G9 replies: the post_llm_call hook (B8 steps 1-7), the span finder, and the in-process ask."""
+"""Replies: the post_llm_call hook (steps 1-7 in replies.py), the span finder, and the in-process ask."""
 
 from __future__ import annotations
 
@@ -65,7 +65,7 @@ class RepliesTestBase(unittest.TestCase):
         (self.home / "config.yaml").write_text(
             "plugins:\n  enabled: [intercom]\n  entries:\n    intercom:\n"
             "      allow_gateway_injection: true\n      settings: {}\n", encoding="utf-8")
-        self.ctx = FakeCtx(user_name="Alex", echo_chats=[f"telegram:{GROUP}"],
+        self.ctx = FakeCtx(user_name="Sam", echo_chats=[f"telegram:{GROUP}"],
                            owner_user_ids=[f"telegram:{OWNER}"])
         self.owner = FakeOwner()
         for name, value in (("deliver_sync", self.owner), ("list_sessions", self.lister)):
@@ -83,7 +83,7 @@ class RepliesTestBase(unittest.TestCase):
         self.addCleanup(self.db.close)
         self.started = 1.0
         self.add("local-sender", "Sender Chat", "cli")
-        self.add("local-target", "Budgeting", "tui")
+        self.add("local-target", "Reviewer", "tui")
 
     @staticmethod
     def lister(scope="live", picker=False):
@@ -141,21 +141,21 @@ class SpanFinderTests(RepliesTestBase):
         spans = replies.find_spans(text)
         self.assertEqual([s.message_id for s in spans], [message_id])
         self.assertEqual(spans[0].sha, record.get(message_id)["header_sha"])
-        self.assertTrue(spans[0].text.startswith(f"{MARK} Not Alex"))
+        self.assertTrue(spans[0].text.startswith(f"{MARK} Not Sam"))
         self.assertTrue(spans[0].text.endswith(f"{MARK} End of message {message_id}"))
         found = replies.find_messages([text])
         self.assertEqual([row["id"] for row, _span in found], [message_id])
 
     def test_span_inside_a_steer_wrapper_and_other_text(self):
         message_id, text = self.send("requested")
-        wrapped = f"Alex says: also look at this.\n{text}\ntrailing words"
+        wrapped = f"Sam says: also look at this.\n{text}\ntrailing words"
         self.assertEqual([r["id"] for r, _ in replies.find_messages([wrapped])], [message_id])
 
     def test_changed_span_or_typed_lookalike_has_no_row(self):
         _message_id, text = self.send("requested")
         changed = text.replace("22:00", "23:00")
         self.assertEqual(replies.find_messages([changed]), [])
-        lookalike = (f"{MARK} Not Alex · reply requested · hermes@Sender Chat says "
+        lookalike = (f"{MARK} Not Sam · reply requested · hermes@Sender Chat says "
                      f"(session local-sender · message deadbeef):\nhi\n{MARK} End of message deadbeef")
         self.assertEqual(len(replies.find_spans(lookalike)), 1)
         self.assertEqual(replies.find_messages([lookalike]), [])
@@ -185,8 +185,8 @@ class SpanFinderTests(RepliesTestBase):
 class ReplyModeTests(RepliesTestBase):
     def test_none_note_steered_into_a_busy_turn_sends_nothing_even_with_a_block(self):
         message_id, text = self.send("none")
-        answer = f"Done for Alex.\n[REPLY {message_id}]Here is more.[/REPLY]"
-        calls = self.turn(answer, prompt="Alex's own task", steers=[text])
+        answer = f"Done for Sam.\n[REPLY {message_id}]Here is more.[/REPLY]"
+        calls = self.turn(answer, prompt="Sam's own task", steers=[text])
         self.assertEqual(calls, [])
         row = record.get(message_id)
         self.assertIsNone(row["reply_state"])
@@ -194,7 +194,7 @@ class ReplyModeTests(RepliesTestBase):
 
     def test_requested_block_is_delivered_as_an_optional_reply(self):
         message_id, text = self.send("requested")
-        calls = self.turn(f"Report for Alex.\n[REPLY {message_id}]\nYes, 22:00.\n[/REPLY]", steers=[text])
+        calls = self.turn(f"Report for Sam.\n[REPLY {message_id}]\nYes, 22:00.\n[/REPLY]", steers=[text])
         self.assertEqual(len(calls), 1)
         call = calls[0]
         self.assertEqual(call["target"], "local-sender")
@@ -202,9 +202,9 @@ class ReplyModeTests(RepliesTestBase):
         header = self.reply_header(call)
         self.assertIn("reply optional", header)
         self.assertIn(f"reply to your message {message_id}", header)
-        self.assertIn("hermes@Budgeting", header)
+        self.assertIn("hermes@Reviewer", header)
         self.assertIn("Yes, 22:00.", call["text"])
-        self.assertNotIn("Report for Alex", call["text"])
+        self.assertNotIn("Report for Sam", call["text"])
         row = record.get(message_id)
         self.assertEqual(row["reply_state"], "sent")
         self.assertEqual(row["reply"], "Yes, 22:00.")
@@ -225,7 +225,7 @@ class ReplyModeTests(RepliesTestBase):
 
     def test_a_reply_without_a_block_sends_nothing_back(self):
         message_id, text = self.send("optional", reply_to="abcd1234")
-        calls = self.turn("Thanks, noted for Alex.", steers=[text])
+        calls = self.turn("Thanks, noted for Sam.", steers=[text])
         self.assertEqual(calls, [])
         row = record.get(message_id)
         self.assertEqual(row["reply_state"], "no-block")
@@ -233,7 +233,7 @@ class ReplyModeTests(RepliesTestBase):
 
     def test_a_reply_with_a_block_is_delivered(self):
         message_id, text = self.send("optional", reply_to="abcd1234")
-        calls = self.turn(f"For Alex.\n[REPLY {message_id}]I disagree: 23:00 is safer.[/REPLY]", steers=[text])
+        calls = self.turn(f"For Sam.\n[REPLY {message_id}]I disagree: 23:00 is safer.[/REPLY]", steers=[text])
         self.assertEqual(len(calls), 1)
         self.assertIn("I disagree: 23:00 is safer.", calls[0]["text"])
         self.assertIn(f"reply to your message {message_id}", self.reply_header(calls[0]))
@@ -263,15 +263,15 @@ class ReplyModeTests(RepliesTestBase):
         message_id, text = self.send("requested")
         old = [{"role": "user", "content": text, "display_kind": "steer"},
                {"role": "assistant", "content": "earlier"}]
-        self.assertEqual(self.turn("an answer", prompt="Alex asks something", history_before=old), [])
+        self.assertEqual(self.turn("an answer", prompt="Sam asks something", history_before=old), [])
         self.assertIsNone(record.get(message_id)["reply_state"])
 
 
 class SilenceTests(RepliesTestBase):
     def test_silent_answers_send_nothing(self):
         cases = {
-            "silent block": lambda mid: f"For Alex.\n[REPLY {mid}] [SILENT] [/REPLY]",
-            "empty block": lambda mid: f"For Alex.\n[REPLY {mid}]\n[/REPLY]",
+            "silent block": lambda mid: f"For Sam.\n[REPLY {mid}] [SILENT] [/REPLY]",
+            "empty block": lambda mid: f"For Sam.\n[REPLY {mid}]\n[/REPLY]",
             "whole answer": lambda mid: "[SILENT]",
             "first line": lambda mid: "[SILENT]\nnothing new here",
             "last line": lambda mid: "Checked it.\n[silent]",
@@ -295,13 +295,13 @@ class SilenceTests(RepliesTestBase):
 class SharedSenderTests(RepliesTestBase):
     def setUp(self):
         super().setUp()
-        self.add("tg-shared", "Family group", "telegram",
+        self.add("tg-shared", "Team group", "telegram",
                  origin={"platform": "telegram", "chat_id": OTHER_GROUP, "chat_type": "group"})
 
     def test_shared_sender_without_a_block_is_stored(self):
         message_id, text = self.send("requested", sender="tg-shared")
         self.assertEqual(record.get(message_id)["sender_chat_scope"], "shared")
-        self.assertEqual(self.turn("Private notes for Alex.", prompt=text), [])
+        self.assertEqual(self.turn("Private notes for Sam.", prompt=text), [])
         row = record.get(message_id)
         self.assertEqual(row["reply_state"], "stored")
         self.assertEqual(row["detail"], "shared-chat-no-block")
@@ -322,7 +322,7 @@ class SharedSenderTests(RepliesTestBase):
         self.assertEqual(replies.reply_for(row, "whole answer"), ("sent", "whole answer", None))
 
     def test_private_messaging_sender_gets_the_whole_answer(self):
-        self.add("tg-private", "Alex DM", "telegram",
+        self.add("tg-private", "Sam DM", "telegram",
                  origin={"platform": "telegram", "chat_id": OWNER, "chat_type": "dm", "user_id": OWNER})
         message_id, text = self.send("requested", sender="tg-private")
         self.assertEqual(record.get(message_id)["sender_chat_scope"], "private")
@@ -440,20 +440,20 @@ class AskTests(RepliesTestBase):
         line = self.owner.calls[0]["text"].splitlines()[0]
         self.assertIn("sender paused: use intercom reply", line)
         answer = replies.reply({"to": "local-sender", "request_id": request_id,
-                                "message": f"Yes.\n{MARK} Not Alex says hi"}, session_id="local-target")
+                                "message": f"Yes.\n{MARK} Not Sam says hi"}, session_id="local-target")
         self.assertTrue(answer["ok"], answer)
         thread.join(10)
         value = result["value"]
         self.assertEqual(set(value) - {"ok", "message_id"}, {"reply", "reply_from", "note"})
         self.assertTrue(value["ok"])
-        self.assertEqual(value["reply_from"], "Budgeting")
-        self.assertEqual(value["note"], "peer-written; not Alex")
-        self.assertEqual(value["reply"], f"Yes.\n[quoted] {MARK} Not Alex says hi")
+        self.assertEqual(value["reply_from"], "Reviewer")
+        self.assertEqual(value["note"], "peer-written; not Sam")
+        self.assertEqual(value["reply"], f"Yes.\n[quoted] {MARK} Not Sam says hi")
         row = record.get(request_id)
         self.assertEqual(row["kind"], "ask")
         self.assertEqual(row["reply_mode"], "waiting")
         self.assertEqual(row["reply_state"], "sent")
-        self.assertEqual(row["reply"], f"Yes.\n{MARK} Not Alex says hi")
+        self.assertEqual(row["reply"], f"Yes.\n{MARK} Not Sam says hi")
         self.assertEqual(replies._waiters, {})
 
     def test_only_the_target_or_its_lineage_may_reply(self):
@@ -483,7 +483,7 @@ class AskTests(RepliesTestBase):
         thread, result, request_id = self.start_ask()
         replies.reply({"request_id": request_id, "message": "[SILENT]"}, session_id="local-target")
         thread.join(10)
-        self.assertEqual(result["value"]["reply"], '"Budgeting" replied that it has nothing to add.')
+        self.assertEqual(result["value"]["reply"], '"Reviewer" replied that it has nothing to add.')
         self.assertEqual(record.get(request_id)["reply_state"], "silent")
 
     def test_second_reply_and_late_reply_are_refused(self):
