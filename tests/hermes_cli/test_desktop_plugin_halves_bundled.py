@@ -38,6 +38,7 @@ def test_enabled_bundled_half_is_published(layout):
     halves.reconcile_desktop_halves(home, app_root)
 
     assert (app_root / "meter" / "plugin.js").read_text() == "export default {}\n"
+    assert halves.read_package_marker(app_root / "meter")["defaultEnabled"] is True
     assert not (app_root / "agent-only").exists()
 
 
@@ -73,9 +74,21 @@ def test_home_package_of_the_same_name_wins(layout):
     halves.reconcile_desktop_halves(home, app_root)
 
     assert (app_root / "meter" / "plugin.js").read_text() == "export const own = 1\n"
+    assert not halves.read_package_marker(app_root / "meter").get("defaultEnabled")
 
 
 def test_missing_config_publishes_nothing_extra(layout):
     home, _, app_root = layout
     halves.reconcile_desktop_halves(home, app_root)
     assert list(app_root.iterdir()) == []
+
+
+def test_previously_published_bundled_half_gets_enabled_marker(layout):
+    home, bundled, app_root = layout
+    halves.materialize_desktop_half(bundled / "meter", app_root, "meter")
+    assert not halves.read_package_marker(app_root / "meter").get("defaultEnabled")
+    _config(home, ["meter"])
+
+    halves.reconcile_desktop_halves(home, app_root)
+
+    assert halves.read_package_marker(app_root / "meter")["defaultEnabled"] is True

@@ -22,6 +22,21 @@ function tone(c) {
 const pct = v => (v == null ? '–' : `${Math.round(v)}%`)
 const signed = v => (v == null ? '' : `${v > 0 ? '+' : ''}${Math.round(v)}%`)
 const money = v => `$${(v || 0).toFixed(2)}`
+const remaining = v => v == null ? null : Math.max(0, Math.min(100, 100 - v))
+
+// A single status-bar row, not another mobile toolbar. Reserve enough of the
+// right cluster for the compact meter; the other status items can still clip.
+const METER_CSS = `
+  [data-usage-compact] { display: none; }
+  @media (max-width: 600px) {
+    [data-usage-full] { display: none !important; }
+    [data-usage-compact] { display: inline-flex; }
+    [data-slot="statusbar"] > :last-child:has([data-subscription-meter]) {
+      flex-shrink: 0;
+      max-width: calc(100% - 2.5rem);
+    }
+  }
+`
 
 function Row({ c }) {
   const [t, word] = tone(c)
@@ -58,8 +73,8 @@ function Panel({ data, ctx }) {
     }
   }
   const pick = data.pick
-  return jsxs('div', { style: { width: 330, fontSize: 12, padding: 4 }, children: [
-    jsx('div', { style: { fontWeight: 600, marginBottom: 4 }, children: 'Subscription usage (weekly), most over pace first' }),
+  return jsxs('div', { style: { fontSize: 12, padding: 4 }, children: [
+    jsx('div', { style: { fontWeight: 600, marginBottom: 4 }, children: 'Weekly usage (% used), most over pace first' }),
     data.warning && data.warning.active
       ? jsx('div', { style: { color: 'var(--ui-text-secondary)', marginBottom: 4 },
           children: `Warning: usage data unavailable for ${data.warning.subscriptions.join(', ')}` })
@@ -98,21 +113,25 @@ function Meter({ ctx }) {
   }
   if (!data) return null
   const o = data.openrouter || {}
-  const chips = (data.cards || []).map(c => {
+  const chips = (compact) => (data.cards || []).map(c => {
     const [t, word] = tone(c)
-    return jsxs('span', { key: c.id, 'aria-label': `${c.name} ${pct(c.used_percent)} used, ${word}`,
+    return jsxs('span', { key: c.id, 'aria-label': `${c.name} ${pct(remaining(c.used_percent))} left, ${word}`,
       style: { display: 'inline-flex', alignItems: 'center', gap: 4 }, children: [
         jsx(StatusDot, { tone: t }),
-        `${SHORT[c.id] || c.name} ${pct(c.used_percent)}${c.pace_delta != null ? ` P${signed(c.pace_delta)}` : ''}`
+        `${SHORT[c.id] || c.name} ${pct(remaining(c.used_percent))}${compact ? '' : ` left${c.pace_delta != null ? ` P${signed(c.pace_delta)}` : ''}`}`
       ] })
   })
-  chips.push(jsx('span', { key: 'or', children: `OR ${money(o.today)}` }))
   return jsxs(Popover, { open, onOpenChange: setOpen, children: [
+    jsx('style', { children: METER_CSS }),
     jsx(PopoverTrigger, { asChild: true, children: jsx(Button, {
       variant: 'ghost', size: 'micro', 'aria-label': 'Subscription usage',
-      children: jsx('span', { style: { display: 'inline-flex', gap: 10, fontSize: 11, color: 'var(--ui-text-secondary)' }, children: chips })
+      'data-subscription-meter': '',
+      children: [
+        jsxs('span', { key: 'full', 'data-usage-full': '', style: { display: 'inline-flex', gap: 10, fontSize: 11, color: 'var(--ui-text-secondary)' }, children: [...chips(false), jsx('span', { children: `OR ${money(o.today)}` }, 'or')] }),
+        jsxs('span', { key: 'compact', 'data-usage-compact': '', style: { alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--ui-text-secondary)' }, children: ['Left', ...chips(true)] })
+      ]
     }) }),
-    jsx(PopoverContent, { side: 'top', align: 'end', children: jsx(Panel, { data, ctx }) })
+    jsx(PopoverContent, { side: 'top', align: 'end', style: { width: 'min(360px, calc(100vw - 16px))' }, children: jsx(Panel, { data, ctx }) })
   ] })
 }
 

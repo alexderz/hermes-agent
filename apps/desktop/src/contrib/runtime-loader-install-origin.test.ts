@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { HermesReadDirResult } from '@/global'
 
-import { $pluginRecords, enableCatalogDesktopPlugin, publishPlugin } from './plugins-store'
+import { $pluginDecisions, $pluginRecords, enableCatalogDesktopPlugin, publishPlugin } from './plugins-store'
 import { discoverRuntimePlugins } from './runtime-loader'
 import { routeBlobImportsToDataUrls } from './runtime-loader.test-helpers'
 
@@ -67,6 +67,45 @@ afterEach(() => {
 })
 
 const OFF_BY_DEFAULT = 'export default { id: "accent", defaultEnabled: false, register() {} }'
+
+describe('a bundled half explicitly enabled in the server config', () => {
+  it('leaves an ordinary installed package opt-in when its marker has no server enable', async () => {
+    $pluginDecisions.set({})
+    stubDisk([
+      folder('ordinary-meter', {
+        'plugin.js': 'export default { id: "ordinary-meter", register() {} }',
+        '.hermes-package.json': JSON.stringify({ package: 'ordinary-meter' })
+      })
+    ])
+    await discoverRuntimePlugins()
+    expect($pluginRecords.get()['ordinary-meter']).toMatchObject({ status: 'disabled' })
+  })
+
+  it('registers on a fresh browser without a second device-local enable', async () => {
+    $pluginDecisions.set({})
+    stubDisk([
+      folder('meter', {
+        'plugin.js': 'export default { id: "meter", register() {} }',
+        '.hermes-package.json': JSON.stringify({ package: 'meter', defaultEnabled: true })
+      })
+    ])
+    await discoverRuntimePlugins()
+    expect($pluginRecords.get().meter).toMatchObject({ status: 'loaded', packageName: 'meter' })
+  })
+
+  it('still respects an explicit browser-local disable', async () => {
+    $pluginDecisions.set({ meter: false })
+    stubDisk([
+      folder('meter', {
+        'plugin.js': 'export default { id: "meter", register() {} }',
+        '.hermes-package.json': JSON.stringify({ package: 'meter', defaultEnabled: true })
+      })
+    ])
+    await discoverRuntimePlugins()
+    expect($pluginRecords.get().meter).toMatchObject({ status: 'disabled' })
+    $pluginDecisions.set({})
+  })
+})
 
 describe('a standalone plugin installed from the catalog', () => {
   it('carries its catalog entry on its record and stays standalone', async () => {

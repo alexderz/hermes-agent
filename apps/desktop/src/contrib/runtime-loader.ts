@@ -600,6 +600,9 @@ async function diskRoots(): Promise<DiskRoot[]> {
  *  the agent row. A STANDALONE plugin installed from the catalog carries `INSTALL_ORIGIN` instead: its
  *  catalog entry, so the card shows it installed, and no package, so the folder stays standalone. */
 interface PackageMarker {
+  /** Server-published bundled half already opted into in plugins.enabled.
+   * An explicit browser-local enable/disable still wins. */
+  defaultEnabled: boolean
   /** The package is a symlinked dev checkout; `source` is its `desktop/` dir. */
   linkedSource?: string
   origin?: PackageOrigin
@@ -657,7 +660,12 @@ function packageMarker(parsed: null | Record<string, unknown>): null | PackageMa
   const pkg = nonEmpty(parsed?.package)
 
   return parsed && pkg
-    ? { linkedSource: parsed.linked ? nonEmpty(parsed.source) : undefined, origin: packageOrigin(parsed), package: pkg }
+    ? {
+        defaultEnabled: parsed.defaultEnabled === true,
+        linkedSource: parsed.linked ? nonEmpty(parsed.source) : undefined,
+        origin: packageOrigin(parsed),
+        package: pkg
+      }
     : null
 }
 
@@ -673,8 +681,9 @@ async function readFolderIdentity(
   const standalone = !marker && originJson ? packageOrigin(originJson) : undefined
 
   return {
-    // A unified package's desktop half ships opt-in, like its agent half.
-    defaultEnabled: marker ? false : undefined,
+    // Installed packages stay opt-in. The server can carry the existing opt-in
+    // for bundled packages it publishes from its explicit plugins.enabled list.
+    defaultEnabled: marker ? marker.defaultEnabled : undefined,
     packageName: marker?.package,
     packageOrigin: marker ? marker.origin : standalone?.catalogName ? standalone : undefined,
     sourceFile: marker?.linkedSource ? `${marker.linkedSource}/plugin.js` : undefined
