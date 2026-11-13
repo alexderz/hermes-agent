@@ -15,7 +15,7 @@ import {
   refreshBrowserNotificationPermission
 } from '@/store/browser-notification-permission'
 import { $completionSoundVariantId, setCompletionSoundVariantId } from '@/store/completion-sound'
-import { $hapticsMuted, setHapticsMuted } from '@/store/haptics'
+import { $hapticsMuted, $sessionSwitchHaptics, setHapticsMuted, setSessionSwitchHaptics } from '@/store/haptics'
 import {
   $nativeNotifyPrefs,
   NATIVE_NOTIFICATION_KINDS,
@@ -75,6 +75,7 @@ export function NotificationsSettings({ subpage }: NotificationsSettingsProps = 
   const { t } = useI18n()
   const prefs = useStore($nativeNotifyPrefs)
   const muted = useStore($hapticsMuted)
+  const sessionSwitchHaptics = useStore($sessionSwitchHaptics)
   const completionSoundVariantId = useStore($completionSoundVariantId)
   const copy = t.settings.notifications
   const showAlerts = subpage === undefined || subpage === 'alerts'
@@ -132,6 +133,13 @@ export function NotificationsSettings({ subpage }: NotificationsSettingsProps = 
             id={settingElementId(SETTING_IDS.notifications.muteSounds)}
             label={copy.muteSoundsTitle}
             onChange={setHapticsMuted}
+          />
+          <ToggleRow
+            checked={sessionSwitchHaptics}
+            description={copy.sessionSwitchHapticsDesc}
+            id={settingElementId(SETTING_IDS.notifications.sessionSwitchHaptics)}
+            label={copy.sessionSwitchHapticsTitle}
+            onChange={setSessionSwitchHaptics}
           />
           <ListRow
             action={

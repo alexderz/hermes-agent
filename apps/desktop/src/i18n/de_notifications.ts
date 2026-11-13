@@ -53,6 +53,9 @@ export const deNotifications = {
   testSent:
     'Test gesendet. Wenn nichts erscheint, überprüfen Sie die Benachrichtigungsberechtigungen Ihres Betriebssystems und Fokus/Nicht stören.',
   testUnsupported: 'Dieses System unterstützt keine nativen Benachrichtigungen.',
+  sessionSwitchHapticsTitle: 'Haptik beim Sitzungswechsel',
+  sessionSwitchHapticsDesc:
+    'Ein sanfter Impuls, sobald das ausgewählte Gespräch bereit ist. Nur auf unterstützten Geräten und in unterstützten Browsern; die Stummschaltung der Oberfläche schaltet ihn ebenfalls aus.',
   muteSoundsTitle: 'Oberflächentöne stummschalten',
   muteSoundsDesc:
     'Schaltet automatische Abschluss-, Aktivierungs- und Denktöne, haptisches Feedback und die Töne von Systembenachrichtigungen aus. Klangvorschauen und gesprochene Antworten werden weiterhin abgespielt.',

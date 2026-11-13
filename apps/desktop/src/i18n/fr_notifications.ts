@@ -54,6 +54,9 @@ export const frNotifications = {
   testSent:
     "Test envoyé. Si rien n'apparaît, vérifiez les autorisations de notification de votre système et le mode Ne pas déranger.",
   testUnsupported: 'Ce système ne prend pas en charge les notifications natives.',
+  sessionSwitchHapticsTitle: 'Retour haptique au changement de session',
+  sessionSwitchHapticsDesc:
+    'Une légère vibration lorsque la conversation sélectionnée est prête. Uniquement sur les appareils et navigateurs compatibles ; couper les sons de l’interface la désactive aussi.',
   muteSoundsTitle: 'Couper les sons de l’interface',
   muteSoundsDesc:
     'Coupe les signaux automatiques de fin, d’activation et de réflexion, le retour haptique et les sons des notifications système. Les aperçus sonores et les réponses vocales restent audibles.',

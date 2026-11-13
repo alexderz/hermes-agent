@@ -7,7 +7,7 @@ import { getAudioContext } from '@/lib/audio-context'
 import { playCompletionSound, previewCompletionSound } from '@/lib/completion-sound'
 import { startThinkingSound, stopThinkingSound } from '@/lib/thinking-sound'
 import { playWakeSound } from '@/lib/wake-sound'
-import { $hapticsMuted, setHapticsMuted } from '@/store/haptics'
+import { $hapticsMuted, $sessionSwitchHaptics, setHapticsMuted, setSessionSwitchHaptics } from '@/store/haptics'
 
 import { NotificationsSettings } from './notifications-settings'
 
@@ -78,6 +78,24 @@ it('offers a persisted mute that silences automatic completion, wake and thinkin
   expect(localStorage.getItem('hermes.desktop.hapticsMuted')).toBe('false')
   previewCompletionSound()
   expect(getAudioContext).toHaveBeenCalledTimes(1)
+})
+
+it('offers an independent persisted session-switch toggle with supported-device copy', () => {
+  setSessionSwitchHaptics(true)
+  render(
+    <MemoryRouter>
+      <NotificationsSettings subpage="sounds" />
+    </MemoryRouter>
+  )
+  const toggle = screen.getByRole('switch', { name: 'Session-switch haptics' })
+  expect(toggle.getAttribute('aria-checked')).toBe('true')
+  expect(screen.getByText(/supported devices and browsers/i)).toBeTruthy()
+  fireEvent.click(toggle)
+  expect($sessionSwitchHaptics.get()).toBe(false)
+  expect($hapticsMuted.get()).toBe(false)
+  fireEvent.click(screen.getByRole('switch', { name: 'Mute interface sounds' }))
+  expect($sessionSwitchHaptics.get()).toBe(false)
+  expect(localStorage.getItem('hermes.desktop.sessionSwitchHaptics')).toBe('false')
 })
 
 it('silences cues in this window when a peer window saves mute', () => {
