@@ -8,7 +8,7 @@ following a symlink, creates an owner-only anonymous file there (``O_TMPFILE``; 
 where the filesystem has none), sets its group and mode and drops any inherited access ACL on the
 descriptor, writes and syncs it, then hard-links it to the target name, which fails if anything
 appeared there meanwhile (never an overwrite, even in a race), and checks the name is that very
-file. The value is then registered for exact-value redaction and the caller drops it.
+file. The caller drops the value; file intake does not register it as a global redaction key.
 
 A surface's secret callback opts in by setting ``accepts_secret_file = True`` on itself and calling
 ``secret_file_answer`` when ``destination_of(metadata)`` is a file; the tool refuses before the card
@@ -309,8 +309,6 @@ def write_secret_file(destination: dict, value: str) -> dict:
         warning = _sync_folder(dfd) if syncable else None
     finally:
         os.close(dfd)
-    from agent.redact import register_vault_redaction_value
-    register_vault_redaction_value(data.decode("utf-8"))
     saved = {"status": "saved", "path": path, "mode": f"{stat.S_IMODE(st.st_mode):04o}", "owner": _user(),
              "group": _group_name(st.st_gid), "bytes": len(data)}
     return {**saved, "warning": warning} if warning else saved

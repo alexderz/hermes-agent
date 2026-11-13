@@ -335,7 +335,9 @@ entered in the Webapp or desktop app. A relative path is resolved in the session
 directory; with none, the agent must give an absolute path. `private` (the default) saves it as `0600`, readable only by the
 user Hermes runs as. `standard` saves it as `0640`, also readable by a group that user belongs to. A
 file is never world-readable, even in a folder with a default ACL, and the owner is always the user
-Hermes runs as. The agent only gets the path, mode, owner and size back.
+Hermes runs as. The agent only gets the path, mode, owner and size back. Saving a file does not add
+its contents to a global output-redaction registry. Intake keeps the value out of the conversation;
+it does not prevent an agent with file access from reading or printing that file later.
 
 Hermes refuses before showing the prompt if it cannot save the file. That covers a missing or
 unwritable folder, a symbolic link on the path, a group the Hermes user is not in, and a file that
