@@ -2,6 +2,7 @@ import { type MutableRefObject, useEffect, useRef } from 'react'
 
 import { isNewChatRoute } from '@/app/routes'
 import { type SessionResumeRequest, setResumeExhaustedSessionId } from '@/store/session'
+import { consumeUserSessionRouteOpen } from '@/store/session-open-intent'
 import type { SessionProfileRoute } from '@/store/session-request-router'
 import { markSelectionRestore } from '@/store/session-states'
 
@@ -207,12 +208,12 @@ export function useRouteResume({
           handledResumeRequestRef.current = sessionResumeRequest.sequence
         }
 
-        // The window's FIRST resume re-attaches the pre-reload route rather
-        // than navigating anywhere, so the selection listener must not home
-        // focus/tabs to the workspace over the persisted layout (see
-        // markSelectionRestore). One-shot: consumed by the selection change
-        // resumeSession makes synchronously at entry.
-        if (bootResumeRef.current) {
+        // Only a restore of the boot route preserves the persisted active tab.
+        // Correlate the actual destination, not whether this window has EVER
+        // received a user open (a tile open need not navigate at all).
+        const userNavigation = consumeUserSessionRouteOpen(routedSessionId)
+
+        if (bootResumeRef.current && !userNavigation) {
           markSelectionRestore()
         }
 

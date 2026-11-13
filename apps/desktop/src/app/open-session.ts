@@ -16,7 +16,7 @@
  */
 import type { WorkspaceMode } from '@/contrib/types'
 import { $activeSessionId, $selectedStoredSessionId, markSessionRead, requestSessionResume } from '@/store/session'
-import { noteUserSessionOpen } from '@/store/session-open-intent'
+import { noteUserSessionOpen, noteUserSessionRouteOpen } from '@/store/session-open-intent'
 import type { SessionProfileRoute } from '@/store/session-request-router'
 import {
   focusedSessionNeedsRoute,
@@ -30,6 +30,7 @@ import {
 import { canOpenSessionWindow, openSessionInNewWindow } from '@/store/windows'
 
 import { $workspaceIsPage, sessionRoute } from './routes'
+import { beginSessionSwitch, resolveSessionSwitchDestination } from './session/session-switch'
 
 export type OpenSessionIntent = 'in-place' | 'main' | 'stack' | 'tab' | 'window'
 
@@ -144,11 +145,13 @@ export function openSession(
 
   // A chat opened in this window: the launch restore must not close it.
   noteUserSessionOpen()
+  beginSessionSwitch(storedSessionId, workspaceScope.ownerRoute)
 
   if (resolved === 'main') {
     // Canonical relationship chats explicitly own the main workspace. Route
     // even when the session is already open as a tile; resumeSession removes
     // that redundant tile when the main surface binds.
+    noteUserSessionRouteOpen(storedSessionId)
     navigate(sessionRoute(storedSessionId))
 
     return
@@ -179,7 +182,10 @@ export function openSession(
     const focused = focusOpenSession(storedSessionId, workspaceScope)
 
     if (focused) {
+      resolveSessionSwitchDestination()
+
       if (focusedSessionNeedsRoute(focused, $workspaceIsPage.get())) {
+        noteUserSessionRouteOpen(storedSessionId)
         navigate(sessionRoute(storedSessionId))
       }
 
@@ -195,6 +201,8 @@ export function openSession(
         ? reuseBlankDraftTile(storedSessionId, botWorkspaceScope)
         : reuseBlankDraftTile(storedSessionId))
     ) {
+      resolveSessionSwitchDestination(storedSessionId, `session-tile:${storedSessionId}`)
+
       return
     }
 
@@ -204,7 +212,13 @@ export function openSession(
       openSessionTile(storedSessionId, 'center')
     }
 
-    focusOpenSession(storedSessionId, workspaceScope)
+    const opened = focusOpenSession(storedSessionId, workspaceScope)
+
+    if (opened) {
+      resolveSessionSwitchDestination()
+    } else {
+      resolveSessionSwitchDestination(storedSessionId, `session-tile:${storedSessionId}`)
+    }
 
     return
   }
@@ -215,7 +229,12 @@ export function openSession(
   // leaves the page showing.
   const focused = focusOpenSession(storedSessionId, workspaceScope)
 
+  if (focused) {
+    resolveSessionSwitchDestination()
+  }
+
   if (focusedSessionNeedsRoute(focused, $workspaceIsPage.get())) {
+    noteUserSessionRouteOpen(storedSessionId)
     navigate(sessionRoute(storedSessionId))
   }
 

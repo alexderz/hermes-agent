@@ -30,6 +30,13 @@ vi.mock('@/store/windows', () => ({
   openSessionInNewWindow: (...args: unknown[]) => openSessionInNewWindow(...args)
 }))
 
+// This suite isolates navigation routing; session-switch.test.tsx exercises
+// confirmation against the real layout, focus and transcript stores.
+vi.mock('./session/session-switch', () => ({
+  beginSessionSwitch: vi.fn(),
+  resolveSessionSwitchDestination: vi.fn()
+}))
+
 vi.mock('./routes', () => ({
   $workspaceIsPage: { get: () => workspaceIsPageGet() },
   sessionRoute: (id: string) => `/c/${encodeURIComponent(id)}`

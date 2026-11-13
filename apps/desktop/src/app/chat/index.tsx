@@ -79,6 +79,7 @@ import { ResumeExhaustedOverlay } from './resume-exhausted-overlay'
 import { isRouteSessionMismatch } from './route-session-state'
 import { useRuntimeMessageRepository } from './runtime-repository'
 import { ScrollToBottomButton } from './scroll-to-bottom-button'
+import { SessionSwitchConfirmation } from './session-switch-confirmation'
 import { useSessionView } from './session-view'
 import { SessionActionsMenu } from './sidebar/session-actions-menu'
 import { routedSessionIsLoading, threadLoadingState } from './thread-loading'
@@ -202,6 +203,8 @@ function ChatHeader({
 interface ChatRuntimeBoundaryProps {
   busy: boolean
   children: React.ReactNode
+  /** Present for a navigable ChatView, absent for runtime-only consumers. */
+  sessionSwitchPathname?: string
   onCancel: () => Promise<void> | void
   onEdit: (message: AppendMessage) => Promise<void>
   onReload: (parentId: string | null) => Promise<void>
@@ -250,6 +253,7 @@ function useMessagesWhileVisible($messages: ReadableAtom<ChatMessage[]>, enabled
 export function ChatRuntimeBoundary({
   busy,
   children,
+  sessionSwitchPathname,
   onCancel,
   onEdit,
   onReload,
@@ -463,7 +467,21 @@ export function ChatRuntimeBoundary({
   return (
     <ComposerScopeProvider value={composerScope}>
       <TranscriptWindowProvider value={transcriptWindow}>
-        <AssistantRuntimeProvider runtime={runtime}>{children}</AssistantRuntimeProvider>
+        <AssistantRuntimeProvider runtime={runtime}>
+          {sessionSwitchPathname !== undefined && (
+            <SessionSwitchConfirmation
+              expectedHead={
+                runtimeMessageRepository.messages.findLast(
+                  ({ message }) => message.id === runtimeMessageRepository.headId
+                )?.message ?? null
+              }
+              messages={currentMessages}
+              pathname={sessionSwitchPathname}
+              suppressed={suppressMessages || storeMessages !== view.$messages.get()}
+            />
+          )}
+          {children}
+        </AssistantRuntimeProvider>
       </TranscriptWindowProvider>
     </ComposerScopeProvider>
   )
@@ -784,6 +802,7 @@ const ChatViewContent = memo(function ChatViewContent({
         onEdit={onEdit}
         onReload={onReload}
         onThreadMessagesChange={onThreadMessagesChange}
+        sessionSwitchPathname={location.pathname}
         suppressMessages={routeSessionMismatch}
       >
         <div
