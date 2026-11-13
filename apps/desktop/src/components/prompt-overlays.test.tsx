@@ -120,6 +120,24 @@ describe('PromptOverlays', () => {
     expect(notifyError).not.toHaveBeenCalled()
   })
 
+  it.fails('does not skip secret entry on Escape after a focus handoff', () => {
+    const respond = vi.fn()
+    $activeSessionId.set('s1')
+    $gateway.set({ request: vi.fn() } as never)
+    rememberServerRequest({ fail: vi.fn(), id: 'secret-handoff', method: 'secret', params: {}, respond })
+    setSecretRequest({ envVar: 'TEST_SECRET', prompt: 'Paste a secret', requestId: 'secret-handoff', sessionId: 's1' })
+    renderPrompts()
+
+    const input = screen.getByPlaceholderText('TEST_SECRET')
+    fireEvent.change(input, { target: { value: 'dummy-value' } })
+    fireEvent.blur(input)
+    fireEvent.keyDown(input, { key: 'Escape' })
+
+    expect(respond).not.toHaveBeenCalled()
+    expect((input as HTMLInputElement).value).toBe('dummy-value')
+    expect($secretRequest.get()?.requestId).toBe('secret-handoff')
+  })
+
   it('answers the live secret request with an empty value on Cancel and clears the dialog', async () => {
     const respond = vi.fn()
     const request = vi.fn()
