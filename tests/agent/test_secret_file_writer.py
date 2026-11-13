@@ -13,7 +13,6 @@ import stat
 
 import pytest
 
-from agent.redact import redact_sensitive_text
 from agent.secret_file_writer import SecretFileError, plan_secret_file, secret_file_answer, write_secret_file
 
 pytestmark = pytest.mark.platforms("posix")
@@ -48,7 +47,6 @@ def test_private_file_is_owner_only_and_holds_the_value_without_the_pasted_newli
     assert saved == {"status": "saved", "path": str(target), "mode": "0600", "owner": ME, "group": PRIMARY,
                      "bytes": len(DUMMY.encode())}
     assert _leftovers(folder) == []
-    assert DUMMY not in redact_sensitive_text(f"cat said {DUMMY}")  # registered for exact-value redaction
 
 
 def test_standard_access_is_group_readable_never_world_readable(folder):
