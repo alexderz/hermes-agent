@@ -4,13 +4,13 @@ import type { SecretRequest } from '@/store/prompts'
 interface RowIdentity {
   id: string
   rowId?: number
-  timestamp?: number
   userText?: string
 }
 
 interface Anchor {
   message: RowIdentity
   turn?: RowIdentity
+  precedingTurn?: RowIdentity
   toolCallId: string
   hostToolCallId?: string
   synthetic: boolean
@@ -47,11 +47,15 @@ const isStartedUser = (message: ChatMessage) =>
 const identityOf = (message: ChatMessage): RowIdentity => ({
   id: message.id,
   rowId: message.rowId,
-  timestamp: message.timestamp,
   ...(message.role === 'user' ? { userText: chatMessageText(message) } : {})
 })
 
-function findTurn(source: ChatMessage[], turn?: RowIdentity, hostToolCallId?: string): number {
+function sameRow(message: ChatMessage, identity: RowIdentity): boolean {
+  return identity.rowId !== undefined && message.rowId !== undefined
+    ? message.rowId === identity.rowId : message.id === identity.id
+}
+
+function findTurn(source: ChatMessage[], turn?: RowIdentity, hostToolCallId?: string, precedingTurn?: RowIdentity): number {
   const hostIndex = hostToolCallId ? source.findIndex(message => message.parts.some(part =>
     part.type === 'tool-call' && part.toolCallId === hostToolCallId)) : -1
 
@@ -63,8 +67,7 @@ function findTurn(source: ChatMessage[], turn?: RowIdentity, hostToolCallId?: st
     return source.findLastIndex(isStartedUser)
   }
 
-  const exact = source.findIndex(message => isStartedUser(message) &&
-    (message.id === turn.id || (turn.rowId !== undefined && message.rowId === turn.rowId)))
+  const exact = source.findIndex(message => isStartedUser(message) && sameRow(message, turn))
 
   if (exact >= 0) {
     return exact
@@ -74,21 +77,22 @@ function findTurn(source: ChatMessage[], turn?: RowIdentity, hostToolCallId?: st
     return -2
   }
 
-  // Older live user rows have no durable id yet. Only accept an unambiguous
-  // copy of that prompt; a repeated retry must not steal an earlier turn.
-  const candidates = source.flatMap((message, index) => isStartedUser(message) &&
+  const precedingIndex = precedingTurn ? source.findIndex(message => isStartedUser(message) && sameRow(message, precedingTurn)) : -1
+
+  if (precedingTurn && precedingIndex < 0) {
+    return -2
+  }
+
+  // An unpersisted turn can gain a new durable identity, but rows already
+  // preceding it cannot become it. Client/server clocks need not agree.
+  const candidates = source.flatMap((message, index) => index > precedingIndex && isStartedUser(message) &&
     chatMessageText(message) === turn.userText ? [index] : [])
 
-  const timestampMatches = candidates.filter(index => source[index].timestamp === turn.timestamp)
-
-  // The client submission clock and persisted clock can differ. A known
-  // durable row may not fall back to prose, but an unpersisted prompt can.
-  return timestampMatches.length === 1 ? timestampMatches[0]
-    : candidates.length === 1 ? candidates[0] : -2
+  return candidates.length === 1 ? candidates[0] : -2
 }
 
 function resolveAnchor(source: ChatMessage[], request: SecretRequest, previous?: Anchor): Anchor | undefined {
-  const start = findTurn(source, previous?.turn, previous?.hostToolCallId)
+  const start = findTurn(source, previous?.turn, previous?.hostToolCallId, previous?.precedingTurn)
 
   if (start === -2) {
     return undefined
@@ -97,20 +101,31 @@ function resolveAnchor(source: ChatMessage[], request: SecretRequest, previous?:
   const nextUser = source.findIndex((message, index) => index > start && message.role === 'user')
   const turn = source.slice(start + 1, nextUser < 0 ? source.length : nextUser)
   const turnIdentity = start >= 0 ? identityOf(source[start]) : undefined
-  const common = { turn: turnIdentity, toolCallId: `secret:${request.requestId}`, synthetic: true }
+  const preceding = source.slice(0, Math.max(start, 0)).findLast(isStartedUser)
+  const precedingTurn = preceding ? { id: preceding.id, rowId: preceding.rowId } : undefined
+  const common = { turn: turnIdentity, precedingTurn, toolCallId: `secret:${request.requestId}`, synthetic: true }
 
   if (previous) {
-    const host = turn.find(message => message.id === previous.message.id ||
-      (previous.message.rowId !== undefined && message.rowId === previous.message.rowId) ||
+    const host = turn.find(message => sameRow(message, previous.message) ||
       message.parts.some(part => part.type === 'tool-call' && part.toolCallId === previous.hostToolCallId))
 
     if (host) {
-      return { ...previous, turn: turnIdentity, message: identityOf(host) }
+      return { ...previous, turn: turnIdentity, precedingTurn, message: identityOf(host) }
     }
 
     if (previous.newMessage && source[start]?.id === previous.afterId) {
-      return previous
+      return { ...previous, turn: turnIdentity, precedingTurn }
     }
+  }
+
+  // Replay can precede the in-flight snapshot. Completed history alone cannot
+  // identify this request's turn. Keep a request-local row until active rows
+  // arrive. Established anchors above remain valid when a skill result settles.
+  const hasLiveTurn = turn.some(message => message.pending && !message.interrupted)
+    || (source[start]?.id.startsWith('user-') && !turn.length)
+
+  if (!previous && !hasLiveTurn) {
+    return undefined
   }
 
   for (const message of [...turn].reverse()) {
@@ -129,6 +144,20 @@ function resolveAnchor(source: ChatMessage[], request: SecretRequest, previous?:
     : { ...common, message: { id: `secret-message:${request.requestId}` }, newMessage: true, afterId: source[start]?.id ?? null }
 }
 
+function fallback(messages: ChatMessage[], request: SecretRequest): ChatMessage[] {
+  const queued = messages.findIndex(message => message.role === 'user' && !isStartedUser(message))
+  const insertion = queued >= 0 ? queued : messages.length
+
+  const row: ChatMessage = {
+    id: `secret-message:${request.requestId}`,
+    role: 'assistant',
+    pending: true,
+    parts: [{ type: 'tool-call', toolName: 'clarify', toolCallId: `secret:${request.requestId}`, args: {}, argsText: '{}', clarifyRequestId: request.requestId }]
+  }
+
+  return [...messages.slice(0, insertion), row, ...messages.slice(insertion)]
+}
+
 /** Keep the live host stable, but resolve its durable identity after hydration.
  * No secret input ever enters this projection. */
 export function projectSecret(messages: ChatMessage[], request: SecretRequest, source = messages): ChatMessage[] {
@@ -136,11 +165,11 @@ export function projectSecret(messages: ChatMessage[], request: SecretRequest, s
   const target = resolveAnchor(source, request, anchors.get(key))
 
   if (!target) {
-    return messages
+    return fallback(messages, request)
   }
 
-  // Replay may arrive before history. A provisional empty-history card cannot
-  // bind the eventual conversation to its top forever.
+  // Only resolved turn identities are retained; uncertain history uses the
+  // request-local row without fixing its place in a stale turn.
   if (source.length) {
     anchors.set(key, target)
   }
@@ -151,7 +180,7 @@ export function projectSecret(messages: ChatMessage[], request: SecretRequest, s
     const at = target.afterId ? messages.findIndex(message => message.id === target.afterId) : -1
 
     if (target.afterId && at < 0) {
-      return messages
+      return fallback(messages, request)
     }
 
     const row: ChatMessage = { id: target.message.id, role: 'assistant', pending: true, parts: [secretPart] }
@@ -162,7 +191,7 @@ export function projectSecret(messages: ChatMessage[], request: SecretRequest, s
   const index = messages.findIndex(message => message.id === target.message.id)
 
   if (index < 0) {
-    return messages
+    return fallback(messages, request)
   }
 
   const message = messages[index]

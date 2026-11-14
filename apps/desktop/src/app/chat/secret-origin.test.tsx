@@ -22,6 +22,7 @@ it('does not adopt the only unrelated clarify for a skill-origin secret', async 
     { id: 'user-current', role: 'user', parts: [{ type: 'text', text: 'Run skill' }] },
     { id: 'skill', role: 'assistant', pending: true, parts: [{ type: 'text', text: 'skill-origin' }, { type: 'tool-call', toolCallId: 'skill-call', toolName: 'skill_view', args: {}, argsText: '{}' }] }
   ]
+
   const view = { ...PRIMARY_SESSION_VIEW, $messages: atom(messages), $runtimeId: atom<string | null>('s1'), $storedId: atom<string | null>(null) }
   $activeSessionId.set('s1')
   $activeGatewayProfile.set('default')
@@ -37,6 +38,7 @@ it('anchors ahead of a prompt already queued for the next turn', async () => {
     { id: 'current-skill', role: 'assistant', pending: true, parts: [{ type: 'text', text: 'current skill' }, { type: 'tool-call', toolCallId: 'skill-call', toolName: 'skill_view', args: {}, argsText: '{}' }] },
     { id: 'user-queued-next', role: 'user', parts: [{ type: 'text', text: 'queued next' }] }
   ]
+
   const view = { ...PRIMARY_SESSION_VIEW, $messages: atom(messages), $runtimeId: atom<string | null>('s1'), $storedId: atom<string | null>(null) }
   $activeSessionId.set('s1')
   $activeGatewayProfile.set('default')
@@ -61,5 +63,5 @@ it('binds the secret clarify rather than an unrelated clarify arriving later', a
   act(() => $messages.set([first, other]))
   expect(screen.getByLabelText('TEST_KEY')).toBe(input)
   expect(input.closest('[data-message-id]')?.getAttribute('data-message-id')).toBe('secret-row')
-  expect(document.activeElement).toBe(input)
+  expect(window.document.activeElement).toBe(input)
 })

@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { atom } from 'nanostores'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 
 import { ChatRuntimeBoundary } from '@/app/chat'
 import { PRIMARY_SESSION_VIEW, SessionViewProvider } from '@/app/chat/session-view'
@@ -9,13 +9,16 @@ import { stubThreadEnvironment, stubThreadViewportSize } from '@/components/assi
 import { Thread } from '@/components/assistant-ui/thread'
 import { I18nProvider } from '@/i18n'
 import type { ChatMessage } from '@/lib/chat-messages'
+import { $gateway } from '@/store/gateway'
 import { $activeGatewayProfile } from '@/store/profile'
 import { clearAllPrompts, clearSecretRequest, readSecretDraft, setSecretRequest } from '@/store/prompts'
+import { rememberServerRequest, resetServerRequestsForTests } from '@/store/server-requests'
 import { $activeSessionId, $connection } from '@/store/session'
 import type { SessionMessage } from '@/types/hermes'
 
 stubThreadEnvironment()
 stubThreadViewportSize()
+const respond = vi.fn()
 const request = { sessionId: 's1', requestId: 'r1', envVar: 'TEST_KEY', prompt: 'Enter key', profile: 'default' }
 const user = (id: string, text = 'Set up key'): ChatMessage => ({ id, role: 'user', timestamp: 1700000000.25, parts: [{ type: 'text', text }] })
 
@@ -29,6 +32,9 @@ const anchor = (input: HTMLElement) => input.closest('[data-message-id]')?.getAt
 afterEach(() => {
   cleanup()
   clearAllPrompts()
+  resetServerRequestsForTests()
+  respond.mockClear()
+  $gateway.set(null)
   $activeSessionId.set(null)
   $connection.set(null)
 })
@@ -37,6 +43,8 @@ function mount(messages: ChatMessage[]) {
   $activeSessionId.set('s1')
   $activeGatewayProfile.set('default')
   setSecretRequest(request)
+  $gateway.set({ request: vi.fn() } as never)
+  rememberServerRequest({ id: request.requestId, method: 'secret', params: {}, respond, fail: vi.fn() })
   const $messages = atom(messages)
   const view = { ...PRIMARY_SESSION_VIEW, $messages, $runtimeId: atom<string | null>('s1'), $storedId: atom<string | null>(null) }
   render(<I18nProvider configClient={null}><SessionViewProvider value={view}>
@@ -118,7 +126,11 @@ it('places replay-before-history in the current started turn, not above old hist
   act(() => $messages.set([...history, user('user-queued-next', 'Future submission')]))
   await screen.findByText('Old reply')
   const input = screen.getByLabelText('TEST_KEY') as HTMLInputElement
-  expect(anchor(input)).toBe(history.at(-1)?.id)
+  // Settled history alone is provisional until the in-flight snapshot arrives.
+  expect(anchor(input)).toBe(`secret-message:${request.requestId}`)
+  const ids = Array.from(window.document.querySelectorAll('[data-message-id]'), row => row.getAttribute('data-message-id'))
+  expect(ids.indexOf(anchor(input) ?? '')).toBeGreaterThan(ids.indexOf(history.at(-1)?.id ?? ''))
+  expect(ids.indexOf(anchor(input) ?? '')).toBeLessThan(ids.indexOf('user-queued-next'))
   expect(input.value).toBe('dummy-early')
 })
 
@@ -150,8 +162,13 @@ it('does not transfer a card to a conflicting durable turn with identical prompt
 
   act(() => $messages.set(otherTurn))
   await screen.findByText('A different turn')
-  expect(screen.queryByLabelText('TEST_KEY')).toBeNull()
+  const input = screen.getByLabelText('TEST_KEY') as HTMLInputElement
+  expect(anchor(input)).toBe(`secret-message:${request.requestId}`)
+  expect(input.value).toBe('dummy-original')
   expect(readSecretDraft(request)).toBe('dummy-original')
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+  expect(respond).toHaveBeenCalledExactlyOnceWith({ value: 'dummy-original' })
+  expect(readSecretDraft(request)).toBe('')
 })
 
 it('does not rebind an existing request to a different started turn after its origin disappears', async () => {
@@ -159,6 +176,11 @@ it('does not rebind an existing request to a different started turn after its or
   fireEvent.change(await screen.findByLabelText('TEST_KEY'), { target: { value: 'dummy-original' } })
   act(() => $messages.set([user('different-user', 'Unrelated new turn'), host('different-skill', 'skill_view', {}, 'different-call')]))
   await screen.findByText('Unrelated new turn')
-  expect(screen.queryByLabelText('TEST_KEY')).toBeNull()
+  const input = screen.getByLabelText('TEST_KEY') as HTMLInputElement
+  expect(anchor(input)).toBe(`secret-message:${request.requestId}`)
+  expect(input.value).toBe('dummy-original')
   expect(readSecretDraft(request)).toBe('dummy-original')
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+  expect(respond).toHaveBeenCalledExactlyOnceWith({ value: 'dummy-original' })
+  expect(readSecretDraft(request)).toBe('')
 })

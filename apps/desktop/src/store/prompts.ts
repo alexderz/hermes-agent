@@ -223,11 +223,13 @@ const approval = {
 const sudo = keyedPromptStore<SudoRequest>()
 // Unlike the older prompt stores, session ids are not globally unique across gateways/profiles.
 const $scopedSecrets = atom<Record<string, SecretRequest>>({})
+
 const secret = {
   $all: computed($scopedSecrets, all => Object.fromEntries(Object.values(all).map(request => [keyFor(request.sessionId), request]))),
   $active: computed([$scopedSecrets, $activeSessionId, $activeGatewayProfile, $connection], (all, id, profile, connection) =>
     selectSecret(all, id, { profile, connectionId: connection?.connectionId }))
 }
+
 const vaultUnlock = keyedPromptStore<VaultUnlockRequest>()
 
 // "Save this login" for the page the agent is on (tools/browser_vault_tool): `vault.save_login`
