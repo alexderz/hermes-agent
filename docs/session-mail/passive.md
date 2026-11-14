@@ -51,6 +51,14 @@ When you next run: did the dashboard fix land on the deployed branch?
 📡 End of held notes
 ```
 
+**Compact form (operator, 2026-11-14: reduce token burn).** When no held note asks for a reply, the block is one line per note and no instructions, about 35–50 tokens for a status line:
+
+```
+📡 Held note (subscription-monitor, 14:00; not from <user>, no reply): Subs: Claude 18% wk · Codex 25% · SuperGrok 31% · OR $0 · pick grok-4.7
+```
+
+The full block above is used only when at least one note asks for a reply. Where tokens go: a held note costs its size once, in the turn that receives it, and then sits in that session's history (cheaper cached input) until compaction. So the cost is per-delivery size × how many new versions a key gets × how many sessions run a turn while a version is unseen. Keys already guarantee one pending version; the sender decides how often a new one exists.
+
 The answering instructions sit at the top, so they survive Hermes's spill of very large hook text (over 10,000 characters it keeps a head and tail preview plus a file path). `<user>` is the configured user name, as in live mail. Framing rules are the same as live mail: sender and "not <user>" first; lookalike headers and control-frame openers in bodies are relabelled.
 
 **When a note counts as delivered.** At turn start the hook offers the notes and records the turn id on them. A note counts as delivered when that turn sends its first model request (the published `pre_api_request` hook, which carries the turn id). A turn that never makes one (vetoed by a plugin, a runtime that does not carry plugin text such as `codex_app_server`, a compaction timeout) leaves the notes held, and the next turn offers them again. If the model call fails after the request was built, the notes count as delivered: they are already in the saved user message and replay on the next turn, so nothing is lost or shown twice. One accepted residual: a turn that saves its user message and then stops before its first request (an interrupt) re-offers the notes next turn, so they can appear twice; erring that way is right. A keyed note replaced while its offering turn is running is still marked handed over by that turn (its result stays `replaced`, status "replaced by <id> (handed over in turn T)"); the newer one comes next turn. Under MoA the block is seen in that turn only (core does not replay MoA hook text); acceptable.
@@ -69,7 +77,7 @@ Choose the delivery by what the target must do and when:
 - **Act now** (a correction, a stop, a handoff it is waiting on): `steer`; `interrupt` only to stop obsolete work.
 - **Act after its current work**: `queue`. If you may send the same kind of update several times while it is busy (a build's state), add a `key` so only the newest one wakes it.
 - **Know, but not until it next works**: `passive`. Costs nothing until then and never pulls the target off its work.
-- **Repeated status** (usage meters, a build's current state, what is deployed): `passive` with a `key` per topic, so only the newest version is ever pending. Status every session should have: `to: all` with a key.
+- **Repeated status** (usage meters, a build's current state, what is deployed): `passive` with a `key` per topic, so only the newest version is ever pending. Status every session should have: `to: all` with a key, a terse one-line body, and a new version only when the change matters to a reader (a threshold crossed, a decision-relevant value changed), not on every refresh.
 - **Requests, answers and one-time updates**: no key. Each is its own message and must not be replaced by the next one. A request you need answered soon is not passive.
 - Still never: forwarding, un-keyed notes to many sessions, status sent by waking delivery.
 
@@ -82,7 +90,7 @@ Choose the delivery by what the target must do and when:
 - **P5 keyed queue** (`route.py`, `passive.py`, `record.py`): a keyed queued send to a running target is stored `pending` with its key (same replacement transaction as passive); to an idle target it is delivered at once as today. Handover: the published `on_session_end` hook (end of every turn, interrupted ones included) submits the newest held keyed queued message for that lineage through the existing queue path (`prompt.submit`), marks it delivered with the receipt, and leaves held passive notes alone (they ride the next turn, which this submit starts). Missed turn ends (gateway restart, a crash) are swept: at plugin start and at each send, held keyed queued messages whose target is not running are handed over. Status and log as for passive.
 - **Tests:** per item, plus end-to-end cells on the trial gateway: passive to a running and to an idle session (neither wakes; both get it at the next turn); keyed replacement order; compaction between send and handover (delivered once, to the new tip); veto (stays held); failed model call after the first request (delivered, not re-offered); `reply requested` answered back by its block, and answered without a block (nothing sent, `no-block`); `all` once per version and not to runs; each usage error; keyed queue: two keyed queued sends during a running turn produce one next turn with the newer text; a keyed queued send to an idle target starts at once; an interrupted turn still hands over; a gateway restart with a held keyed queued message delivers it after start.
 
-Deploy: P1–P3 and P5 change the plugin inside the gateway (hook behaviour and tool schema), so they take effect only after one gateway restart (SM-Q28). The subscription monitor can start sending after that.
+Deploy: P1–P3 and P5 change the plugin inside the gateway (hook behaviour and tool schema), so they take effect only after one gateway restart. SM-Q28 (operator, 2026-11-14): restart "when all sessions are idle": a transient unit polls `hermes intercom list --json --include-runs` and restarts the gateway the first time no session is running, then runs the post-restart check; announced when scheduled. The subscription monitor can start sending after that.
 
 ## 6. Guardrails
 
