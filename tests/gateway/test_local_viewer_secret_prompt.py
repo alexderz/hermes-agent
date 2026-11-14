@@ -100,6 +100,7 @@ def test_interactive_secret_wait_has_no_deadline_and_interrupts(monkeypatch):
         worker.start()
         try:
             _wait_for(lambda: any(f.get('method') == 'secret' for f in peer.frames))
+            request = next(f for f in peer.frames if f.get('method') == 'secret')
             assert options['timeout'] is None
             assert options['wait_for_viewer'] is True
         finally:
@@ -107,7 +108,15 @@ def test_interactive_secret_wait_has_no_deadline_and_interrupts(monkeypatch):
             worker.join(5)
     assert not worker.is_alive()
     assert out['setup_skipped'] is True
-    assert any(f.get('params', {}).get('payload', {}).get('reason') == 'interrupted' for f in peer.frames)
+    _wait_for(lambda: any(
+        f.get('method') == 'event'
+        and f.get('params', {}).get('type') == 'request.cancel'
+        and f.get('params', {}).get('session_id') == 's1'
+        and f.get('params', {}).get('payload') == {
+            'id': request['id'], 'method': 'secret', 'reason': 'interrupted'
+        }
+        for f in peer.frames
+    ))
 
 
 def test_interactive_secret_replays_after_viewer_reconnect():
