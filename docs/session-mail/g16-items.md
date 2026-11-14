@@ -363,6 +363,32 @@ git grep -n -i -E "$HOUSE_PATTERN" -- . ':!tests/fixtures' ; test $? -eq 1
 - deadline in another profile: a named profile served by the multiplexer (as in the other-profiles cell), a note with `within` from default to a named-profile session → when it is due, that session gets one wake turn from the default gateway's tick;
 - deadline fallback: with `kanban.dispatch_in_gateway: false` in a second world (or the same world restarted with it), a due note causes no wake until `hermes intercom wake-due` runs once (CLI, exit 0, no output), after which the session gets one wake turn.
 
-## G16d addition (2026-11-14, operator report via the spike bot's Q10)
+## G16h (2026-11-14, operator report via the spike bot's Q10)
 
-- `list` shows a profile's canonical Bot Chat, which the owner's list omits because it is a hidden session; other hidden sessions stay hidden. (Root cause of the report: from spike, no open chats and a hidden Bot Chat meant an empty `list`; sends to default-profile chats were refused because cross-profile addressing is G16d itself. Not filed upstream.)
+- Became item G16h (G16d had already landed): `list` shows a profile's canonical Bot Chat, which the owner's list omits because it is a hidden session; other hidden sessions stay hidden. (Root cause of the report: from spike, no open chats and a hidden Bot Chat meant an empty `list`; sends to default-profile chats were refused because cross-profile addressing is G16d itself. Not filed upstream.)
+
+### G16h body
+
+- Type: Task · Parent: `DER-767`
+- Source: operator report 2026-11-14 (the spike bot's Q10): from the spike profile, `list` showed nothing although its Bot Chat exists, and agents concluded session mail was broken.
+- Builder: Grok 4.7
+
+**Outcome:** `list` (and `list` with `profile`) offers a profile's canonical Bot Chat.
+
+**Cause:** the Bot Chat is a hidden session (`sessions.hidden = 1`), and the owner's `session.list` leaves hidden rows out, so `address.list_sessions` never showed it, although `to: "Bot Chat"` already resolves by exact title.
+
+**Acceptance:**
+- `address.list_sessions` adds the profile's canonical Bot Chat (the session titled exactly `Bot Chat`, read from `state.db` through the published read-only `SessionDB`) when the lister rows omit it, with its state from the live list (`running` / `idle`, else `closed`) and its project as other rows get it. Same dedupe by compression tip as other rows. It works under G16d's `profile` (the read happens inside `in_profile`).
+- Only that canonical session: other hidden sessions stay hidden. Not added when no `Bot Chat` row exists.
+- The README's "Other profiles" section says `list` shows the Bot Chat.
+- Tests (in `tests/test_address.py` or a new file): a hidden `Bot Chat` row appears in `list`; another hidden row does not; no duplicate when the lister already returns it; `list` with `profile` shows the named profile's Bot Chat.
+
+**Verify:**
+```
+cd <intercom-repo>
+HERMES_HOME="$(mktemp -d)" <hermes-test-python> -I -m unittest discover -s tests -p 'test_*.py' -t .
+git grep -n -i -E "$HOUSE_PATTERN" -- . ':!tests/fixtures' ; test $? -eq 1
+```
+
+- **Blocked by:** G16f · **Blocks:** deploy
+- **Out of scope:** everything the plan marks settled; the live install; showing other hidden sessions.
