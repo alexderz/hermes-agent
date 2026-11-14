@@ -1,4 +1,4 @@
-"""G15: reboot-notice and resume-after-reboot.
+"""Reboots: reboot-notice and resume-after-reboot.
 
 The owner is faked the way test_cli.py fakes it (FakeOwner, patched
 client.list_sessions) and test_route.py fakes delivery (patched
@@ -168,7 +168,7 @@ class RebootTests(CliTestBase):
     def test_notice_warns_running_sessions_and_records_them(self):
         specs = [
             ("local-tui", "Desk", "tui", True, 500),
-            ("local-busy", "Budgeting", "cli", True, 400),
+            ("local-busy", "Reviewer", "cli", True, 400),
             ("local-once", "Once", "oneshot", True, 300),
             ("local-cronjob", "Keep", "cronjob", True, 200),
             ("local-cron", "Nightly", "cron", True, 900),
@@ -207,7 +207,7 @@ class RebootTests(CliTestBase):
         self.assertEqual([item["id"] for item in payload["sessions"]], wanted)
         self.assertEqual(
             [item["title"] for item in payload["sessions"]],
-            ["Desk", "Budgeting", "Once", "Keep"],
+            ["Desk", "Reviewer", "Once", "Keep"],
         )
         self.assertEqual(payload["minutes"], 12)
         self.assertEqual(payload["reason"], "kernel")
@@ -337,8 +337,8 @@ class RebootTests(CliTestBase):
         )
 
     def test_notice_without_an_owner_writes_nothing_and_exits_0(self):
-        self.add_session("local-busy", "Budgeting")
-        self.stored = [self.stored_row("local-busy", "Budgeting", running=True, last=1)]
+        self.add_session("local-busy", "Reviewer")
+        self.stored = [self.stored_row("local-busy", "Reviewer", running=True, last=1)]
         for error in ("no-owner", "owner-restarting"):
             with self.subTest(error=error):
                 self.owner_error = error
@@ -356,12 +356,12 @@ class RebootTests(CliTestBase):
                 self.assertEqual(self.owner.calls, [])
 
     def test_resume_from_a_fresh_file_queues_and_a_second_run_is_quiet(self):
-        self.add_session("local-target", "Budgeting")
+        self.add_session("local-target", "Reviewer")
         self.add_session("local-other", "Other")
         self.add_message("local-target", "assistant", BOOT - 20, "[]")
         self.add_message("local-other", "assistant", BOOT - 30, TOOL)
         self.stored = [
-            self.stored_row("local-target", "Budgeting", running=True, last=5),
+            self.stored_row("local-target", "Reviewer", running=True, last=5),
             self.stored_row("local-other", "Other", running=False, last=4),
         ]
         self.use_owner()
@@ -591,9 +591,9 @@ class RebootTests(CliTestBase):
         self.assertTrue(self.done_path().is_file())
 
     def test_resume_waits_for_the_owner_and_sends_nothing_until_then(self):
-        self.add_session("local-target", "Budgeting")
+        self.add_session("local-target", "Reviewer")
         self.write_pending(
-            [{"id": "local-target", "title": "Budgeting"}],
+            [{"id": "local-target", "title": "Reviewer"}],
             written=time.time(),
             reason="kernel",
         )
@@ -616,9 +616,9 @@ class RebootTests(CliTestBase):
         )
 
     def test_no_owner_exits_5_and_changes_nothing(self):
-        self.add_session("local-target", "Budgeting")
+        self.add_session("local-target", "Reviewer")
         self.add_message("local-target", "user", BOOT - 10, None)
-        self.stored = [self.stored_row("local-target", "Budgeting", running=True, last=1)]
+        self.stored = [self.stored_row("local-target", "Reviewer", running=True, last=1)]
         self.owner_error = "no-owner"
         self.use_owner()
         before = self.snapshot()
@@ -747,18 +747,18 @@ class RebootTests(CliTestBase):
                 self.assertFalse(self.done_path().exists())
 
     def test_max_age_units_choose_the_planned_record(self):
-        self.add_session("local-target", "Budgeting")
+        self.add_session("local-target", "Reviewer")
         self.add_session("local-open", "Open")
         self.add_message("local-open", "user", BOOT - 20, None)
         self.stored = [
-            self.stored_row("local-target", "Budgeting", last=2),
+            self.stored_row("local-target", "Reviewer", last=2),
             self.stored_row("local-open", "Open", last=1),
         ]
         self.use_owner()
         self.queue_ok()
         # 5 days is older than the 6h default and younger than 7d.
         self.write_pending(
-            [{"id": "local-target", "title": "Budgeting"}],
+            [{"id": "local-target", "title": "Reviewer"}],
             written=time.time() - 5 * 86400,
             reason="kernel",
         )
@@ -773,7 +773,7 @@ class RebootTests(CliTestBase):
 
         # 30 minutes is inside the 6h default and outside 15m.
         self.write_pending(
-            [{"id": "local-target", "title": "Budgeting"}],
+            [{"id": "local-target", "title": "Reviewer"}],
             written=time.time() - 30 * 60,
             reason="kernel",
         )
@@ -788,7 +788,7 @@ class RebootTests(CliTestBase):
 
         # 45s is inside 6h and outside 30s, so the record is not used.
         self.write_pending(
-            [{"id": "local-target", "title": "Budgeting"}],
+            [{"id": "local-target", "title": "Reviewer"}],
             written=time.time() - 45,
             reason="kernel",
         )
@@ -800,8 +800,8 @@ class RebootTests(CliTestBase):
         self.assertIn(_unplanned(BOOT), self.owner.calls[0]["text"])
 
     def test_custom_state_file_round_trip(self):
-        self.add_session("local-target", "Budgeting")
-        self.stored = [self.stored_row("local-target", "Budgeting", running=True, last=1)]
+        self.add_session("local-target", "Reviewer")
+        self.stored = [self.stored_row("local-target", "Reviewer", running=True, last=1)]
         self.use_owner()
         path = self.home / "var" / "reboot-pending.json"
         code, _out, err = self.invoke([
