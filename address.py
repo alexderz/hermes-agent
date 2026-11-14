@@ -99,7 +99,7 @@ def list_sessions(*, include_runs=False, query=None, limit=None, sender=None, li
     """Discovery listing: id (compression tip), title, project, last active, state.
 
     Rows come from the lister: stored ``session.list`` with ``picker`` true, then live
-    ``session.list``. ``cron``, ``subagent`` and ``oneshot`` are left out unless
+    ``session.list`` (also ``picker`` true); open sessions the stored page missed are added. ``cron``, ``subagent`` and ``oneshot`` are left out unless
     ``include_runs`` is truthy. ``query`` is a case-insensitive substring of title or
     project. Newest ``last_active`` first; ``limit`` defaults to 30. The sender's own
     session is kept and marked ``(this session)``.
@@ -109,7 +109,9 @@ def list_sessions(*, include_runs=False, query=None, limit=None, sender=None, li
     stored = lister("stored", picker=True)
     if not isinstance(stored, dict) or stored.get("ok") is not True:
         return stored if isinstance(stored, dict) else {"ok": False, "error": "list-failed"}
-    live = lister("live", picker=False)
+    # picker=True so live rows carry last_active_at and workspace too: rows added from
+    # the live list below sort and show a project like stored ones.
+    live = lister("live", picker=True)
     if not isinstance(live, dict) or live.get("ok") is not True:
         return live if isinstance(live, dict) else {"ok": False, "error": "list-failed"}
 
