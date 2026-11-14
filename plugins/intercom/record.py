@@ -1,4 +1,4 @@
-"""intercom record — one owner-only SQLite file for every message (LLD B7).
+"""intercom record — one owner-only SQLite file for every message (README, "Trust model").
 
 ``plugins.plugin_storage.plugin_db("intercom", "record.db")``: WAL, ``busy_timeout``
 5000 ms. ``plugin-data/intercom/`` is ``0700`` on every open. Only the first open
@@ -7,7 +7,7 @@ schema write that makes ``-wal`` and ``-shm``. That set/restore is serialised,
 because the umask is process-wide. Later opens do not change it; they ``chmod``
 the files, and SQLite gives the sidecars the database file's mode.
 
-The ``messages`` table is B7's. ``reply_mode`` checks ``none``, ``requested``,
+In the ``messages`` table, ``reply_mode`` checks ``none``, ``requested``,
 ``waiting`` and ``optional``. There is no ``expect_reply`` column.
 ``reply_state`` is ``NULL``, ``sent``, ``silent``, ``stored`` or ``no-block``.
 

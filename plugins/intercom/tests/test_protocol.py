@@ -36,7 +36,7 @@ class ProtocolTests(unittest.TestCase):
     def setUp(self):
         import tempfile
 
-        self.tmp = tempfile.TemporaryDirectory(dir="/tmp")
+        self.tmp = tempfile.TemporaryDirectory()
         self.home = Path(self.tmp.name) / ".hermes"
         self.home.mkdir()
         self.plugin = load_plugin(self.home)

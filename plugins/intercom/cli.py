@@ -1,12 +1,11 @@
-"""``hermes intercom`` — send, list, status, log and reboot hooks (LLD B9).
+"""``hermes intercom`` — send, list, status, log and reboot hooks (README, "The CLI").
 
 The CLI is an owner client. It runs ``route.send`` in this process with
 ``script=True``, starts no turn, and has no legacy-socket fallback. ``--reply``
 defaults to ``none``. ``--no-reply`` is not a flag, so argparse reports it as
 a usage error (exit 2).
 
-``reboot-notice`` and ``resume-after-reboot`` are an addition outside the LLD.
-They warn running sessions before a planned reboot and wake them after boot.
+``reboot-notice`` and ``resume-after-reboot`` (README, "Reboots") warn running sessions before a planned reboot and wake them after boot.
 Delivery rules are unchanged: no caps, holds, retries or approval gates, and
 one send per session per boot.
 """
@@ -30,7 +29,8 @@ except ImportError:  # loaded as a top-level module (the unittest layout)
     import replies
     import route
 
-# Alex's sentence, word for word (ux.md, the delivery paragraph and --help).
+# One sentence, word for word, in the tool text, the delivery parameter and --help,
+# so a model and a person read the same rule.
 INTERRUPT_SENTENCE = (
     "Only use interrupt when you intend to stop what the other session is doing right now "
     "(it is wrong, or the work is obsolete). Otherwise use steer (default) or queue."
@@ -87,7 +87,7 @@ def register(ctx) -> None:
 
 
 def _help_formatter(prog):
-    # Wide enough that --delivery's help keeps Alex's sentence on one line.
+    # Wide enough that --delivery's help keeps the interrupt sentence on one line.
     return argparse.HelpFormatter(prog, width=240)
 
 
@@ -373,7 +373,7 @@ def _status_text(row: dict, reply_line: str, check) -> str:
     ]
     parent = row.get("in_reply_to")
     if isinstance(parent, str) and parent:
-        # Two spaces after "to", as in ux.md.
+        # Two spaces after "to" so the message id lines up with the other values.
         lines.append(f"  note      in reply to  message {parent}")
     if check:
         lines.append(f"  check     {check}")

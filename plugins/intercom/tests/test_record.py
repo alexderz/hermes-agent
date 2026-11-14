@@ -1,4 +1,4 @@
-"""G8 record: schema, file modes, and the two writers on one file."""
+"""Record: schema, file modes, and the two writers on one file."""
 
 from __future__ import annotations
 
