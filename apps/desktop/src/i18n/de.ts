@@ -5397,6 +5397,7 @@ export const deOverrides = {
     reconnect: 'Neu verbinden',
     sudoSendFailed: 'Sudo-Passwort konnte nicht gesendet werden',
     secretSendFailed: 'Geheimnis konnte nicht gesendet werden',
+    secretNoLongerOpen: 'Diese Anfrage ist nicht mehr offen.',
     sudoTitle: 'Administrator-Passwort',
     sudoDesc:
       'Hermes benötigt Ihr Sudo-Passwort, um einen privilegierten Befehl auszuführen. Es wird nur an Ihren lokalen Agenten gesendet.',

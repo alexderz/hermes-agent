@@ -10,7 +10,7 @@ import { SecretCard } from '@/components/assistant-ui/clarify/secret-card'
 import { I18nProvider } from '@/i18n'
 import { createClientSessionState } from '@/lib/chat-runtime'
 import { $gateway } from '@/store/gateway'
-import { notifyError } from '@/store/notifications'
+import { notify, notifyError } from '@/store/notifications'
 import { sessionSecretRequest } from '@/store/prompts'
 import { $secretRequest, $sudoRequest, clearAllPrompts, setSecretRequest, setSudoRequest } from '@/store/prompts'
 import { hasOpenServerRequest, rememberServerRequest, resetServerRequestsForTests } from '@/store/server-requests'
@@ -19,7 +19,7 @@ import { $activeSessionId } from '@/store/session'
 import { PromptOverlays } from './prompt-overlays'
 
 vi.mock('@/lib/haptics', () => ({ triggerHaptic: vi.fn() }))
-vi.mock('@/store/notifications', () => ({ notifyError: vi.fn() }))
+vi.mock('@/store/notifications', () => ({ notify: vi.fn(), notifyError: vi.fn() }))
 
 function SecretHarness({ sessionId }: { sessionId: string | null }) {
   const request = useStore(sessionSecretRequest(sessionId))
@@ -173,7 +173,7 @@ describe('PromptOverlays', () => {
     expect(notifyError).not.toHaveBeenCalled()
   })
 
-  it('dismisses a stale secret dialog when the gateway no longer has the request open', async () => {
+  it('dismisses a stale secret card with neutral feedback when the request is no longer open', async () => {
     const request = vi.fn()
 
     $activeSessionId.set('s1')
@@ -189,5 +189,6 @@ describe('PromptOverlays', () => {
     await waitFor(() => expect($secretRequest.get()).toBeNull())
     expect(request).not.toHaveBeenCalled()
     expect(notifyError).not.toHaveBeenCalled()
+    expect(notify).toHaveBeenCalledExactlyOnceWith({ kind: 'info', message: 'This request is no longer open.' })
   })
 })

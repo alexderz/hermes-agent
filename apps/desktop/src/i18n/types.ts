@@ -4169,6 +4169,7 @@ export interface Translations extends NoticeTranslations {
     reconnect: string
     sudoSendFailed: string
     secretSendFailed: string
+    secretNoLongerOpen: string
     sudoTitle: string
     sudoDesc: string
     sudoCommandUnavailable: string

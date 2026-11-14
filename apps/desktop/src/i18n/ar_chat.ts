@@ -349,6 +349,7 @@ export const arChat = {
     gatewayDisconnected: 'البوابة غير متصلة',
     sudoSendFailed: 'فشل إرسال كلمة مرور sudo',
     secretSendFailed: 'فشل إرسال السر',
+    secretNoLongerOpen: 'لم يعد هذا الطلب مفتوحًا.',
     sudoTitle: 'مطلوب sudo',
     sudoDesc:
       'راجع الأمر قبل إدخال كلمة مرور sudo. تُرسل كلمة المرور إلى الوكيل الذي ينفّذه وتُحفظ مؤقتًا لهذه الجلسة.',

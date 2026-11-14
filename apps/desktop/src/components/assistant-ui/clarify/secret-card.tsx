@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input'
 import { useI18n } from '@/i18n'
 import { $gateway } from '@/store/gateway'
 import { reconnectAction } from '@/store/gateway-reconnect'
-import { notifyError } from '@/store/notifications'
+import { notify, notifyError } from '@/store/notifications'
 import { clearSecretRequest, readSecretDraft, type SecretRequest, writeSecretDraft } from '@/store/prompts'
 import { respondToServerRequest } from '@/store/server-requests'
 
@@ -32,9 +32,13 @@ export function SecretCard({ request }: { request: SecretRequest }) {
     setSubmitting(true)
 
     try {
-      respondToServerRequest(request.requestId, { value: answer })
+      const sent = respondToServerRequest(request.requestId, { value: answer })
       setValue('')
       clearSecretRequest(request.sessionId, request.requestId, request)
+
+      if (!sent) {
+        notify({ kind: 'info', message: t.prompts.secretNoLongerOpen })
+      }
     } catch (error) {
       notifyError(error, t.prompts.secretSendFailed)
       setSubmitting(false)
