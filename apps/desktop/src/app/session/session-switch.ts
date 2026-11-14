@@ -178,9 +178,9 @@ export function cancelSessionSwitch(storedSessionId?: string): void {
   }
 }
 
-export function confirmSessionSwitch(intent: SessionSwitchIntent, identity: string): void {
+export function confirmSessionSwitch(intent: SessionSwitchIntent, identity: string): boolean {
   if ($sessionSwitchIntent.get() !== intent || identity !== intent.identity || intent.connectionId !== connectionId()) {
-    return
+    return false
   }
 
   // Consume even when disabled/muted/unsupported: settings changes or reconnect
@@ -190,6 +190,8 @@ export function confirmSessionSwitch(intent: SessionSwitchIntent, identity: stri
   if ($sessionSwitchHaptics.get()) {
     triggerHaptic('selection')
   }
+
+  return true
 }
 
 $gatewayState.listen(state => {

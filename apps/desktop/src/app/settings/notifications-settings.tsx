@@ -24,6 +24,7 @@ import {
   setNativeNotifyKind
 } from '@/store/native-notifications'
 import { notify } from '@/store/notifications'
+import { $sessionSwitchVisual, setSessionSwitchVisual } from '@/store/session-switch-visual'
 
 import { CONTROL_TEXT } from './constants'
 import { ListRow, SectionHeading, SettingsContent, ToggleRow } from './primitives'
@@ -76,6 +77,7 @@ export function NotificationsSettings({ subpage }: NotificationsSettingsProps = 
   const prefs = useStore($nativeNotifyPrefs)
   const muted = useStore($hapticsMuted)
   const sessionSwitchHaptics = useStore($sessionSwitchHaptics)
+  const sessionSwitchVisual = useStore($sessionSwitchVisual)
   const completionSoundVariantId = useStore($completionSoundVariantId)
   const copy = t.settings.notifications
   const showAlerts = subpage === undefined || subpage === 'alerts'
@@ -140,6 +142,13 @@ export function NotificationsSettings({ subpage }: NotificationsSettingsProps = 
             id={settingElementId(SETTING_IDS.notifications.sessionSwitchHaptics)}
             label={copy.sessionSwitchHapticsTitle}
             onChange={setSessionSwitchHaptics}
+          />
+          <ToggleRow
+            checked={sessionSwitchVisual}
+            description={copy.sessionSwitchVisualDesc}
+            id={settingElementId(SETTING_IDS.notifications.sessionSwitchVisual)}
+            label={copy.sessionSwitchVisualTitle}
+            onChange={setSessionSwitchVisual}
           />
           <ListRow
             action={

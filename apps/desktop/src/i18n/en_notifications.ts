@@ -52,6 +52,9 @@ export const enNotifications = {
   testBody: 'Notifications are working.',
   testSent: 'Test sent. If nothing appears, check your OS notification permissions and Focus/Do Not Disturb.',
   testUnsupported: 'This system does not support native notifications.',
+  sessionSwitchVisualTitle: 'Session-switch visual feedback',
+  sessionSwitchVisualDesc:
+    'Briefly fade in the selected conversation when it is ready. Disabled when reduced motion is preferred.',
   sessionSwitchHapticsTitle: 'Session-switch haptics',
   sessionSwitchHapticsDesc:
     'A subtle tick when the selected conversation is ready. Works only on supported devices and browsers; interface mute also silences it.',

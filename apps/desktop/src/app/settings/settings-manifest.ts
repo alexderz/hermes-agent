@@ -236,6 +236,14 @@ export const SETTINGS_MANIFEST = {
         description: t.settings.notifications.sessionSwitchHapticsDesc
       })
     },
+    sessionSwitchVisual: {
+      subpage: 'sounds',
+      keywords: ['session', 'switch', 'visual', 'fade', 'motion', 'feedback'],
+      copy: t => ({
+        label: t.settings.notifications.sessionSwitchVisualTitle,
+        description: t.settings.notifications.sessionSwitchVisualDesc
+      })
+    },
     completionSound: {
       subpage: 'sounds',
       keywords: ['sound', 'chime', 'ding', 'audio', 'done', 'complete', 'mute', 'off', 'none', 'silence'],
