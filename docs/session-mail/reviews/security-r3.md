@@ -73,7 +73,7 @@ only, not trust; add it to the I-5 wake case.
 ### N5 — F16 regressed
 
 `3a1d8934ac` uses the noreply address. `b2eea4af9b` and HEAD `5119747616` are authored
-`hermes@saturn.home.derzhi.com` again. The manager should pin `user.email` in the worktree's git
+`hermes@<host>` again. The manager should pin `user.email` in the worktree's git
 config, so every agent role commits under the noreply identity, before land. Whether to rewrite
 history is still Alex's call.
 
