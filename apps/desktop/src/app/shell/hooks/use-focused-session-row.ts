@@ -16,6 +16,7 @@ export function useFocusedSessionRow(focusedStoredSessionId: null | string) {
   return {
     focusedRowConnectionId: useStoreSelector($sessions, sessions => row(sessions)?.connection_id?.trim() || ''),
     focusedRowCwd: useStoreSelector($sessions, sessions => row(sessions)?.cwd?.trim() || ''),
+    focusedRowModel: useStoreSelector($sessions, sessions => row(sessions)?.model?.trim() || ''),
     focusedRowStartedAt: useStoreSelector($sessions, sessions => row(sessions)?.started_at ?? null)
   }
 }

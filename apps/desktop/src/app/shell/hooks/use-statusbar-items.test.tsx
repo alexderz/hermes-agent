@@ -1,4 +1,4 @@
-import { act, renderHook } from '@testing-library/react'
+import { act, cleanup, render, renderHook, screen } from '@testing-library/react'
 import type { WritableAtom } from 'nanostores'
 import { isValidElement, type ReactNode } from 'react'
 import { MemoryRouter } from 'react-router'
@@ -16,6 +16,8 @@ import { markOnboardingDecided, setOnboardingSurfaceActive } from '@/store/onboa
 import {
   $connection,
   $currentCwd,
+  $currentModel,
+  $currentProvider,
   $currentUsage,
   $selectedStoredSessionId,
   $sessions,
@@ -109,6 +111,75 @@ function renderStatusbarItems(changeSessionCwd: (cwd: string, sessionId?: string
 
   return result.current
 }
+
+describe('focused model footer', () => {
+  afterEach(() => {
+    cleanup()
+    $currentModel.set('')
+    $currentProvider.set('')
+    $sessionStates.set({})
+    setActiveSessionId(null)
+  })
+
+  it('gives the model the visible label rather than the experimental provider slug', () => {
+    $currentModel.set('claude-opus-5-5')
+    $currentProvider.set('claude-subscription-directsdk-experimental')
+    const item = renderStatusbarItems().leftStatusbarItems.find(entry => entry.id === 'focused-model')
+
+    expect(item).toBeDefined()
+    render(<>{item?.label}</>)
+    expect(screen.getByText('Opus 5.5')).toBeTruthy()
+    expect(screen.queryByText(/experimental/)).toBeNull()
+    expect(item?.title).toContain('claude-subscription-directsdk-experimental')
+  })
+
+  it('uses the saved model of a cold tile, never the primary model', () => {
+    $currentModel.set('claude-opus-5-5')
+    $selectedStoredSessionId.set('primary')
+    $sessions.set([{ id: 'tile', model: 'gpt-6.1-terra' }] as never)
+    $sessionTiles.set([{ storedSessionId: 'tile' }] as never)
+    focusPane('tile')
+    const item = renderStatusbarItems().leftStatusbarItems.find(entry => entry.id === 'focused-model')
+
+    expect(item).toBeDefined()
+    render(<>{item?.label}</>)
+    expect(screen.getByText('GPT-6.1-terra')).toBeTruthy()
+    expect(screen.queryByText('Opus 5.5')).toBeNull()
+  })
+
+  it('uses the live focused tile route ahead of its stored model', () => {
+    $selectedStoredSessionId.set('primary')
+    $sessions.set([{ id: 'tile', model: 'claude-opus-5-5' }] as never)
+    $sessionTiles.set([{ storedSessionId: 'tile', runtimeId: 'tile-runtime' }] as never)
+    $sessionStates.set({
+      'tile-runtime': { ...createClientSessionState('tile'), model: 'grok-4.7', provider: 'xai-oauth' }
+    })
+    focusPane('tile')
+    const item = renderStatusbarItems().leftStatusbarItems.find(entry => entry.id === 'focused-model')
+
+    expect(item).toBeDefined()
+    render(<>{item?.label}</>)
+    expect(screen.getByText('Grok 4.7')).toBeTruthy()
+    expect(item?.title).toContain('xai-oauth')
+  })
+
+  it('does not flash the previous primary model while a different session hydrates', () => {
+    $currentModel.set('claude-opus-5-5')
+    setActiveSessionId('old-runtime')
+    $sessionStates.set({
+      'old-runtime': { ...createClientSessionState('old'), model: 'claude-opus-5-5', provider: 'anthropic' }
+    })
+    $selectedStoredSessionId.set('new')
+    $sessions.set([{ id: 'new', model: 'grok-4.7' }] as never)
+    focusPane(null)
+    const item = renderStatusbarItems().leftStatusbarItems.find(entry => entry.id === 'focused-model')
+
+    expect(item).toBeDefined()
+    render(<>{item?.label}</>)
+    expect(screen.getByText('Grok 4.7')).toBeTruthy()
+    expect(screen.queryByText('Opus 5.5')).toBeNull()
+  })
+})
 
 function workspaceMenu(changeSessionCwd?: (cwd: string, sessionId?: string) => Promise<void>) {
   const workspace = renderStatusbarItems(changeSessionCwd).leftStatusbarItems.find(item => item.id === 'workspace-cwd')

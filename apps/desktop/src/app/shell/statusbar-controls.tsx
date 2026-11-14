@@ -123,7 +123,7 @@ export function StatusbarControls({ className, leftItems = [], items = [], ...pr
               example "Connecting…" on a fresh/untitled session — can't paint a
               horizontal scrollbar across the bottom of the window. Items already
               `truncate` their labels, so clipping is the right behavior. */}
-          <div className="flex min-w-0 items-stretch gap-0.5 overflow-x-clip">
+          <div className="@container/status-left flex min-w-0 flex-1 items-stretch gap-0.5 overflow-x-clip">
             {leftItems.filter(visible).map(item => (
               <StatusbarItemView item={item} key={`left:${item.id}`} navigate={navigate} />
             ))}

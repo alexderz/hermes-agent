@@ -38,6 +38,7 @@ export function currentPickerSelection(
 export const PROVIDER_DISPLAY_NAMES: Readonly<Record<string, string>> = {
   anthropic: 'Anthropic Account',
   'claude-code': 'Anthropic OAuth: Required Extra Usage Credits to Use Subscription',
+  'claude-subscription-directsdk-experimental': 'Claude sub (exp.)',
   'minimax-oauth': 'MiniMax',
   nous: 'Nous Portal',
   'openai-codex': 'ChatGPT or Codex Subscription',

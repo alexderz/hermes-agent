@@ -35,6 +35,7 @@ import {
   Terminal,
   Zap
 } from '@/lib/icons'
+import { displayModelName } from '@/lib/model-status-label'
 import { type RuntimeReadinessResult } from '@/lib/runtime-readiness'
 import { resolveSessionTimerSince } from '@/lib/session-timer-since'
 import { cacheHitLabel, contextBarLabel, LiveDuration, tokensPerSecondLabel, usageContextLabel } from '@/lib/statusbar'
@@ -59,6 +60,8 @@ import {
   $busy,
   $connection,
   $currentCwd,
+  $currentModel,
+  $currentProvider,
   $currentUsage,
   $selectedStoredSessionId,
   $sessions,
@@ -167,6 +170,8 @@ export function useStatusbarItems({
   // primary (or a draft with no runtime slice yet). A focused TILE keeps its
   // own cwd in `$sessionStates` and must not paint the primary's workspace.
   const primaryCwd = useStore($currentCwd)
+  const primaryModel = useStore($currentModel)
+  const primaryProvider = useStore($currentProvider)
   const primaryUsage = useStore($currentUsage)
   const gatewayRestarting = useStore($gatewayRestarting)
   const primarySessionStartedAt = useStore($sessionStartedAt)
@@ -236,6 +241,8 @@ export function useStatusbarItems({
   // bail-out key on its own.
   const focusedUsage = useStoreSelector($focusedSessionState, state => state?.usage ?? null)
   const focusedStateCwd = useStoreSelector($focusedSessionState, state => state?.cwd?.trim() || '')
+  const focusedModel = useStoreSelector($focusedSessionState, state => state?.model?.trim() || '')
+  const focusedProvider = useStoreSelector($focusedSessionState, state => state?.provider?.trim() || '')
 
   // Runtime slices carry the stored id they were bound for. During a primary
   // tab switch the runtime id can lag a frame behind the new selection — the
@@ -256,7 +263,8 @@ export function useStatusbarItems({
   const turnStartedAt = primaryFocused ? primaryTurnStartedAt : focusedTurnStartedAt
 
   // A tile's stored row: cold/fallback start and cwd, and which backend it runs on.
-  const { focusedRowConnectionId, focusedRowCwd, focusedRowStartedAt } = useFocusedSessionRow(focusedStoredSessionId)
+  const { focusedRowConnectionId, focusedRowCwd, focusedRowModel, focusedRowStartedAt } =
+    useFocusedSessionRow(focusedStoredSessionId)
 
   const offerLocalReveal = shouldOfferLocalReveal(focusedRowConnectionId, connection?.mode === 'remote')
 
@@ -284,6 +292,20 @@ export function useStatusbarItems({
       !focusedStateStoredId ||
       focusedStateStoredId === focusedStoredSessionId ||
       liveCwdSharesFocusLineage)
+
+  // Keep the route as a pair, and never show the previous runtime's model
+  // while a newly selected chat is still hydrating. Unbound tiles use their
+  // own saved route; only a draft falls back to the primary defaults.
+  const modelRoute =
+    focusedModel &&
+    (!focusedStoredSessionId ||
+      !focusedStateStoredId ||
+      focusedStateStoredId === focusedStoredSessionId ||
+      liveCwdSharesFocusLineage)
+      ? { model: focusedModel, provider: focusedProvider }
+      : focusedStoredSessionId
+        ? { model: focusedRowModel, provider: '' }
+        : { model: primaryModel, provider: primaryProvider }
 
   const currentCwd = (
     (liveCwdBelongsToFocus ? focusedStateCwd : '') ||
@@ -535,6 +557,14 @@ export function useStatusbarItems({
         render: () => <ProfileSwitcher compact />
       },
       {
+        className: 'hidden min-w-0 max-w-1/2 shrink-0 @[12rem]/status-left:inline-flex',
+        hidden: !modelRoute.model,
+        id: 'focused-model',
+        label: <span data-footer-model="">{displayModelName(modelRoute.model)}</span>,
+        title: modelRoute.provider ? copy.modelTitle(modelRoute.provider, modelRoute.model) : modelRoute.model,
+        variant: 'text'
+      },
+      {
         className: gatewayRestarting ? undefined : gatewayClassName,
         detail: gatewayHealth.detail,
         hidden: botsShowing,
@@ -686,6 +716,8 @@ export function useStatusbarItems({
       gatewayRestarting,
       inferenceReady,
       inferenceStatus?.reason,
+      modelRoute.model,
+      modelRoute.provider,
       openAgents,
       profileRailVisible,
       projectName,
