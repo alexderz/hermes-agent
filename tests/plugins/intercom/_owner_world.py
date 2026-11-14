@@ -9,19 +9,24 @@
 - owner-attached clients (``discover_gateway_endpoint`` + ``connect_gateway`` +
   ``session.create``), which is what the Ink TUI and the Desktop do;
 - a real standalone ``hermes dashboard`` (the admin panel), whose chats the owner cannot reach;
-- ``hook-probe``, a test plugin written into the temp home only: each turn it records its process's
-  live hook table, so a hook registered after load (B12's legacy drain) is visible.
+- ``hook-probe``, a test plugin written into the temp homes only: each turn it records its process's
+  live hook table, so a hook registered after load (B12's legacy drain) is visible, with the turn's
+  session, turn id and typed text; it vetoes a turn whose typed text has ``VETO``, and records each
+  kanban dispatcher tick;
+- a named profile (``PROFILE``) the owner's multiplexer serves, with intercom and the probe.
 
 The model reads directives from the turn's prompt (the newest user row that is not a steer):
 
 - ``TAG=<word>`` names the turn; ``STEPS=<n>`` makes it read a file ``n`` times before answering;
-- ``CALL=<to>|<delivery>|<reply>|<message to end of line>`` makes it call the intercom tool once;
+- ``CALL=<to>|<delivery>|<reply>|<message to end of line>`` makes it call the intercom tool once,
+  with ``OPTS=<arg>=<value>,...`` (``key``, ``within``, ``profile``) added to its arguments;
 - ``ECHOWAIT`` anywhere in the turn's rows makes its final answer wait (bounded) until the fake ntfy
   server has a post naming every intercom message in those rows: the latency a real model has.
 
 The final answer is ``DONE <tag>``, plus ``[REPLY <id>] answer from <tag> [/REPLY]`` for each intercom
-message in the turn's rows whose label asks for an answer. A test can hold any request of a turn
-(``Model.hold``) to keep that turn running while it delivers.
+message in the turn's rows whose label asks for an answer, and for each held note that asks for one
+unless the prompt has ``NOBLOCK``. A test can hold any request of a turn (``Model.hold``) to keep
+that turn running while it delivers.
 """
 
 from __future__ import annotations
@@ -56,7 +61,11 @@ PUBLISH_TOPIC = "probe-out"
 STEER_OPEN = "[OUT-OF-BAND USER MESSAGE"
 HEADER_RE = re.compile(r"^📡 Not [^\n]*message ([0-9a-f]{8})\):$", re.MULTILINE)
 ANSWER_LABELS = ("· reply requested ·", "· waiting on your reply ·")
-_CALL_RE = re.compile(r"CALL=(\S+?)\|(\w+)\|(\w+)\|([^\n]*)")
+_CALL_RE = re.compile(r"CALL=([^|\n]+?)\|(\w+)\|(\w+)\|([^\n]*)")
+_OPTS_RE = re.compile(r"OPTS=(\S+)")
+# A held note (the full block) that asks for an answer: "[n] <sender> · HH:MM · reply requested (message <id>)".
+HELD_ASK_RE = re.compile(r"^\[\d+\] [^\n]* · reply requested \(message ([0-9a-f]+)\)$", re.MULTILINE)
+NO_BLOCK = "NOBLOCK"      # in the typed text: answer the turn, but no [REPLY] block for a held note
 HOLD_S = 120.0
 ECHO_WAIT_S = 20.0
 BOOT_S = 60.0
@@ -253,6 +262,8 @@ class Model:
         if call and not called:
             args = {"action": "send", "to": call.group(1), "delivery": call.group(2),
                     "reply": call.group(3), "message": call.group(4)}
+            if opts := _OPTS_RE.search(prompt):
+                args.update(pair.split("=", 1) for pair in opts.group(1).split(","))
             return _tool(tools, "intercom", args)
         if steps - (1 if called else 0) < _num(r"STEPS=(\d+)", prompt, 0):
             return _tool(tools, "read_file", {"path": self.readable})
@@ -338,6 +349,9 @@ def final_answer(tag: str, rows: list[str]) -> str:
         for header in HEADER_RE.finditer(row):
             if any(label in header.group(0) for label in ANSWER_LABELS):
                 lines.append(f"[REPLY {header.group(1)}] answer from {tag} [/REPLY]")
+    if rows and NO_BLOCK not in rows[0]:
+        for row in rows:
+            lines += [f"[REPLY {mid}] answer from {tag} [/REPLY]" for mid in HELD_ASK_RE.findall(row)]
     return "\n".join(lines)
 
 
@@ -420,11 +434,16 @@ name: {HOOK_PROBE}
 version: 0.1.0
 description: "Test plugin: at each turn, write this process's live hook table to the home."
 provides_tools: []
-provides_hooks: [pre_llm_call]
+provides_hooks: [pre_llm_call, on_kanban_dispatch_tick]
 """
+VETO = "PROBEVETO"
 # The live table, not plugins.list's load-time count: a hook registered lazily (B12's legacy drain is
-# registered at the first intercom call) shows here and nowhere else.
-HOOK_PROBE_INIT = '''"""hook-probe: each pre_llm_call appends {pid, hook: [module:qualname]} to hook-probe.jsonl."""
+# registered at the first intercom call) shows here and nowhere else. Each turn's session, turn id and
+# typed text name the turn (``World.turns``); a typed VETO vetoes that turn; each dispatcher tick is a
+# line of its own, so a cell can wait for ticks instead of for time.
+HOOK_PROBE_INIT = f'''"""hook-probe: each pre_llm_call appends {{pid, session, turn, typed, hook: [module:qualname]}}
+to hook-probe.jsonl (and vetoes a turn whose typed text has {VETO}); each dispatcher tick appends
+{{t}} to hook-probe-ticks.jsonl."""
 import json
 import os
 import time
@@ -435,35 +454,61 @@ from hermes_constants import get_hermes_home
 HOOKS = ("pre_llm_call", "pre_api_request", "post_llm_call", "on_session_end")
 
 
-def _snapshot(**_kw):
-    record = {"pid": os.getpid(), "t": time.time()}
+def _snapshot(session_id=None, turn_id=None, user_message=None, **_kw):
+    typed = user_message if isinstance(user_message, str) else ""
+    record = {{"pid": os.getpid(), "t": time.time(), "session": session_id, "turn": turn_id,
+              "typed": typed[:8000]}}
     for hook in HOOKS:
-        record[hook] = [f"{getattr(cb, '__module__', '?')}:{getattr(cb, '__qualname__', '?')}"
+        record[hook] = [f"{{getattr(cb, '__module__', '?')}}:{{getattr(cb, '__qualname__', '?')}}"
                         for cb in iter_hook_callbacks(hook)]
     with open(get_hermes_home() / "hook-probe.jsonl", "a", encoding="utf-8") as out:
         out.write(json.dumps(record) + "\\n")
+    if "{VETO}" in typed:
+        return {{"action": "block", "message": "vetoed by hook-probe"}}
+    return None
+
+
+def _tick(**_kw):
+    with open(get_hermes_home() / "hook-probe-ticks.jsonl", "a", encoding="utf-8") as out:
+        out.write(json.dumps({{"t": time.time()}}) + "\\n")
 
 
 def register(ctx):
     ctx.register_hook("pre_llm_call", _snapshot)
+    ctx.register_hook("on_kanban_dispatch_tick", _tick)
 '''
 
 
-def home_config(model_url: str) -> str:
-    """The temp home's config.yaml: the chaos knobs, plus what the ticket names for intercom."""
+PROFILE = "spike"          # the named profile the owner's multiplexer serves
+TICK_S = 2                 # kanban.dispatch_interval_seconds: the deadline sweep's clock
+
+
+def home_config(model_url: str, *, launch: bool = True, dispatch_in_gateway: bool = True) -> str:
+    """A temp home's config.yaml: the chaos knobs, plus what the ticket names for intercom.
+
+    The launch (default) profile multiplexes the named profile and runs the kanban dispatcher (whose
+    tick fires deadlines) every ``TICK_S``; it has the ntfy adapter. The named profile (*launch*
+    False) has intercom and the probe only.
+    """
+    plugins = f"intercom, ntfy-platform, {HOOK_PROBE}" if launch else f"intercom, {HOOK_PROBE}"
+    echo = f"        echo_chats: [\"ntfy:{PRIVATE_TOPIC}\"]\n" if launch else ""
+    owner = ("gateway:\n  multiplex_profiles: true\n"
+             f"kanban:\n  dispatch_in_gateway: {str(dispatch_in_gateway).lower()}\n"
+             f"  dispatch_interval_seconds: {TICK_S}\n") if launch else ""
     return chaos_config(model_url, stale_timeout=600, request_timeout=600, max_turns=12, extra=(
         "auxiliary:\n  title_generation:\n    enabled: false\n"
         "models_dev:\n  url: http://127.0.0.1:9/api.json\n"
         f"telemetry:\n  shared_metrics:\n    enabled: false\n    send: false\n    offer_version: {OFFER_VERSION}\n"
         "display:\n  interface: cli\n"
+        + owner +
         "plugins:\n"
-        f"  enabled: [intercom, ntfy-platform, {HOOK_PROBE}]\n"
+        f"  enabled: [{plugins}]\n"
         "  entries:\n"
         "    intercom:\n"
         "      allow_gateway_injection: true\n"
         "      settings:\n"
         f"        user_name: {USER_NAME}\n"
-        f"        echo_chats: [\"ntfy:{PRIVATE_TOPIC}\"]\n"))
+        + echo))
 
 
 def env_file(ntfy_url: str) -> str:
@@ -492,12 +537,18 @@ class World:
         (self.hermes_home / "config.yaml").write_text(home_config(self.server.base_url), encoding="utf-8")
         (self.hermes_home / ".env").write_text(env_file(self.ntfy.url), encoding="utf-8")
         self.plugin = self.hermes_home / "plugins" / "intercom"
-        shutil.copytree(intercom_src, self.plugin,
-                        ignore=shutil.ignore_patterns(".git", "tests", "docs", "__pycache__", "*.pyc"))
-        probe = self.hermes_home / "plugins" / HOOK_PROBE
-        probe.mkdir(parents=True)
-        (probe / "plugin.yaml").write_text(HOOK_PROBE_YAML, encoding="utf-8")
-        (probe / "__init__.py").write_text(HOOK_PROBE_INIT, encoding="utf-8")
+        # The named profile the multiplexer serves: its own config, intercom and the probe.
+        self.profile_home = self.hermes_home / "profiles" / PROFILE
+        self.profile_home.mkdir(parents=True)
+        (self.profile_home / "config.yaml").write_text(home_config(self.server.base_url, launch=False),
+                                                       encoding="utf-8")
+        for home in (self.hermes_home, self.profile_home):
+            shutil.copytree(intercom_src, home / "plugins" / "intercom",
+                            ignore=shutil.ignore_patterns(".git", "tests", "docs", "__pycache__", "*.pyc"))
+            probe = home / "plugins" / HOOK_PROBE
+            probe.mkdir(parents=True)
+            (probe / "plugin.yaml").write_text(HOOK_PROBE_YAML, encoding="utf-8")
+            (probe / "__init__.py").write_text(HOOK_PROBE_INIT, encoding="utf-8")
         env = hermetic_env(self.home, self.hermes_home, tag)
         for key in ("NOTIFY_SOCKET", "INVOCATION_ID", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
                     "XDG_CACHE_HOME", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "TMUX", "TMUX_PANE"):
@@ -541,31 +592,46 @@ class World:
             proc.wait(timeout=10)
         self.model.processes.pop("owner", None)
 
-    def rpc(self, *calls: tuple[str, dict]) -> list[Any]:
+    def endpoint_for(self, profile: str | None) -> Any:
+        """The owner endpoint a client of *profile* (None: the launch profile) attaches with."""
+        if profile is None:
+            return self.endpoint
+        from hermes_cli.gateway_runtime import discover_gateway_endpoint
+
+        home = self.hermes_home / "profiles" / profile
+        return self.poll(lambda: discover_gateway_endpoint(home, timeout=1.0).endpoint, BOOT_S,
+                         f"the multiplexer to serve profile {profile}")
+
+    def rpc(self, *calls: tuple[str, dict], profile: str | None = None) -> list[Any]:
         from hermes_cli.gateway_client import connect_gateway
+
+        endpoint = self.endpoint_for(profile)
 
         async def run() -> list[Any]:
             out = []
-            async with connect_gateway(self.endpoint) as client:
+            async with connect_gateway(endpoint) as client:
                 for method, params in calls:
                     out.append(await client.rpc(method, **params))
             return out
         return asyncio.run(run())
 
-    def attached_session(self, text: str) -> str:
+    def attached_session(self, text: str, *, profile: str | None = None, title: str | None = None) -> str:
         """An owner-attached session (``session.create``, as Ink and Desktop do) with one turn."""
-        made = self.rpc(("session.create", {"source": "tui"}))[0]
+        params = {"source": "tui", **({"title": title} if title else {})}
+        made = self.rpc(("session.create", params), profile=profile)[0]
         self.rpc(("session.resume", {"session_id": made["session_id"], "omit_messages": True}),
                  ("prompt.submit", {"session_id": made["session_id"], "text": text,
-                                    "submission_id": secrets.token_hex(8)}))
+                                    "submission_id": secrets.token_hex(8)}), profile=profile)
         return made["stored_session_id"]
 
-    def attached_submit(self, sid: str, text: str) -> None:
+    def attached_submit(self, sid: str, text: str, *, profile: str | None = None) -> None:
         """Resume *sid* on one attached connection and submit *text* on the live id it returns."""
         from hermes_cli.gateway_client import connect_gateway
 
+        endpoint = self.endpoint_for(profile)
+
         async def run() -> None:
-            async with connect_gateway(self.endpoint) as client:
+            async with connect_gateway(endpoint) as client:
                 resumed = await client.rpc("session.resume", session_id=sid, omit_messages=True)
                 await client.rpc("prompt.submit", session_id=resumed["session_id"], text=text,
                                  submission_id=secrets.token_hex(8))
@@ -662,10 +728,15 @@ class World:
         return live, stored
 
     # sends
-    def tool_send(self, to: str, delivery: str, reply: str, body: str, *, sender: str | None = None) -> dict:
-        """The sender session's model calls the intercom tool once; returns the tool's receipt."""
+    def tool_send(self, to: str, delivery: str, reply: str, body: str, *, sender: str | None = None,
+                  sender_profile: str | None = None, **opts: Any) -> dict:
+        """The sender session's model calls the intercom tool once; returns the tool's receipt.
+
+        *opts* are the tool's other ``send`` arguments (``key``, ``within``, ``profile``)."""
         tag = f"s{secrets.token_hex(4)}"
-        self.attached_submit(sender or self.sender, f"TAG={tag} CALL={to}|{delivery}|{reply}|{body}")
+        extra = f" OPTS={','.join(f'{k}={v}' for k, v in opts.items())}" if opts else ""
+        self.attached_submit(sender or self.sender, f"TAG={tag}{extra} CALL={to}|{delivery}|{reply}|{body}",
+                             profile=sender_profile)
         req = self.poll(lambda: next((r for r in self.model.tagged(tag) if r.results), None), TURN_S,
                         f"the intercom tool result of {tag}")
         receipt = next((found for text in req.results if (found := find_receipt(text))), None)
@@ -692,12 +763,17 @@ class World:
         return self.model.find(lambda r: r.tag == tag and any(needle in s for s in r.steers))
 
     # intercom's CLI (a script sender; an owner client of its own)
-    def intercom(self, *args: str) -> tuple[int, dict]:
-        ran = subprocess.run([python_exe(), "-m", "hermes_cli.main", "intercom", *args, "--json"],
-                             cwd=str(self.work), env=self.env, stdin=subprocess.DEVNULL, capture_output=True,
-                             text=True, timeout=TURN_S, check=False)
+    def intercom(self, *args: str, profile: str | None = None) -> tuple[int, dict]:
+        ran = self.intercom_raw(*args, "--json", profile=profile)
         line = next((ln for ln in reversed(ran.stdout.splitlines()) if ln.startswith("{")), None)
         return ran.returncode, (json.loads(line) if line else {"stdout": ran.stdout, "stderr": ran.stderr[-3000:]})
+
+    def intercom_raw(self, *args: str, profile: str | None = None) -> subprocess.CompletedProcess:
+        """``hermes [-p <profile>] intercom <args>``, its exit code and output as they are."""
+        chosen = ["-p", profile] if profile else []
+        return subprocess.run([python_exe(), "-m", "hermes_cli.main", *chosen, "intercom", *args],
+                              cwd=str(self.work), env=self.env, stdin=subprocess.DEVNULL, capture_output=True,
+                              text=True, timeout=TURN_S, check=False)
 
     # state
     def db(self, sql: str, *args: Any) -> list[tuple]:
@@ -715,8 +791,11 @@ class World:
         rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
         return [row for row in rows if pid is None or row["pid"] == pid]
 
-    def record(self, message_id: str) -> dict | None:
-        path = self.hermes_home / "plugin-data" / "intercom" / "record.db"
+    def _home(self, profile: str | None) -> Path:
+        return self.hermes_home if profile is None else self.hermes_home / "profiles" / profile
+
+    def record(self, message_id: str, *, profile: str | None = None) -> dict | None:
+        path = self._home(profile) / "plugin-data" / "intercom" / "record.db"
         conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=30)
         conn.row_factory = sqlite3.Row
         try:
@@ -724,6 +803,59 @@ class World:
         finally:
             conn.close()
         return dict(row) if row else None
+
+    def set_wake_at(self, message_id: str, wake_at: float, *, profile: str | None = None) -> None:
+        """Move a deadline note's ``wake_at`` in its record (the clock a cell cannot wait out)."""
+        path = self._home(profile) / "plugin-data" / "intercom" / "record.db"
+        conn = sqlite3.connect(path, timeout=30)
+        try:
+            with conn:
+                assert conn.execute("UPDATE messages SET wake_at = ? WHERE id = ?",
+                                    (wake_at, message_id)).rowcount == 1, message_id
+        finally:
+            conn.close()
+
+    def status(self, message_id: str, *, profile: str | None = None) -> str:
+        """``hermes [-p <profile>] intercom status <id>``'s delivery words."""
+        rc, out = self.intercom("status", message_id, profile=profile)
+        assert rc == 0 and out.get("ok") is True, (rc, out)
+        return out["delivery"]
+
+    def turns(self, session: str | None = None, since: float = 0.0) -> list[dict]:
+        """Turns started (the probe's ``pre_llm_call`` rows) in either profile, oldest first."""
+        rows = [row for home in (self.hermes_home, self.profile_home) for row in self._probe(home)]
+        return sorted((r for r in rows if r.get("turn") and r["t"] > since
+                       and (session is None or r.get("session") == session)), key=lambda r: r["t"])
+
+    def ticks(self, since: float) -> int:
+        """Dispatcher ticks (the probe's ``on_kanban_dispatch_tick``) after *since*."""
+        path = self.hermes_home / "hook-probe-ticks.jsonl"
+        if not path.exists():
+            return 0
+        return sum(1 for line in path.read_text(encoding="utf-8").splitlines()
+                   if line.strip() and json.loads(line)["t"] > since)
+
+    def wait_ticks(self, n: int) -> None:
+        """Until *n* more dispatcher ticks have run (a sweep each), from now."""
+        since = time.time()
+        self.poll(lambda: self.ticks(since) >= n, BOOT_S + n * TICK_S * 3, f"{n} dispatcher ticks")
+
+    def restart_owner(self, **config: Any) -> float:
+        """Stop the owner, rewrite the launch config with *config* (``home_config``'s), start it.
+        Returns the time it was started."""
+        self.quiet()
+        self.stop_owner()
+        (self.hermes_home / "config.yaml").write_text(home_config(self.server.base_url, **config),
+                                                      encoding="utf-8")
+        started = time.time()
+        self.start_owner()
+        return started
+
+    def _probe(self, home: Path) -> list[dict]:
+        path = home / "hook-probe.jsonl"
+        if not path.exists():
+            return []
+        return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
     def session_with(self, token: str) -> str:
         """The stored session whose transcript has a user row carrying *token*."""
