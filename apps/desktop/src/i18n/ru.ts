@@ -3789,6 +3789,7 @@ export const ruOverrides = {
     gatewayDisconnected: 'Шлюз Hermes не подключён',
     sudoSendFailed: 'Не удалось отправить пароль sudo',
     secretSendFailed: 'Не удалось отправить секрет',
+    secretNoLongerOpen: 'Этот запрос больше не открыт.',
     sudoTitle: 'Пароль администратора',
     sudoDesc:
       'Проверьте команду перед вводом пароля sudo. Пароль отправляется агенту, который её выполняет, и кэшируется на время сеанса.',

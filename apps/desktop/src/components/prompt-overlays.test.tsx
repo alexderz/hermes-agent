@@ -1,3 +1,4 @@
+import { useStore } from '@nanostores/react'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -5,10 +6,12 @@ import {
   handleServerRequest,
   type ServerRequestContext
 } from '@/app/session/hooks/use-message-stream/gateway-event/server-requests'
+import { SecretCard } from '@/components/assistant-ui/clarify/secret-card'
 import { I18nProvider } from '@/i18n'
 import { createClientSessionState } from '@/lib/chat-runtime'
 import { $gateway } from '@/store/gateway'
-import { notifyError } from '@/store/notifications'
+import { notify, notifyError } from '@/store/notifications'
+import { sessionSecretRequest } from '@/store/prompts'
 import { $secretRequest, $sudoRequest, clearAllPrompts, setSecretRequest, setSudoRequest } from '@/store/prompts'
 import { hasOpenServerRequest, rememberServerRequest, resetServerRequestsForTests } from '@/store/server-requests'
 import { $activeSessionId } from '@/store/session'
@@ -16,12 +19,19 @@ import { $activeSessionId } from '@/store/session'
 import { PromptOverlays } from './prompt-overlays'
 
 vi.mock('@/lib/haptics', () => ({ triggerHaptic: vi.fn() }))
-vi.mock('@/store/notifications', () => ({ notifyError: vi.fn() }))
+vi.mock('@/store/notifications', () => ({ notify: vi.fn(), notifyError: vi.fn() }))
+
+function SecretHarness({ sessionId }: { sessionId: string | null }) {
+  const request = useStore(sessionSecretRequest(sessionId))
+
+  return request ? <SecretCard key={request.requestId} request={request} /> : null
+}
 
 function renderPrompts(sessionId: string | null = 's1') {
   render(
     <I18nProvider configClient={null}>
       <PromptOverlays sessionId={sessionId} />
+      <SecretHarness sessionId={sessionId} />
     </I18nProvider>
   )
 }
@@ -120,6 +130,27 @@ describe('PromptOverlays', () => {
     expect(notifyError).not.toHaveBeenCalled()
   })
 
+  it('does not skip secret entry on Escape after a focus handoff', () => {
+    const respond = vi.fn()
+    $activeSessionId.set('s1')
+    $gateway.set({ request: vi.fn() } as never)
+    rememberServerRequest({ fail: vi.fn(), id: 'secret-handoff', method: 'secret', params: {}, respond })
+    setSecretRequest({ envVar: 'TEST_SECRET', prompt: 'Paste a secret', requestId: 'secret-handoff', sessionId: 's1' })
+    renderPrompts()
+
+    const input = screen.getByPlaceholderText('TEST_SECRET')
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(input.closest('[data-slot="secret-inline"]')).toBeTruthy()
+    expect(window.document.activeElement).not.toBe(input)
+    fireEvent.change(input, { target: { value: 'dummy-value' } })
+    fireEvent.blur(input)
+    fireEvent.keyDown(input, { key: 'Escape' })
+
+    expect(respond).not.toHaveBeenCalled()
+    expect((input as HTMLInputElement).value).toBe('dummy-value')
+    expect($secretRequest.get()?.requestId).toBe('secret-handoff')
+  })
+
   it('answers the live secret request with an empty value on Cancel and clears the dialog', async () => {
     const respond = vi.fn()
     const request = vi.fn()
@@ -142,7 +173,7 @@ describe('PromptOverlays', () => {
     expect(notifyError).not.toHaveBeenCalled()
   })
 
-  it('dismisses a stale secret dialog when the gateway no longer has the request open', async () => {
+  it('dismisses a stale secret card with neutral feedback when the request is no longer open', async () => {
     const request = vi.fn()
 
     $activeSessionId.set('s1')
@@ -158,5 +189,6 @@ describe('PromptOverlays', () => {
     await waitFor(() => expect($secretRequest.get()).toBeNull())
     expect(request).not.toHaveBeenCalled()
     expect(notifyError).not.toHaveBeenCalled()
+    expect(notify).toHaveBeenCalledExactlyOnceWith({ kind: 'info', message: 'This request is no longer open.' })
   })
 })

@@ -321,14 +321,17 @@ and the value is saved to the active profile's `.env`. The agent only learns the
 Commands then use it as `$NAME`; Hermes's own provider keys are never passed to commands. The value
 is also masked if a tool result ever echoes it.
 
-The CLI shows a 🔑 panel, while the TUI and the desktop app show their secret dialog. Messaging
+The CLI shows a 🔑 panel, the TUI shows a secret dialog, and the Webapp and desktop app show an
+inline card in the conversation. Messaging
 platforms have no masked input, so the agent refuses there. It tells you to set the key from a local
 CLI, TUI or desktop session, or to add it to the profile's `.env` yourself. Never send keys in chat.
 
 When a secret belongs in a file instead (a token another program reads, for example), the agent uses
 `secret_file`: it names the secret, a path and an access level. This works in the Webapp and the
-desktop app, whose secret dialog shows where the value will be saved before you type anything: the
-full path, the mode, and the owner and group. The CLI and TUI refuse it, because their prompts can only
+desktop app, whose inline card shows where the value will be saved before you type anything: the
+full path, the mode, and the owner and group. The card stays pending while the turn waits, including
+when you switch apps or sessions. Choose Save to submit or Cancel to skip; a reload can clear text
+you have not submitted. Stopping the turn withdraws the request. The CLI and TUI refuse it, because their prompts can only
 show text the agent wrote: they never open the prompt for it. When one of them is attached to the same
 session as the Webapp or desktop app, it shows a one-line notice instead, and the secret must be
 entered in the Webapp or desktop app. A relative path is resolved in the session's working

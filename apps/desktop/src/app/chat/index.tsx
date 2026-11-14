@@ -23,6 +23,7 @@ import { useI18n } from '@/i18n'
 import type { ChatMessage } from '@/lib/chat-messages'
 import { NEW_SESSION_TITLE, sessionTitle } from '@/lib/chat-runtime'
 import { useIncrementalExternalStoreRuntime } from '@/lib/incremental-external-store-runtime'
+import { projectSecret } from '@/lib/secret-projection'
 import { useStoreSelector } from '@/lib/use-session-slice'
 import { cn } from '@/lib/utils'
 import { migrateSessionDraft } from '@/store/composer'
@@ -33,6 +34,7 @@ import { $introView } from '@/store/onboarding-intro'
 import { $petActive } from '@/store/pet'
 import { $petOverlayActive } from '@/store/pet-overlay'
 import { $activeGatewayProfile, $gatewaySwapTarget, $hydrationSyncProfile, $profiles } from '@/store/profile'
+import { sessionSecretRequest } from '@/store/prompts'
 import {
   $connection,
   $contextSuggestions,
@@ -79,6 +81,7 @@ import { ResumeExhaustedOverlay } from './resume-exhausted-overlay'
 import { isRouteSessionMismatch } from './route-session-state'
 import { useRuntimeMessageRepository } from './runtime-repository'
 import { ScrollToBottomButton } from './scroll-to-bottom-button'
+import { SecretRequestContext } from './secret-request-context'
 import { useSessionView } from './session-view'
 import { SessionActionsMenu } from './sidebar/session-actions-menu'
 import { routedSessionIsLoading, threadLoadingState } from './thread-loading'
@@ -338,7 +341,41 @@ export function ChatRuntimeBoundary({
     return next.window
   }, [messages, windowPages])
 
-  const currentMessages = history.page?.messages ?? windowedMessages
+  const secretStore = useMemo(
+    () => sessionSecretRequest(runtimeId, { connectionId: ownerConnection || connectionId, profile: ownerProfile || activeProfile }),
+    [runtimeId, ownerConnection, connectionId, ownerProfile, activeProfile]
+  )
+
+  const secret = useStore(secretStore)
+
+  const currentMessages = useMemo(() => {
+    const current = history.page?.messages ?? windowedMessages
+
+    if (!secret || history.page || suppressMessages) {
+      return current
+    }
+
+    if (secret.profile && secret.profile !== (ownerProfile || activeProfile)) {
+      return current
+    }
+
+    if (secret.connectionId && connectionId && secret.connectionId !== (ownerConnection || connectionId)) {
+      return current
+    }
+
+    return projectSecret(current, secret, messages)
+  }, [
+    history.page,
+    windowedMessages,
+    messages,
+    secret,
+    suppressMessages,
+    ownerProfile,
+    activeProfile,
+    ownerConnection,
+    connectionId
+  ])
+
   // Release the store's paged-through history (persisted rows older than the
   // window) instead of retaining it for the window's lifetime (#77311). A
   // static history page is not the live store, and neither is a suppressed
@@ -463,7 +500,9 @@ export function ChatRuntimeBoundary({
   return (
     <ComposerScopeProvider value={composerScope}>
       <TranscriptWindowProvider value={transcriptWindow}>
-        <AssistantRuntimeProvider runtime={runtime}>{children}</AssistantRuntimeProvider>
+        <SecretRequestContext.Provider value={secret}>
+          <AssistantRuntimeProvider runtime={runtime}>{children}</AssistantRuntimeProvider>
+        </SecretRequestContext.Provider>
       </TranscriptWindowProvider>
     </ComposerScopeProvider>
   )

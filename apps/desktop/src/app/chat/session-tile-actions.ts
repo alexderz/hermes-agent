@@ -24,7 +24,7 @@ import { resetSessionBackground } from '@/store/composer-status'
 import { confirm } from '@/store/confirm'
 import { notify, notifyError } from '@/store/notifications'
 import { clearPreviewArtifacts } from '@/store/preview-status'
-import { clearAllPrompts } from '@/store/prompts'
+import { clearAllPrompts, secretScopeForOwner } from '@/store/prompts'
 import { $sessions, knownSessionOwner, ownerLookupSessionRows, sessionMatchesStoredId } from '@/store/session'
 import {
   requestForSessionProfile,
@@ -378,7 +378,8 @@ export function useSessionTileActions({ requestGateway, runtimeId, scope, stored
     clearSessionSubagents(sessionId)
     resetSessionBackground(sessionId)
     setSessionDraftingTool(sessionId, '')
-    clearAllPrompts(sessionId)
+    const owner = sessionTileOwnerRoute(storedIdRef.current) ?? knownSessionOwner(ownerLookupSessionRows(), storedIdRef.current)
+    clearAllPrompts(sessionId, false, secretScopeForOwner(owner))
     clearClarifyRequest(undefined, sessionId)
 
     try {

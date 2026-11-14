@@ -28,7 +28,7 @@ import { resetSessionBackground } from '@/store/composer-status'
 import { confirm } from '@/store/confirm'
 import { clearNotifications, notify, notifyError } from '@/store/notifications'
 import { clearPreviewArtifacts } from '@/store/preview-status'
-import { clearAllPrompts } from '@/store/prompts'
+import { clearAllPrompts, secretScopeForOwner } from '@/store/prompts'
 import {
   $busy,
   $currentCwd,
@@ -40,7 +40,7 @@ import {
   setMessages,
   setTurnStartedAt
 } from '@/store/session'
-import { $sessionStates, isLiveTurnAwaitingEvents, isSessionRemote } from '@/store/session-states'
+import { $sessionStates, isLiveTurnAwaitingEvents, isSessionRemote, knownOwnerForSession } from '@/store/session-states'
 import { flushStreamDeltas } from '@/store/stream-delta-flush'
 import { pruneFinishedSessionSubagents } from '@/store/subagents'
 import { runGatewayRestart } from '@/store/system-actions'
@@ -821,7 +821,7 @@ export function usePromptActions({
     // raised. Drop this session's pending clarify / approval / sudo / secret so
     // a dead panel (and the sidebar "needs input" dot) can't linger and accept
     // an answer the backend will reject.
-    clearAllPrompts(sessionId)
+    clearAllPrompts(sessionId, false, secretScopeForOwner(knownOwnerForSession(sessionId)))
     clearClarifyRequest(undefined, sessionId)
 
     try {

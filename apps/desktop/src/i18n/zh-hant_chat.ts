@@ -373,6 +373,7 @@ export const zhHantChat = {
     gatewayDisconnected: 'Hermes 閘道未連線',
     sudoSendFailed: '無法傳送 sudo 密碼',
     secretSendFailed: '無法傳送密鑰',
+    secretNoLongerOpen: '此請求已不再開放。',
     sudoTitle: '管理員密碼',
     sudoDesc: '輸入 sudo 密碼前，請先確認指令。密碼會傳送給執行指令的代理，並在本次工作階段中快取。',
     sudoCommandUnavailable: '此代理未提供指令。如果無法在對話中確認，請取消。',

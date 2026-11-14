@@ -5382,6 +5382,7 @@ export const esOverrides = {
     reconnect: 'Reconectar',
     sudoSendFailed: 'No se pudo enviar la contraseña sudo',
     secretSendFailed: 'No se pudo enviar el secreto',
+    secretNoLongerOpen: 'Esta solicitud ya no está abierta.',
     sudoTitle: 'Contraseña de administrador',
     sudoDesc:
       'Revisa el comando antes de introducir tu contraseña de sudo. La contraseña se envía al agente que lo ejecuta y se guarda en caché durante esta sesión.',
