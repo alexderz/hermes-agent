@@ -1,9 +1,18 @@
-import type { ChatMessage, ChatMessagePart } from '@/lib/chat-messages'
+import { type ChatMessage, type ChatMessagePart, chatMessageText } from '@/lib/chat-messages'
 import type { SecretRequest } from '@/store/prompts'
 
+interface RowIdentity {
+  id: string
+  rowId?: number
+  timestamp?: number
+  userText?: string
+}
+
 interface Anchor {
-  messageId: string
+  message: RowIdentity
+  turn?: RowIdentity
   toolCallId: string
+  hostToolCallId?: string
   synthetic: boolean
   afterId?: string | null
   newMessage?: boolean
@@ -20,55 +29,153 @@ function matchesSecret(part: ChatMessagePart, request: SecretRequest): boolean {
   if (part.type !== 'tool-call' || part.toolName !== 'clarify' || part.result !== undefined) {
     return false
   }
+
   const args = part.args ?? {}
+
   if (args.secret_env === request.envVar) {
     return true
   }
+
   const file = args.secret_file
+
   return typeof file === 'object' && file !== null && 'name' in file && file.name === request.envVar
 }
 
-/** Bind once, not on each streaming delta. No secret input ever enters this projection. */
+const isStartedUser = (message: ChatMessage) =>
+  message.role === 'user' && (!message.id.startsWith('user-queued-') || message.queuedTurnStarted)
+
+const identityOf = (message: ChatMessage): RowIdentity => ({
+  id: message.id,
+  rowId: message.rowId,
+  timestamp: message.timestamp,
+  ...(message.role === 'user' ? { userText: chatMessageText(message) } : {})
+})
+
+function findTurn(source: ChatMessage[], turn?: RowIdentity, hostToolCallId?: string): number {
+  const hostIndex = hostToolCallId ? source.findIndex(message => message.parts.some(part =>
+    part.type === 'tool-call' && part.toolCallId === hostToolCallId)) : -1
+
+  if (hostIndex >= 0) {
+    return source.slice(0, hostIndex).findLastIndex(isStartedUser)
+  }
+
+  if (!turn) {
+    return source.findLastIndex(isStartedUser)
+  }
+
+  const exact = source.findIndex(message => isStartedUser(message) &&
+    (message.id === turn.id || (turn.rowId !== undefined && message.rowId === turn.rowId)))
+
+  if (exact >= 0) {
+    return exact
+  }
+
+  if (turn.rowId !== undefined) {
+    return -2
+  }
+
+  // Older live user rows have no durable id yet. Only accept an unambiguous
+  // copy of that prompt; a repeated retry must not steal an earlier turn.
+  const candidates = source.flatMap((message, index) => isStartedUser(message) &&
+    chatMessageText(message) === turn.userText ? [index] : [])
+
+  const timestampMatches = candidates.filter(index => source[index].timestamp === turn.timestamp)
+
+  // The client submission clock and persisted clock can differ. A known
+  // durable row may not fall back to prose, but an unpersisted prompt can.
+  return timestampMatches.length === 1 ? timestampMatches[0]
+    : candidates.length === 1 ? candidates[0] : -2
+}
+
+function resolveAnchor(source: ChatMessage[], request: SecretRequest, previous?: Anchor): Anchor | undefined {
+  const start = findTurn(source, previous?.turn, previous?.hostToolCallId)
+
+  if (start === -2) {
+    return undefined
+  }
+
+  const nextUser = source.findIndex((message, index) => index > start && message.role === 'user')
+  const turn = source.slice(start + 1, nextUser < 0 ? source.length : nextUser)
+  const turnIdentity = start >= 0 ? identityOf(source[start]) : undefined
+  const common = { turn: turnIdentity, toolCallId: `secret:${request.requestId}`, synthetic: true }
+
+  if (previous) {
+    const host = turn.find(message => message.id === previous.message.id ||
+      (previous.message.rowId !== undefined && message.rowId === previous.message.rowId) ||
+      message.parts.some(part => part.type === 'tool-call' && part.toolCallId === previous.hostToolCallId))
+
+    if (host) {
+      return { ...previous, turn: turnIdentity, message: identityOf(host) }
+    }
+
+    if (previous.newMessage && source[start]?.id === previous.afterId) {
+      return previous
+    }
+  }
+
+  for (const message of [...turn].reverse()) {
+    const part = [...message.parts].reverse().find(item => matchesSecret(item, request))
+
+    if (part?.type === 'tool-call' && part.toolCallId) {
+      return { ...common, message: identityOf(message), toolCallId: part.toolCallId, hostToolCallId: part.toolCallId, synthetic: false }
+    }
+  }
+
+  const message = turn.findLast(item => item.role === 'assistant')
+  const hostPart = message?.parts.findLast(part => part.type === 'tool-call')
+
+  return message
+    ? { ...common, message: identityOf(message), hostToolCallId: hostPart?.type === 'tool-call' ? hostPart.toolCallId : undefined }
+    : { ...common, message: { id: `secret-message:${request.requestId}` }, newMessage: true, afterId: source[start]?.id ?? null }
+}
+
+/** Keep the live host stable, but resolve its durable identity after hydration.
+ * No secret input ever enters this projection. */
 export function projectSecret(messages: ChatMessage[], request: SecretRequest, source = messages): ChatMessage[] {
   const key = keyOf(request)
-  let anchor = anchors.get(key)
-  if (!anchor) {
-    for (let i = source.length - 1; i >= 0 && !anchor; i -= 1) {
-      const message = source[i]
-      const part = [...message.parts].reverse().find(item => matchesSecret(item, request))
-      if (part?.type === 'tool-call' && part.toolCallId) {
-        anchor = { messageId: message.id, toolCallId: part.toolCallId, synthetic: false }
-      }
-    }
-    if (!anchor) {
-      const lastUser = source.findLastIndex(item => item.role === 'user' && (!item.id.startsWith('user-queued-') || item.queuedTurnStarted))
-      const message = source.slice(lastUser + 1).findLast(item => item.role === 'assistant')
-      anchor = message
-        ? { messageId: message.id, toolCallId: `secret:${request.requestId}`, synthetic: true }
-        : { messageId: `secret-message:${request.requestId}`, toolCallId: `secret:${request.requestId}`, synthetic: true, newMessage: true, afterId: source[lastUser]?.id ?? null }
-    }
-    anchors.set(key, anchor)
+  const target = resolveAnchor(source, request, anchors.get(key))
+
+  if (!target) {
+    return messages
   }
-  const target = anchor
+
+  // Replay may arrive before history. A provisional empty-history card cannot
+  // bind the eventual conversation to its top forever.
+  if (source.length) {
+    anchors.set(key, target)
+  }
+
+  const secretPart: ChatMessagePart = { type: 'tool-call', toolName: 'clarify', toolCallId: target.toolCallId, args: {}, argsText: '{}', clarifyRequestId: request.requestId }
+
   if (target.newMessage) {
     const at = target.afterId ? messages.findIndex(message => message.id === target.afterId) : -1
+
     if (target.afterId && at < 0) {
       return messages
     }
-    const part = { type: 'tool-call' as const, toolName: 'clarify', toolCallId: target.toolCallId, args: {}, argsText: '{}', clarifyRequestId: request.requestId }
-    const row: ChatMessage = { id: target.messageId, role: 'assistant', pending: true, parts: [part] }
+
+    const row: ChatMessage = { id: target.message.id, role: 'assistant', pending: true, parts: [secretPart] }
+
     return [...messages.slice(0, at + 1), row, ...messages.slice(at + 1)]
   }
-  const index = messages.findIndex(message => message.id === target.messageId)
+
+  const index = messages.findIndex(message => message.id === target.message.id)
+
   if (index < 0) {
     return messages
   }
+
   const message = messages[index]
+  const hostIndex = message.parts.findIndex(part => part.type === 'tool-call' && part.toolCallId === target.hostToolCallId)
+  const insertAt = hostIndex < 0 ? message.parts.length : hostIndex + 1
+
   const parts = target.synthetic
-    ? [...message.parts, { type: 'tool-call' as const, toolName: 'clarify', toolCallId: target.toolCallId, args: {}, argsText: '{}', clarifyRequestId: request.requestId }]
+    ? [...message.parts.slice(0, insertAt), secretPart, ...message.parts.slice(insertAt)]
     : message.parts.map(part => part.type === 'tool-call' && part.toolCallId === target.toolCallId
       ? { ...part, clarifyRequestId: request.requestId } : part)
+
   const next = [...messages]
   next[index] = { ...message, parts }
+
   return next
 }

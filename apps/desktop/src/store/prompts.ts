@@ -3,11 +3,13 @@ import { atom, computed, type ReadableAtom } from 'nanostores'
 import { forgetSecretAnchor } from '@/lib/secret-projection'
 
 import { $clarifyRequest, $clarifyRequests } from './clarify'
+import { activeGatewayRoute } from './gateway'
 import { $activeGatewayProfile } from './profile'
 import { isSessionGone, isSessionGoneForBackgroundPolling, markSessionGone } from './runtime-gone'
 import { hasOpenServerRequest, respondToServerRequest } from './server-requests'
 import { $activeSessionId, $connection } from './session'
 import { ambientRequestFor } from './session-gone-latch'
+import type { SessionOwnerScope } from './session-request-router'
 import { requestForOwnedSession } from './session-states'
 
 // Blocking interactive prompts the gateway raises mid-turn. Each is a
@@ -440,12 +442,27 @@ export const sessionApprovalRequest = (sessionId: string | null) =>
 export const sessionSudoRequest = (sessionId: string | null) =>
   computed(sudo.$all, all => all[keyFor(sessionId)] ?? (sessionId ? (all[keyFor(null)] ?? null) : null))
 export interface SecretScope { connectionId?: string | null; profile?: string | null }
+
+/** Prompt frames name the backend profile, not a Desktop route alias. Capture
+ * before a Stop/close await can re-home the foreground connection. */
+export function secretScopeForOwner(owner: SessionOwnerScope): SecretScope {
+  if (!owner) {
+    return activeGatewayRoute()
+  }
+
+  return typeof owner === 'string'
+    ? { profile: owner }
+    : { connectionId: owner.connectionId, profile: owner.targetProfile || owner.profile }
+}
+
 function selectSecret(all: Record<string, SecretRequest>, sessionId: string | null, scope?: SecretScope): SecretRequest | null {
   const matches = Object.values(all).filter(request => request.sessionId === sessionId &&
     (!scope || !request.connectionId || scope.connectionId === request.connectionId) &&
     (!scope || !request.profile || scope.profile === request.profile))
+
   return matches.length === 1 ? matches[0] : null
 }
+
 export const sessionSecretRequest = (sessionId: string | null, scope?: SecretScope) =>
   computed($scopedSecrets, all => selectSecret(all, sessionId, scope))
 
@@ -479,33 +496,42 @@ export const setSecretRequest = (request: SecretRequest) => {
   const key = secretScopeKey(request)
   const all = $scopedSecrets.get()
   const previous = all[key]
+
   if (previous && previous.requestId !== request.requestId) {
     secretDrafts.delete(secretDraftKey(previous))
     forgetSecretAnchor(previous)
   }
+
   $scopedSecrets.set({ ...all, [key]: request })
 }
 
 export const clearSecretRequest = (sessionId?: string | null, requestId?: string, scope?: SecretScope) => {
   const all = $scopedSecrets.get()
+  const resetAll = sessionId === undefined && requestId === undefined && scope === undefined
+
   const matches = Object.entries(all).filter(([, request]) =>
     (sessionId === undefined || request.sessionId === sessionId) &&
     (!requestId || request.requestId === requestId) &&
-    (!scope?.connectionId || !request.connectionId || request.connectionId === scope.connectionId) &&
-    (!scope?.profile || !request.profile || request.profile === scope.profile))
-  // Unscoped teardown must never erase two unrelated owners of the same session.
+    (resetAll || ((!request.connectionId || request.connectionId === scope?.connectionId) &&
+      (!request.profile || request.profile === scope?.profile))))
+
+  // An untagged session teardown can only own an untagged request.
   if (sessionId !== undefined && matches.length > 1) {
     return
   }
+
   if (!matches.length) {
     return
   }
+
   const next = { ...all }
+
   for (const [key, request] of matches) {
     secretDrafts.delete(secretDraftKey(request))
     forgetSecretAnchor(request)
     delete next[key]
   }
+
   $scopedSecrets.set(next)
 }
 

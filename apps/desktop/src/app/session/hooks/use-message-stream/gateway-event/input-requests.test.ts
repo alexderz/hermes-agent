@@ -59,6 +59,7 @@ describe('secret withdrawal', () => {
     setSecretRequest(request)
     writeSecretDraft(request, 'dummy-value')
     const ctx = cancel('secret-1', 's1')
+    ctx.event = { ...ctx.event, connectionId: request.connectionId, profile: request.profile }
     ctx.payload = { id: 'secret-1', method: 'secret', reason } as GatewayEventContext['payload']
     expect(handleInputRequestEvent(ctx)).toBe(true)
     expect($secretRequest.get()).toBeNull()

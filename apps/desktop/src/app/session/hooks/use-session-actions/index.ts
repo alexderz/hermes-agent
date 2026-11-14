@@ -60,7 +60,7 @@ import {
 } from '@/store/profile'
 import { $projectScope } from '@/store/project-scope'
 import { projectProfile, resolveNewSessionCwd } from '@/store/projects'
-import { clearAllPrompts } from '@/store/prompts'
+import { clearAllPrompts, secretScopeForOwner } from '@/store/prompts'
 import { clearStoredTranscriptReadOnly, markStoredTranscriptReadOnly } from '@/store/read-only-transcript'
 import {
   $activeSessionStoredIdRotation,
@@ -121,6 +121,7 @@ import {
   focusOpenSession,
   holdSessionOwnerUntilForeground,
   isSessionInForeground,
+  knownOwnerForSession,
   openSessionTile,
   patchSessionTile,
   publishSessionState,
@@ -3048,13 +3049,10 @@ export function useSessionActions({
       const previousMessages = $messages.get()
       const previousPinned = $pinnedSessionIds.get()
 
-      const removedOwner: SessionOwnerScope = removed?.connection_id
-        ? {
-            connectionId: removed.connection_id,
-            profile: removed.profile || 'default'
-          }
-        : profile
+      const removedOwner: SessionOwnerScope =
+        knownOwnerForSession(storedSessionId) ?? sessionOwnerRouteFromRow(removed) ?? profile
 
+      const promptScope = secretScopeForOwner(removedOwner)
       const previousArchived = $archivedSessions.get()
       // Pins are keyed on the durable lineage-root id; the stored id may be the
       // live tip after compression. Drop both so the pin can't linger.
@@ -3113,7 +3111,7 @@ export function useSessionActions({
 
           // Catch a blocking-input request already queued before the interrupted
           // flag became visible to this renderer.
-          clearAllPrompts(closingRuntimeId)
+          clearAllPrompts(closingRuntimeId, false, promptScope)
           clearClarifyRequest(undefined, closingRuntimeId)
 
           await requestForSessionProfile(removedOwner, requestGateway, 'session.close', {

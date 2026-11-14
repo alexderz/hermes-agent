@@ -6,6 +6,7 @@ import { useRuntimeMessageRepository } from '@/app/chat/runtime-repository'
 import { I18nProvider } from '@/i18n'
 import { type ChatMessage, restorePendingClarifyToolCall } from '@/lib/chat-messages'
 import { $gateway } from '@/store/gateway'
+import { $notifications, clearNotifications } from '@/store/notifications'
 import { $activeGatewayProfile } from '@/store/profile'
 import {
   $secretRequest,
@@ -44,6 +45,7 @@ function ActiveSecret() {
 afterEach(() => {
   cleanup()
   clearAllPrompts()
+  clearNotifications()
   resetServerRequestsForTests()
   $gateway.set(null)
   $activeSessionId.set(null)
@@ -114,7 +116,7 @@ describe('inline secret entry', () => {
     setSecretRequest(request)
     render(tree(request))
     fireEvent.change(screen.getByLabelText('TEST_KEY'), { target: { value: 'other-dummy' } })
-    act(() => clearSecretRequest('s1', 'r1'))
+    act(() => clearSecretRequest('s1', 'r1', request))
     expect(readSecretDraft(request)).toBe('')
   })
 
@@ -123,9 +125,24 @@ describe('inline secret entry', () => {
     rememberServerRequest({ id: 'r1', method: 'secret', params: {}, respond: vi.fn(), fail: vi.fn() })
     const view = render(tree(request))
     fireEvent.change(screen.getByLabelText('TEST_KEY'), { target: { value: 'dummy-value' } })
-    clearAllPrompts('s1', true)
+    clearAllPrompts('s1', true, request)
     expect(readSecretDraft(request)).toBe('dummy-value')
     view.unmount()
+  })
+
+  it.each(['Save', 'Cancel'])('wipes a stale draft and gives neutral feedback when %s finds no open server request', action => {
+    setSecretRequest(request)
+    $gateway.set({ request: vi.fn() } as never)
+    render(tree(request))
+    const input = screen.getByLabelText('TEST_KEY') as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'dummy-stale' } })
+    fireEvent.click(screen.getByRole('button', { name: action }))
+    expect(input.value).toBe('')
+    expect(readSecretDraft(request)).toBe('')
+    expect($notifications.get()).toMatchObject([{ kind: 'info', message: 'This request is no longer open.' }])
+    expect(JSON.stringify($notifications.get())).not.toContain('dummy-stale')
+    fireEvent.click(screen.getByRole('button', { name: action }))
+    expect($notifications.get()).toHaveLength(1)
   })
 
   it('projects one request-bound clarify row and retains its binding through runtime normalization', () => {

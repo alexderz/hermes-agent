@@ -5406,6 +5406,7 @@ export const frOverrides = {
     reconnect: 'Se reconnecter',
     sudoSendFailed: "Impossible d'envoyer le mot de passe sudo",
     secretSendFailed: "Impossible d'envoyer le secret",
+    secretNoLongerOpen: 'Cette demande n’est plus ouverte.',
     sudoTitle: 'Mot de passe administrateur',
     sudoDesc:
       "Hermes a besoin de votre mot de passe sudo pour exécuter une commande privilégiée. Il n'est envoyé qu'à votre agent local.",
