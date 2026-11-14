@@ -407,7 +407,7 @@ export function handleMessageStreamEvent(ctx: GatewayEventContext): boolean {
     // (e.g. interrupted, or the approval already resolved). Scoped to the
     // session so a background turn finishing can't wipe the active chat's
     // prompt, and vice versa.
-    clearAllPrompts(sessionId)
+    clearAllPrompts(sessionId, false, { connectionId: event.connectionId, profile: event.profile })
     clearSettledClarifyRequest(sessionId)
     // Turn ended without a final `todo` update — drop a still-unfinished
     // list so "Tasks N/M" doesn't stay pinned above the composer with the

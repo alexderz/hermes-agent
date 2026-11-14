@@ -4713,6 +4713,7 @@ export const en: Translations = {
     reconnect: 'Reconnect',
     sudoSendFailed: 'Could not send sudo password',
     secretSendFailed: 'Could not send secret',
+    secretNoLongerOpen: 'This request is no longer open.',
     sudoTitle: 'Administrator password',
     sudoDesc:
       'Review the command before entering your sudo password. Your password is sent to the agent running it and cached for this session.',

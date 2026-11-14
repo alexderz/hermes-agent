@@ -18,18 +18,15 @@ import { LogView } from '@/components/ui/log-view'
 import { useI18n } from '@/i18n'
 import { isMissingPendingPromptRequest } from '@/lib/gateway-rpc'
 import { triggerHaptic } from '@/lib/haptics'
-import { KeyRound, Loader2, Lock, ShieldLock } from '@/lib/icons'
+import { Loader2, Lock, ShieldLock } from '@/lib/icons'
 import { $gateway } from '@/store/gateway'
 import { reconnectAction } from '@/store/gateway-reconnect'
 import { notifyError } from '@/store/notifications'
 import {
-  clearSecretRequest,
   clearSudoRequest,
   clearVaultCodeRequest,
   clearVaultSaveLoginRequest,
   clearVaultUnlockRequest,
-  type SecretFileDestination,
-  sessionSecretRequest,
   sessionSudoRequest,
   sessionVaultCodeRequest,
   sessionVaultSaveLoginRequest,
@@ -37,18 +34,7 @@ import {
 } from '@/store/prompts'
 import { respondToServerRequest } from '@/store/server-requests'
 
-// Renders the modal mid-turn prompts the gateway raises and waits on: sudo
-// password and skill secret capture. Dangerous-command / execute_code approval
-// prefers the pending tool row, but also has a chat-level fallback when no row
-// is mounted (remote gateway sessions can raise the request before the matching
-// tool call is visible). Each Python-side caller blocks the agent thread until
-// the matching `*.respond` RPC lands; without a renderer the agent stalls until
-// its timeout and the tool is BLOCKED. Any close path (Esc, backdrop
-// click) funnels through Radix's single `onOpenChange(false)` and maps to a
-// refusal, so silence is never mistaken for consent, matching the TUI. We
-// deliberately do NOT add onEscapeKeyDown / onInteractOutside handlers — they'd
-// fire a second `*.respond` alongside onOpenChange (double-send) or block the
-// backdrop-dismiss path.
+// Modal password and vault prompts. Secret entry is rendered in the transcript.
 
 function SudoDialog({ sessionId }: { sessionId: string | null }) {
   const { t } = useI18n()
@@ -167,123 +153,8 @@ function SudoDialog({ sessionId }: { sessionId: string | null }) {
   )
 }
 
-function SecretDialog({ sessionId }: { sessionId: string | null }) {
-  const { t } = useI18n()
-  const copy = t.prompts
-  const $request = useMemo(() => sessionSecretRequest(sessionId), [sessionId])
-  const request = useStore($request)
-  const gateway = useStore($gateway)
-  const [value, setValue] = useState('')
-  const [submitting, setSubmitting] = useState(false)
-
-  useEffect(() => {
-    setValue('')
-    setSubmitting(false)
-  }, [request?.requestId])
-
-  const send = useCallback(
-    async (secret: string) => {
-      if (!request) {
-        return
-      }
-
-      if (!gateway) {
-        notifyError(new Error(copy.gatewayDisconnected), copy.secretSendFailed, { action: reconnectAction() })
-
-        return
-      }
-
-      setSubmitting(true)
-
-      try {
-        respondToServerRequest(request.requestId, { value: secret })
-        triggerHaptic('submit')
-        clearSecretRequest(request.sessionId, request.requestId)
-      } catch (error) {
-        if (isMissingPendingPromptRequest(error, 'value')) {
-          clearSecretRequest(request.sessionId, request.requestId)
-
-          return
-        }
-
-        notifyError(error, copy.secretSendFailed)
-        setSubmitting(false)
-      }
-    },
-    [copy.gatewayDisconnected, copy.secretSendFailed, gateway, request]
-  )
-
-  const onOpenChange = useCallback(
-    (open: boolean) => {
-      if (!open && !submitting && request) {
-        void send('')
-      }
-    },
-    [request, send, submitting]
-  )
-
-  const onSubmit = useCallback(
-    (event: FormEvent<HTMLFormElement>) => {
-      event.preventDefault()
-      void send(value)
-    },
-    [send, value]
-  )
-
-  if (!request) {
-    return null
-  }
-
-  return (
-    <Dialog onOpenChange={onOpenChange} open>
-      <DialogContent showCloseButton={false}>
-        <DialogHeader>
-          <DialogTitle icon={KeyRound}>{request.envVar || copy.secretTitle}</DialogTitle>
-          <DialogDescription>{request.prompt || copy.secretDesc}</DialogDescription>
-        </DialogHeader>
-
-        {request.destination && <SecretDestination destination={request.destination} />}
-
-        <form className="grid gap-3" onSubmit={onSubmit}>
-          <Input
-            autoFocus
-            disabled={submitting}
-            onChange={event => setValue(event.target.value)}
-            placeholder={request.envVar || copy.secretPlaceholder}
-            type="password"
-            value={value}
-          />
-          <DialogFooter>
-            <Button disabled={submitting} onClick={() => void send('')} type="button" variant="ghost">
-              {t.common.cancel}
-            </Button>
-            <Button disabled={submitting || !value} type="submit">
-              {submitting ? <Loader2 className="size-3.5 animate-spin" /> : t.common.send}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-/** Where a `clarify(secret_file=...)` answer will be written, shown before the user types it. */
-function SecretDestination({ destination }: { destination: SecretFileDestination }) {
-  const { t } = useI18n()
-  const copy = t.prompts
-  const owner = destination.group ? `${destination.owner}:${destination.group}` : destination.owner
-
-  return (
-    <section aria-label={copy.secretSavedTo} className="grid gap-1 rounded-md border bg-muted/40 px-3 py-2 text-xs">
-      <span className="text-muted-foreground">{copy.secretSavedTo}</span>
-      <code className="font-mono break-all whitespace-pre-wrap">{destination.path}</code>
-      <span className="text-muted-foreground">{copy.secretFileFacts(destination.mode, owner)}</span>
-    </section>
-  )
-}
-
 /** Masked master-password card for an external password manager (1Password / Bitwarden).
- *  Mirrors SecretDialog's contract: closing without submitting answers "" (keep locked); a late
+ *  Closing without submitting answers "" (keep locked); a late
  *  answer after expiry is tolerated by the backend. The value only lives in this component. */
 function VaultUnlockDialog({ sessionId }: { sessionId: string | null }) {
   const { t } = useI18n()
@@ -600,7 +471,6 @@ export function PromptOverlays({ sessionId }: { sessionId: string | null }) {
   return (
     <>
       <SudoDialog sessionId={sessionId} />
-      <SecretDialog sessionId={sessionId} />
       <VaultUnlockDialog sessionId={sessionId} />
       <VaultSaveLoginDialog sessionId={sessionId} />
       <VaultCodeDialog sessionId={sessionId} />

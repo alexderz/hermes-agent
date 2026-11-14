@@ -1,10 +1,15 @@
 import { atom, computed, type ReadableAtom } from 'nanostores'
 
+import { forgetSecretAnchor } from '@/lib/secret-projection'
+
 import { $clarifyRequest, $clarifyRequests } from './clarify'
+import { activeGatewayRoute } from './gateway'
+import { $activeGatewayProfile } from './profile'
 import { isSessionGone, isSessionGoneForBackgroundPolling, markSessionGone } from './runtime-gone'
-import { respondToServerRequest } from './server-requests'
-import { $activeSessionId } from './session'
+import { hasOpenServerRequest, respondToServerRequest } from './server-requests'
+import { $activeSessionId, $connection } from './session'
 import { ambientRequestFor } from './session-gone-latch'
+import type { SessionOwnerScope } from './session-request-router'
 import { requestForOwnedSession } from './session-states'
 
 // Blocking interactive prompts the gateway raises mid-turn. Each is a
@@ -124,6 +129,8 @@ export interface SecretFileDestination {
 }
 
 export interface SecretRequest extends KeyedPrompt {
+  connectionId?: string
+  profile?: string
   envVar: string
   prompt: string
   requestId: string
@@ -214,7 +221,15 @@ const approval = {
 }
 
 const sudo = keyedPromptStore<SudoRequest>()
-const secret = keyedPromptStore<SecretRequest>()
+// Unlike the older prompt stores, session ids are not globally unique across gateways/profiles.
+const $scopedSecrets = atom<Record<string, SecretRequest>>({})
+
+const secret = {
+  $all: computed($scopedSecrets, all => Object.fromEntries(Object.values(all).map(request => [keyFor(request.sessionId), request]))),
+  $active: computed([$scopedSecrets, $activeSessionId, $activeGatewayProfile, $connection], (all, id, profile, connection) =>
+    selectSecret(all, id, { profile, connectionId: connection?.connectionId }))
+}
+
 const vaultUnlock = keyedPromptStore<VaultUnlockRequest>()
 
 // "Save this login" for the page the agent is on (tools/browser_vault_tool): `vault.save_login`
@@ -428,18 +443,99 @@ export const sessionApprovalRequest = (sessionId: string | null) =>
  *  session: it belongs to the connection, not to a turn, so whichever chat is focused shows it). */
 export const sessionSudoRequest = (sessionId: string | null) =>
   computed(sudo.$all, all => all[keyFor(sessionId)] ?? (sessionId ? (all[keyFor(null)] ?? null) : null))
-export const sessionSecretRequest = (sessionId: string | null) =>
-  computed(secret.$all, all => all[keyFor(sessionId)] ?? null)
+export interface SecretScope { connectionId?: string | null; profile?: string | null }
+
+/** Prompt frames name the backend profile, not a Desktop route alias. Capture
+ * before a Stop/close await can re-home the foreground connection. */
+export function secretScopeForOwner(owner: SessionOwnerScope): SecretScope {
+  if (!owner) {
+    return activeGatewayRoute()
+  }
+
+  return typeof owner === 'string'
+    ? { profile: owner }
+    : { connectionId: owner.connectionId, profile: owner.targetProfile || owner.profile }
+}
+
+function selectSecret(all: Record<string, SecretRequest>, sessionId: string | null, scope?: SecretScope): SecretRequest | null {
+  const matches = Object.values(all).filter(request => request.sessionId === sessionId &&
+    (!scope || !request.connectionId || scope.connectionId === request.connectionId) &&
+    (!scope || !request.profile || scope.profile === request.profile))
+
+  return matches.length === 1 ? matches[0] : null
+}
+
+export const sessionSecretRequest = (sessionId: string | null, scope?: SecretScope) =>
+  computed($scopedSecrets, all => selectSecret(all, sessionId, scope))
 
 export const $sudoRequest = sudo.$active
 export const $sudoRequests = sudo.$all
 export const setSudoRequest = sudo.set
 export const clearSudoRequest = sudo.clear
 
+// Drafts are deliberately process memory only; never put these in a session or transcript store.
+const secretDrafts = new Map<string, string>()
+
+const secretDraftKey = (request: SecretRequest) =>
+  JSON.stringify([request.connectionId ?? '', request.profile ?? '', request.sessionId, request.requestId])
+
+export const readSecretDraft = (request: SecretRequest) => secretDrafts.get(secretDraftKey(request)) ?? ''
+
+export const writeSecretDraft = (request: SecretRequest, value: string) => {
+  if (value) {
+    secretDrafts.set(secretDraftKey(request), value)
+  } else {
+    secretDrafts.delete(secretDraftKey(request))
+  }
+}
+
 export const $secretRequest = secret.$active
 export const $secretRequests = secret.$all
-export const setSecretRequest = secret.set
-export const clearSecretRequest = secret.clear
+export const $scopedSecretRequests = $scopedSecrets
+const secretScopeKey = (request: SecretRequest) => JSON.stringify([request.connectionId ?? '', request.profile ?? '', request.sessionId])
+
+export const setSecretRequest = (request: SecretRequest) => {
+  const key = secretScopeKey(request)
+  const all = $scopedSecrets.get()
+  const previous = all[key]
+
+  if (previous && previous.requestId !== request.requestId) {
+    secretDrafts.delete(secretDraftKey(previous))
+    forgetSecretAnchor(previous)
+  }
+
+  $scopedSecrets.set({ ...all, [key]: request })
+}
+
+export const clearSecretRequest = (sessionId?: string | null, requestId?: string, scope?: SecretScope) => {
+  const all = $scopedSecrets.get()
+  const resetAll = sessionId === undefined && requestId === undefined && scope === undefined
+
+  const matches = Object.entries(all).filter(([, request]) =>
+    (sessionId === undefined || request.sessionId === sessionId) &&
+    (!requestId || request.requestId === requestId) &&
+    (resetAll || ((!request.connectionId || request.connectionId === scope?.connectionId) &&
+      (!request.profile || request.profile === scope?.profile))))
+
+  // An untagged session teardown can only own an untagged request.
+  if (sessionId !== undefined && matches.length > 1) {
+    return
+  }
+
+  if (!matches.length) {
+    return
+  }
+
+  const next = { ...all }
+
+  for (const [key, request] of matches) {
+    secretDrafts.delete(secretDraftKey(request))
+    forgetSecretAnchor(request)
+    delete next[key]
+  }
+
+  $scopedSecrets.set(next)
+}
 
 export const $vaultUnlockRequest = vaultUnlock.$active
 export const setVaultUnlockRequest = vaultUnlock.set
@@ -531,11 +627,11 @@ export function sessionAwaitingInput(sessionId: string | null) {
 
 // Drop in-flight prompts for `sessionId` (a turn ended) across all three kinds —
 // or every parked prompt when no session is given (global reset / tests).
-export function clearAllPrompts(sessionId?: string | null): void {
+export function clearAllPrompts(sessionId?: string | null, preserveOpenSecret = false, scope?: SecretScope): void {
   if (sessionId === undefined) {
     approval.reset()
     sudo.reset()
-    secret.reset()
+    clearSecretRequest()
     vaultUnlock.reset()
     vaultSave.reset()
     vaultCode.reset()
@@ -545,7 +641,12 @@ export function clearAllPrompts(sessionId?: string | null): void {
 
   approval.clear(sessionId)
   sudo.clear(sessionId)
-  secret.clear(sessionId)
+  const pendingSecret = selectSecret($scopedSecrets.get(), sessionId, scope)
+
+  if (!preserveOpenSecret || !pendingSecret || !hasOpenServerRequest(pendingSecret.requestId)) {
+    clearSecretRequest(sessionId, undefined, scope)
+  }
+
   vaultUnlock.clear(sessionId)
   vaultSave.clear(sessionId)
   vaultCode.clear(sessionId)

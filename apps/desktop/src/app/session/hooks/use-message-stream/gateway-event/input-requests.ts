@@ -16,7 +16,7 @@ import {
 import { dispatchNativeNotification } from '@/store/native-notifications'
 import { notify } from '@/store/notifications'
 import {
-  $secretRequests,
+  $scopedSecretRequests,
   $sudoRequests,
   $vaultCodeRequests,
   $vaultSaveLoginRequests,
@@ -246,8 +246,8 @@ function cancelParkedCredentialRequest(ctx: GatewayEventContext, key: string, id
     clearSudoRequest(sessionId, id)
   } else if ($sudoRequests.get()['']?.requestId === id) {
     clearSudoRequest(null, id) // the app-level Bot Screen install card: not owned by any chat
-  } else if ($secretRequests.get()[key]?.requestId === id) {
-    clearSecretRequest(sessionId, id)
+  } else if (Object.values($scopedSecretRequests.get()).some(request => request.sessionId === sessionId && request.requestId === id)) {
+    clearSecretRequest(sessionId, id, { connectionId: ctx.event.connectionId, profile: ctx.event.profile })
   } else if ($vaultCodeRequests.get()[key]?.requestId === id) {
     clearVaultCodeRequest(sessionId, id)
   } else if ($vaultSaveLoginRequests.get()[key]?.requestId === id) {

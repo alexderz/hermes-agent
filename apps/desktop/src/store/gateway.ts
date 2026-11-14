@@ -251,7 +251,7 @@ function dispatchServerRequest(request: ServerRequest, profile: string, connecti
 
 /** Fan a primary-socket server request into the registry handler with the active source tags. */
 export function dispatchPrimaryServerRequest(request: ServerRequest, profile: string): boolean {
-  return dispatchServerRequest(request, profile, g.config?.activeConnectionId?.() ?? null)
+  return dispatchServerRequest(request, profile, activeGatewayConnectionId())
 }
 
 /** Registry source currently served by the window primary socket, when known. */

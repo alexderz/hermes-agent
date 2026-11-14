@@ -44,7 +44,7 @@ def secret_prompt_scope(turn, agent):
         if live is None:
             return _skipped(var_name, "cancelled", "Secret setup was skipped.")
         params = {"env_var": var_name, "prompt": prompt, **({"metadata": metadata} if metadata else {})}
-        value = ask_viewer(live.event_stream, session_id, "secret", params, timeout=SECRET_TIMEOUT_S,
+        value = ask_viewer(live.event_stream, session_id, "secret", params, timeout=None if wait else SECRET_TIMEOUT_S,
                            cancelled=lambda: bool(getattr(agent, "_interrupt_requested", False)),
                            wait_for_viewer=wait)
         if not value:
