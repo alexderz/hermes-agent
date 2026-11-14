@@ -362,3 +362,7 @@ git grep -n -i -E "$HOUSE_PATTERN" -- . ':!tests/fixtures' ; test $? -eq 1
 - deadline across a restart: a note whose `wake_at` passes while the owner is stopped → after `hermes gateway run` restarts, the session gets one wake turn at an early tick (about 5 s after boot plus one interval);
 - deadline in another profile: a named profile served by the multiplexer (as in the other-profiles cell), a note with `within` from default to a named-profile session → when it is due, that session gets one wake turn from the default gateway's tick;
 - deadline fallback: with `kanban.dispatch_in_gateway: false` in a second world (or the same world restarted with it), a due note causes no wake until `hermes intercom wake-due` runs once (CLI, exit 0, no output), after which the session gets one wake turn.
+
+## G16d addition (2026-11-14, operator report via the spike bot's Q10)
+
+- `list` shows a profile's canonical Bot Chat, which the owner's list omits because it is a hidden session; other hidden sessions stay hidden. (Root cause of the report: from spike, no open chats and a hidden Bot Chat meant an empty `list`; sends to default-profile chats were refused because cross-profile addressing is G16d itself. Not filed upstream.)
