@@ -270,3 +270,95 @@ git grep -n -i -E "$HOUSE_PATTERN" -- . ':!tests/fixtures' ; test $? -eq 1
 - G16c: restart test reworded (dead marker from an earlier instance); echo rule names the live-span echo only.
 - G16e: blocked by G16g; README includes deadlines.
 - G16f: blocked by G16g; deadline cells added.
+
+## G16g, revised (architect round 6: kanban dispatcher tick instead of cron)
+
+- Type: Task · Parent: `DER-767`
+- Design: `docs/session-mail/passive.md` P7 in section 5 (architect rounds 5–6) — operator question SM-Q29, 2026-11-14 ("yes", with the tick hook instead of cron)
+- Builder: Claude Opus
+
+**Outcome:** a per-target passive note can carry a deadline. If it is still undelivered when the deadline passes, the target is woken once through Hermes's queue, and that turn carries the note. A note delivered earlier causes no wake. The gateway fires deadlines by itself from the published `on_kanban_dispatch_tick` hook; no job is installed.
+
+**Acceptance:**
+- **Send:** optional `within` (integer minutes) on `send`. Tool schema in `_schema` (`__init__.py:116-179`), with the description line "within: for a passive note, wake the target after this many minutes (at least 5) if it has not run". CLI `send --within MINUTES` (`cli.py:99-110`). Stored as `wake_at = created_at + within*60` in a new `wake_at` column, added by the guarded migration pattern from G16a.
+- **Usage errors** (G16a style: refused before a message id exists, nothing recorded, CLI exit 2, the reason in plain words):
+  - `within` with `to: all`: it would wake every session;
+  - `within` with a delivery other than `passive`: those hand the message over at once;
+  - `within` under 5 or not a whole number.
+- **Receipt:** `held (wakes by HH:MM if not run)`, local time of `wake_at`. `status` adds `wakes by HH:MM`, then `woken <time> (turn <id>)` once the wake turn has started.
+- **Replacement:** keyed replacement (G16a) is unchanged. The newer row carries its own `wake_at` (none if it has none), and a replaced row is never due.
+- **The sweep, `deadline.sweep()`** (new module `deadline.py`, with the dual-import pattern from `echo.py:399-406`). For each profile in turn:
+  1. **Which profiles:** the root, plus every `<root>/profiles/<name>` passing `hermes_constants.PROFILE_ID_RE` and `named_profile_is_live`, whose config enables intercom (the G16d rule).
+  2. **Under the override:** each profile's sweep runs inside G16d's `in_profile(name)`.
+  3. **Discover:** discover that profile's owner once (`client._discover`); with no owner, skip the profile.
+  4. **Select due rows.** A row is due when all of these hold:
+     - `requested='passive'`, `result='pending'`, `delivered_at IS NULL`;
+     - `wake_at <= now`;
+     - no consumed wake;
+     - no live wake. "Live" uses the G16c marker rule: an `instance_id` equal to the discovered owner's.
+  5. **Claim:** for each due row, oldest first, in its own `BEGIN IMMEDIATE`, write the wake marker (owner `instance_id` plus a claim time) only while the row is still due.
+  6. **Fire:**
+     - check `injection_allowed()` (`route.py:174-185`); if it is off, release the claim and leave the row held;
+     - re-resolve the target's compression tip (`address.py:196-200`);
+     - submit the G16c wake line through `client.deliver_sync(tip, wake, "queue", submission_id)`. The line is built with `frame.build` and `reply_mode='none'`, with `header_sha` recorded on the note's row, and reads "a held note from `<sender>` is due; it follows".
+  7. **Record** the admission id on the marker.
+  8. **Failure:** a delivery failure releases the claim and logs one line. The sweep never raises.
+- **Tick hook:** `register()` registers `on_kanban_dispatch_tick` (published, `hermes_cli/plugins.py:183-192`).
+  - The handler ignores `dry_run=True`.
+  - Otherwise it starts one daemon thread running `deadline.sweep()` and returns at once. A process-wide non-blocking lock makes the handler return without starting another sweep while one is running. It never blocks the dispatcher's tick (the hook runs inline in the dispatcher's worker thread, `gateway/kanban_watchers_dispatcher.py:215-217`).
+  - The hook reaches only the launch profile's plugin manager (`hermes_cli/plugins.py:822-841`, dispatcher context `gateway/kanban_watchers_common.py:21-34`). That is why the sweep covers every profile itself.
+- **`hermes intercom wake-due`:** a new CLI verb (`register_parser`, `cli.py:99-160`) that runs `deadline.sweep()` once in the foreground. It prints nothing on success, exits 0 unless the run itself fails, and is the documented fallback for setups without the in-gateway dispatcher. Nothing schedules it.
+- **Wake turn:**
+  - G16b's `pre_llm_call` recognises the wake span in `user_message`, using the existing span finder that G16c uses. It marks the wake consumed (`wake_turn = turn_id`) and hands over the target's held passive notes with G16b's frame and offer/confirm. The row named by the wake is included.
+  - The wake span itself is never a reply candidate and is never echoed. The note is echoed at confirmed handover in a private chat, exactly as G16b does.
+  - After its wake is submitted, a deadline row is offered only in its wake turn, or when its wake is dead (the G16c rule for keyed queued rows).
+- **One wake per deadline:**
+  - A consumed wake is never re-sent, even if its turn delivered nothing (veto, a runtime that carries no plugin text).
+  - A wake from an earlier owner instance that was never consumed counts as dead. The next sweep fires it once more, which covers a deadline that passed, or a wake queue lost, across a gateway restart.
+- **README section "Deadlines"** (written here; G16e keeps it). It covers:
+  - `within` and its refusals;
+  - that the gateway fires a deadline at the first kanban dispatcher tick after it (`kanban.dispatch_interval_seconds`, default 60 s; first tick about 5 s after boot);
+  - that nothing fires while `hermes pause` is engaged, and due deadlines fire after resume;
+  - that with `kanban.dispatch_in_gateway: false`, or with intercom disabled in the default profile, deadlines fire only when `hermes intercom wake-due` runs, which the operator may schedule;
+  - that cross-profile deadlines are fired by the same sweep.
+- **Profiles:** `within` works with G16d's `profile`. The row is in the target's record, and the sweep visits that profile.
+- **Tests:** new `tests/test_deadline.py`, with a fake `client.deliver_sync`/`_discover` as `tests/test_route.py` does, a real `SessionDB` in the temp home, and a named profile home as in `tests/test_profiles.py`:
+  - each usage error;
+  - the receipt and status text;
+  - not yet due → no wake;
+  - due → exactly one wake through `deliver_sync(..., "queue", ...)` with `reply_mode='none'`;
+  - delivered before the deadline → no wake;
+  - two overlapping sweeps (hold the record transaction) → one wake;
+  - a consumed wake is not re-sent on later sweeps;
+  - a marker from a different owner instance, never consumed → fires once more;
+  - injection off at fire time → no wake, row still held;
+  - a target compacted between send and deadline → the wake goes to the new tip;
+  - a due row in the named profile's record is woken by a sweep started in the root profile, and `get_hermes_home()` inside the fake `deliver_sync` is the named home;
+  - a profile with intercom disabled is skipped;
+  - the tick handler with `dry_run=True` does nothing;
+  - the tick handler returns before the sweep finishes (a fake `deliver_sync` that blocks), and a second tick during a running sweep starts no second sweep;
+  - the wake turn hands over the note and other held notes, and the wake span is neither a reply candidate nor echoed;
+  - the note is echoed once at confirmed handover in a private chat;
+  - after the wake is submitted, a different turn does not take the note; after a dead wake, it does;
+  - a keyed replacement before the deadline takes the new row's `within`, and a replacement without `within` leaves nothing due;
+  - `wake-due` with no owner → exit 0, nothing printed;
+  - a passive note with `within` and `profile` lands in the target's record with `wake_at` set.
+
+**Verify:**
+```
+cd <intercom-repo>
+HERMES_HOME="$(mktemp -d)" <hermes-test-python> -I -m unittest discover -s tests -p 'test_deadline.py' -t . -v
+HERMES_HOME="$(mktemp -d)" <hermes-test-python> -I -m unittest discover -s tests -p 'test_*.py' -t .
+git grep -n -i -E "$HOUSE_PATTERN" -- . ':!tests/fixtures' ; test $? -eq 1
+```
+
+- **Blocked by:** G16d · **Blocks:** G16f
+- **Out of scope:** everything the plan marks settled (no caps, holds, expiry, retries or approval gates on delivery; gateway only; published plugin API only, no core change; reply modes; `[SILENT]`; no general notifications or forwarding); the live install; any cron job or other scheduler setup (none is installed; `wake-due` is documented only); a timer of our own inside the gateway process; the subscription monitor's own sender (built elsewhere).
+
+### G16f deadline cells, revised
+
+- deadline: a passive note with `within` to an idle session, its `wake_at` moved into the past in the record → within a few dispatcher ticks the session gets exactly one new turn (the fake model sees the wake line and the held note in that turn's user message), `status` shows `woken … (turn …)`, and no second turn follows over the next several ticks;
+- deadline delivered first: a note with `within` handed over at the session's next turn before its `wake_at` → after `wake_at` passes, no wake turn over several ticks;
+- deadline across a restart: a note whose `wake_at` passes while the owner is stopped → after `hermes gateway run` restarts, the session gets one wake turn at an early tick (about 5 s after boot plus one interval);
+- deadline in another profile: a named profile served by the multiplexer (as in the other-profiles cell), a note with `within` from default to a named-profile session → when it is due, that session gets one wake turn from the default gateway's tick;
+- deadline fallback: with `kanban.dispatch_in_gateway: false` in a second world (or the same world restarted with it), a due note causes no wake until `hermes intercom wake-due` runs once (CLI, exit 0, no output), after which the session gets one wake turn.
