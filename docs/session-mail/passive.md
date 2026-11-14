@@ -1,12 +1,14 @@
 # Session mail: passive delivery and keyed notes (Plan)
 
-Status: Plan, round 3 (architect reviews folded in: `reviews/passive-architect-r1.md`, `reviews/passive-architect-r2.md`), for the operator's Plan/UX gate. Brief input: the vault's `requests/2026-11-14-session-mail-passive-keyed-brief.md` (operator's words, 2026-11-14). Everything settled for session mail stays settled: no caps, holds, retries or approval gates on delivery; gateway only; no core behaviour patch (published plugin API only); reply modes; `[SILENT]`; no general notifications or forwarding (2026-11-14).
+Status: Plan, round 4 (architect reviews folded in: `reviews/passive-architect-r1.md`, `reviews/passive-architect-r2.md`; operator scope addition 2026-11-14: keys work with queue too), for the operator's Plan/UX gate. Brief input: the vault's `requests/2026-11-14-session-mail-passive-keyed-brief.md` (operator's words, 2026-11-14). Everything settled for session mail stays settled: no caps, holds, retries or approval gates on delivery; gateway only; no core behaviour patch (published plugin API only); reply modes; `[SILENT]`; no general notifications or forwarding (2026-11-14).
 
 ## 1. What it does
 
 A sender can mark a message **passive**: it does not wake, steer, queue or interrupt the target. Session mail keeps it in its record. The next time the target starts a turn, for any reason (the operator types, another message wakes it, a resume after reboot), session mail hands over every note held for it, oldest first, in that turn.
 
 A passive note can carry a **key**. A new passive note with the same key for the same target replaces the held one: the older note leaves the pending list (kept in the record as `replaced`), and the new one takes the newest place. An hourly status sent to a session that sleeps 30 hours is one note when it wakes, not 30.
+
+A key also works with **queue** (operator, 2026-11-14). A keyed queued message to a target that is busy is held by session mail, not handed to Hermes's own queue (a plugin cannot edit that queue). A newer one with the same key replaces it. When the target's turn ends, session mail hands the newest one over and it runs as the target's next turn. To an idle target a keyed queued message starts a turn at once, as queue always does, so nothing is there to replace. Example: a build watcher queues "build state: verifying G3" while the owner is busy, then "build state: G3 landed"; the owner, when its turn ends, gets one turn with the second.
 
 A keyed passive note can go to **`all`**: one note that every conversation session gets, newest version only, once, at its next turn (SM-Q27). The hourly subscription status uses it.
 
@@ -15,10 +17,10 @@ Mechanism: the published `pre_llm_call` hook, which runs once at the start of ev
 ## 2. How a sender uses it
 
 Tool: `intercom(action="send", to=<id|title|Home|all>, message=..., reply=..., delivery="passive", key=<optional>)`
-CLI: `hermes intercom send --to <id|all> --delivery passive [--key KEY] [--reply none|requested] --from <label> --file note.md`
+CLI: `hermes intercom send --to <id|all> --delivery passive [--key KEY] [--reply none|requested] --from <label> --file note.md`; keyed queue: `--delivery queue --key KEY`.
 
 Usage errors (refused before a message id exists, nothing recorded, exit 2), each with its reason in the refusal:
-- `key` without `delivery: passive`: other modes hand the message over at once, so there is nothing held to replace.
+- `key` with `steer` or `interrupt`: they hand the message over at once, so there is nothing held to replace. (`key` works with `passive` and `queue`.)
 - `to: all` without `delivery: passive` and a `key`: an un-keyed or waking message to every session is the general notification the 2026-11-14 rule forbids.
 - `to: all` with a reply other than `none`: one note would ask every session to answer the sender.
 - `reply: waiting` with passive: the `waiting` frame tells the target to answer it first, while a held note is to be dealt with after what the turn is for.
@@ -27,7 +29,7 @@ Usage errors (refused before a message id exists, nothing recorded, exit 2), eac
 
 `all` is matched before ordinary addressing, like `Home`: a session titled "all" is reachable only by id.
 
-Keys: free text, trimmed, case-sensitive, one shared namespace across senders (any sender with the same key and target replaces). Use topic names; `subscription-usage` belongs to the hourly note (P4).
+Keys: free text, trimmed, case-sensitive, one shared namespace across senders and across the two keyed modes: a new message with the same key and target replaces any held one with that key, passive or queued, and its own mode then applies. Use topic names; `subscription-usage` belongs to the hourly note (P4).
 
 Receipt: `held` and the message id; never "delivered", because nothing has reached the target. `hermes intercom status <id>` later shows `held`, `delivered <time>` with the turn, or `replaced by <id>`. For an `all` note: `held for all · handed to N sessions · replaced by <id>` when replaced. `log` lists them.
 
@@ -65,7 +67,7 @@ The answering instructions sit at the top, so they survive Hermes's spill of ver
 
 Choose the delivery by what the target must do and when:
 - **Act now** (a correction, a stop, a handoff it is waiting on): `steer`; `interrupt` only to stop obsolete work.
-- **Act after its current work**: `queue`.
+- **Act after its current work**: `queue`. If you may send the same kind of update several times while it is busy (a build's state), add a `key` so only the newest one wakes it.
 - **Know, but not until it next works**: `passive`. Costs nothing until then and never pulls the target off its work.
 - **Repeated status** (usage meters, a build's current state, what is deployed): `passive` with a `key` per topic, so only the newest version is ever pending. Status every session should have: `to: all` with a key.
 - **Requests, answers and one-time updates**: no key. Each is its own message and must not be replaced by the next one. A request you need answered soon is not passive.
@@ -77,7 +79,8 @@ Choose the delivery by what the target must do and when:
 - **P2 turn-start handover** (new `passive.py` registered beside echo; `frame.py`; `replies.py`): `pre_llm_call` selects the lineage's pending notes and the unseen newest `all` versions (session source outside `RUN_SOURCES`, not the sender's lineage, injection allowed), frames them as in section 3 and records the offer; `pre_api_request` confirms it; the next turn re-offers anything unconfirmed. Per-target notes: offer writes `messages.offered_turn`, confirm is `UPDATE messages SET delivered_at=? WHERE offered_turn=? AND delivered_at IS NULL` (result `delivered` unless already `replaced`). `all` notes keep their offer per session in `note_seen` (the shared row is never written per session; its result stays `pending` until replaced): offer upserts `note_seen(root_id, note_key) = (message_id, turn_id, delivered_at NULL)`; confirm is `UPDATE note_seen SET delivered_at=? WHERE root_id=? AND turn_id=? AND delivered_at IS NULL`; a key is unseen when the newest pending `all` row's id differs from the session's `note_seen.message_id` or that row is unconfirmed; "handed to N" counts confirmed `note_seen` rows. In `replies.reply_for`, passive rows take the existing `optional` branch (block only). Echo at confirmed handover for per-target notes in private chats, with its own echo text (header line plus relabelled body).
 - **P3 docs and skill**: README section (including "all" as a reserved address and the shared key namespace), one tool-description line, session-mail skill guidance (section 4).
 - **P4 hourly subscription note**: a no-agent Hermes cron job running `subscription-note.sh` hourly: read `$HERMES_HOME/plugin-data/model-routing/state.json` (read-only, no tokens), format one line (used % and reset per subscription, router pick, OpenRouter spend today; no timestamps), and if that line differs from the last one sent (kept in a small state file beside the script) run `hermes intercom send --to all --delivery passive --key subscription-usage --reply none --from subscription-note`.
-- **Tests:** per item, plus end-to-end cells on the trial gateway: passive to a running and to an idle session (neither wakes; both get it at the next turn); keyed replacement order; compaction between send and handover (delivered once, to the new tip); veto (stays held); failed model call after the first request (delivered, not re-offered); `reply requested` answered back by its block, and answered without a block (nothing sent, `no-block`); `all` once per version and not to runs; each usage error.
+- **P5 keyed queue** (`route.py`, `passive.py`, `record.py`): a keyed queued send to a running target is stored `pending` with its key (same replacement transaction as passive); to an idle target it is delivered at once as today. Handover: the published `on_session_end` hook (end of every turn, interrupted ones included) submits the newest held keyed queued message for that lineage through the existing queue path (`prompt.submit`), marks it delivered with the receipt, and leaves held passive notes alone (they ride the next turn, which this submit starts). Missed turn ends (gateway restart, a crash) are swept: at plugin start and at each send, held keyed queued messages whose target is not running are handed over. Status and log as for passive.
+- **Tests:** per item, plus end-to-end cells on the trial gateway: passive to a running and to an idle session (neither wakes; both get it at the next turn); keyed replacement order; compaction between send and handover (delivered once, to the new tip); veto (stays held); failed model call after the first request (delivered, not re-offered); `reply requested` answered back by its block, and answered without a block (nothing sent, `no-block`); `all` once per version and not to runs; each usage error; keyed queue: two keyed queued sends during a running turn produce one next turn with the newer text; a keyed queued send to an idle target starts at once; an interrupted turn still hands over; a gateway restart with a held keyed queued message delivers it after start.
 
 Deploy: P1–P3 change the plugin inside the gateway (hook behaviour and tool schema), so they take effect only after one gateway restart (SM-Q28). P4 starts after that.
 
@@ -89,7 +92,7 @@ Added by this plan:
 
 | Rule | Why | Cost | Remove by |
 |---|---|---|---|
-| `key` only with passive | it would silently do nothing on a live send | none | allow and ignore the key |
+| `key` not with steer or interrupt | it would silently do nothing on a send handed over at once | none | allow and ignore the key |
 | `to: all` needs `reply: none` | one note would ask every session to answer the sender | broadcast requests must go one by one | drop the check |
 | no `waiting` or `ask` with passive | contradictory frame; `ask` would always time out | use steer for those | drop the check |
 | P4 sends only when its line changed | identical text would re-deliver to every session each hour | none (keyed: only the newest is held anyway) | send every hour |
