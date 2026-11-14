@@ -180,3 +180,93 @@ python scripts/check
 
 - **Blocked by:** G16d · **Blocks:** deploy (manager: subtree pull, deployed branch, idle-gated gateway restart, session-mail skill guidance from `docs/skill-guidance.md`)
 - **Out of scope:** everything the plan marks settled (no caps, holds, expiry, retries or approval gates on delivery; gateway only; published plugin API only, no core change; reply modes; `[SILENT]`; no general notifications or forwarding); the live install; the subscription monitor's own sender (built elsewhere).
+
+## G16g — Deadline on a passive note (within, woken by hermes intercom wake-due from cron) (added 2026-11-14, SM-Q29; architect round 5)
+
+Repo: `intercom` · branch `der-767/deadline` · builder claude · blocked by G16d
+
+- Type: Task · Parent: `DER-767`
+- Design: `docs/session-mail/passive.md` P7 in section 5 (architect round 5) — operator question SM-Q29, 2026-11-14
+- Builder: Claude Opus
+
+**Outcome:** a per-target passive note can carry a deadline. If it is still undelivered when the deadline passes, the target is woken once through Hermes's queue, and that turn carries the note. A note delivered earlier causes no wake.
+
+**Acceptance:**
+- **Send:** optional `within` (integer minutes) on `send`. Tool schema in `_schema` (`__init__.py:116-179`), with the description line "within: for a passive note, wake the target after this many minutes (at least 5) if it has not run". CLI `send --within MINUTES` (`cli.py:99-110`). Stored as `wake_at = created_at + within*60` in a new `wake_at` column, added by the guarded migration pattern from G16a.
+- **Usage errors** (G16a style: refused before a message id exists, nothing recorded, CLI exit 2, the reason in plain words):
+  - `within` with `to: all`: it would wake every session;
+  - `within` with a delivery other than `passive`: those hand the message over at once;
+  - `within` under 5 or not a whole number.
+- **Receipt:** `held (wakes by HH:MM if not run)`, local time of `wake_at`. `status` adds `wakes by HH:MM`, then `woken <time> (turn <id>)` once the wake turn has started.
+- **Replacement:** keyed replacement (G16a) is unchanged. The newer row carries its own `wake_at` (none if it has none), and a replaced row is never due.
+- **`hermes intercom wake-due`:** a new CLI verb (`register_parser`, `cli.py:99-160`). Its run:
+  1. Discover the owner once (`client._discover`). With no owner, exit 0 and print nothing.
+  2. Select due rows. A row is due when all of these hold:
+     - `requested='passive'`, `result='pending'`, `delivered_at IS NULL`;
+     - `wake_at <= now`;
+     - no consumed wake;
+     - no live wake. "Live" uses the G16c marker rule: an `instance_id` equal to the discovered owner's.
+  3. Process each due row oldest first, in its own `BEGIN IMMEDIATE`: claim the row by writing the wake marker (owner `instance_id` plus a claim time) only while it is still due.
+  4. Then:
+     - check `injection_allowed()` (`route.py:174-185`); if it is off, release the claim and leave the row held;
+     - re-resolve the target's compression tip (`address.py:196-200`);
+     - submit the G16c wake line through `client.deliver_sync(tip, wake, "queue", submission_id)`. The line is built with `frame.build` and `reply_mode='none'`, with `header_sha` recorded on the note's row, and reads "a held note from `<sender>` is due; it follows".
+  5. Record the admission id on the marker.
+  6. A delivery failure releases the claim and logs one line to stderr. Exit 0 unless the run itself fails.
+  7. Print nothing on success, so the no-agent cron run stays silent (`cron/scheduler.py:1546-1554`).
+- **Wake turn:**
+  - G16b's `pre_llm_call` recognises the wake span in `user_message`, using the existing span finder that G16c uses. It marks the wake consumed (`wake_turn = turn_id`) and hands over the target's held passive notes with G16b's frame and offer/confirm. The row named by the wake is included.
+  - The wake span itself is never a reply candidate and is never echoed. The note is echoed at confirmed handover in a private chat, exactly as G16b does.
+  - After its wake is submitted, a deadline row is offered only in its wake turn, or when its wake is dead (the G16c rule for keyed queued rows).
+- **One wake per deadline:**
+  - A consumed wake is never re-sent, even if its turn delivered nothing (veto, a runtime that carries no plugin text).
+  - A wake from an earlier owner instance that was never consumed counts as dead. The next `wake-due` run fires it once more, which covers a deadline that passed, or a wake queue lost, across a gateway restart.
+- **Cron job:**
+  - The README (section "Deadlines") gives the one-time setup per profile. Put `intercom-wake-due.py` in `<profile home>/scripts/`, containing:
+    ```
+    import sys
+    from hermes_cli.main import main
+    sys.argv = ["hermes", "intercom", "wake-due"]
+    main()
+    ```
+  - Then run:
+    ```
+    hermes [-p <profile>] cron create "every 1m" --no-agent --script intercom-wake-due.py --name intercom-wake-due
+    ```
+  - It states that a deadline fires within about two minutes after `wake_at`, and that a cross-profile deadline needs the job in the target profile.
+  - `wake-due` never creates the job itself; deploy runs the setup.
+- **Profiles:** `within` works with G16d's `profile`. The row is in the target's record, so the target profile's job fires it.
+- **Tests:** new `tests/test_deadline.py`, with a fake `client.deliver_sync`/`_discover` as `tests/test_route.py` does and a real `SessionDB` in the temp home:
+  - each usage error;
+  - the receipt and status text;
+  - not yet due → no wake;
+  - due → exactly one wake through `deliver_sync(..., "queue", ...)` with `reply_mode='none'`;
+  - delivered before the deadline → no wake;
+  - two overlapping `wake-due` runs (hold the record transaction) → one wake;
+  - a consumed wake is not re-sent on later runs;
+  - a marker from a different owner instance, never consumed → fires once more;
+  - injection off at fire time → no wake, row still held;
+  - a target compacted between send and deadline → the wake goes to the new tip;
+  - the wake turn hands over the note and other held notes, and the wake span is neither a reply candidate nor echoed;
+  - the note is echoed once at confirmed handover in a private chat;
+  - after the wake is submitted, a different turn does not take the note; after a dead wake, it does;
+  - a keyed replacement before the deadline takes the new row's `within`, and a replacement without `within` leaves nothing due;
+  - no owner → exit 0, nothing printed;
+  - a passive note with `within` and `profile` lands in the target's record with `wake_at` set.
+
+**Verify:**
+```
+cd <intercom-repo>
+HERMES_HOME="$(mktemp -d)" <hermes-test-python> -I -m unittest discover -s tests -p 'test_deadline.py' -t . -v
+HERMES_HOME="$(mktemp -d)" <hermes-test-python> -I -m unittest discover -s tests -p 'test_*.py' -t .
+git grep -n -i -E "$HOUSE_PATTERN" -- . ':!tests/fixtures' ; test $? -eq 1
+```
+
+- **Blocked by:** G16d · **Blocks:** G16f
+- **Out of scope:** everything the plan marks settled (no caps, holds, expiry, retries or approval gates on delivery; gateway only; published plugin API only, no core change; reply modes; `[SILENT]`; no general notifications or forwarding); the live install, including creating the cron job (deploy does that from the README); a timer inside the gateway process; the subscription monitor's own sender (built elsewhere).
+
+## Changes from architect round 5 to other items
+
+- G16c: restart test reworded (dead marker from an earlier instance); echo rule names the live-span echo only.
+- G16e: blocked by G16g; README includes deadlines.
+- G16f: blocked by G16g; deadline cells added.
