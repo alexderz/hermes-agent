@@ -2,9 +2,10 @@
 
 One temporary ``HERMES_HOME``, every surface real (``_owner_world``): a ``hermes gateway run`` owner
 with the bundled ntfy adapter on a fake ntfy server, a scripted fake model, a classic CLI under a pty,
-owner-attached clients and the admin dashboard. The plugin is installed into
-``$HERMES_HOME/plugins/intercom`` (``conftest.py``: ``plugins/intercom`` once vendored, else
-``--intercom-src``).
+owner-attached clients and the admin dashboard. The owner multiplexes a named profile
+(``gateway.multiplex_profiles: true``) and runs the kanban dispatcher every ``TICK_S``. The plugin is
+installed into each profile's ``plugins/intercom`` (``conftest.py``: the ``--intercom-src`` checkout
+when given, else the vendored ``plugins/intercom``).
 
 - Trial round 3's 24 cells, rebuilt on the real plugin: Q1, the host of each kind (4); Q2, steer,
   queue, interrupt and idle start into each kind through the intercom tool, in the owner (16; the
@@ -18,8 +19,14 @@ owner-attached clients and the admin dashboard. The plugin is installed into
   real ntfy adapter (N3); a shared chat receives only the answer (N4); a steer followed by the
   final answer is echoed once before it, and a steer that lands during the final request is echoed
   by the later turn (GW-4).
+- G16 (DER-767, ``passive.md`` § 5 Tests): passive notes to a running and an idle session, keyed
+  replacement, ``reply requested`` answered by its block or not at all, a vetoed turn, keyed queue
+  to a running and an idle session, ``to: all`` once per version and not to the sender, the
+  subscription monitor's CLI call; the other profile both ways with a reply back and its Bot Chat
+  by title; deadlines: a due note wakes once, a delivered one never, one in the other profile, one
+  due while the owner was down, and ``hermes intercom wake-due`` without the in-gateway dispatcher.
 
-Run (the explicit ``--`` lets the conftest option through; G12 uses the same timeout)::
+Run (the explicit ``--`` lets the conftest option through)::
 
     HERMES_HOME="$(mktemp -d)" scripts/run_tests.sh --fail-on-skip --file-retries 0 --file-timeout 600 \
         tests/plugins/intercom/test_e2e_owner.py -- --intercom-src=<intercom checkout>
@@ -36,7 +43,8 @@ import pytest
 
 from tests.e2e.core.chaos._helpers import kill_tagged, new_tag
 
-from ._owner_world import GROUP_TOPIC, PRIVATE_TOPIC, TURN_S, USER_NAME, World, find_receipt
+from ._owner_world import (GROUP_TOPIC, NO_BLOCK, PRIVATE_TOPIC, PROFILE, TICK_S, TURN_S, USER_NAME, VETO, World,
+                           find_receipt)
 
 pytestmark = [pytest.mark.platforms("linux"), pytest.mark.spawns_gateway_lookalike]
 
@@ -429,8 +437,9 @@ def test_no_legacy_inbox_or_drain_hook_after_the_restart(world: World, restarted
 
     The drain would be registered lazily, at the first intercom call in a process, so each live hook
     table is read after one: the owner's after a tool call in a session it hosts, the dashboard's
-    (B12: never in a dashboard process) after a tool call from its own chat. Intercom's only
-    ``pre_llm_call`` is the echo, and it has no ``on_session_end``.
+    (B12: never in a dashboard process) after a tool call from its own chat. Intercom's
+    ``pre_llm_call`` and ``pre_api_request`` hooks are the echo's and the held notes' (G16b), and it
+    has no ``on_session_end``.
     """
     world.quiet()
     tag = f"d{secrets.token_hex(3)}"
@@ -443,11 +452,322 @@ def test_no_legacy_inbox_or_drain_hook_after_the_restart(world: World, restarted
     for name, after in calls.items():
         snapshots = [t for t in world.hook_tables(world.procs[name].pid) if t["t"] > after]
         assert snapshots, f"no hook table from the {name} after its intercom call"
-        ours = {hook: [cb.rsplit(":", 1)[1] for cb in cbs if "intercom" in cb.split(":")[0]]
-                for hook, cbs in snapshots[-1].items() if hook not in ("pid", "t")}
-        assert ours == {"pre_llm_call": ["on_pre_llm_call"], "pre_api_request": ["on_pre_api_request"],
-                        "post_llm_call": ["on_post_llm_call"], "on_session_end": []}, (name, snapshots[-1])
-        echo_hook = next(cb for cb in snapshots[-1]["pre_llm_call"] if cb.endswith(":on_pre_llm_call"))
-        assert echo_hook.split(":")[0].endswith(".echo"), (name, echo_hook)
+        # module.leaf:qualname of each intercom callback the probe saw, per hook
+        ours = {hook: sorted(f"{cb.split(':')[0].rsplit('.', 1)[-1]}:{cb.rsplit(':', 1)[1]}"
+                             for cb in snapshots[-1][hook] if "intercom" in cb.split(":")[0])
+                for hook in ("pre_llm_call", "pre_api_request", "post_llm_call", "on_session_end")}
+        assert ours == {"pre_llm_call": ["echo:on_pre_llm_call", "passive:on_pre_llm_call"],
+                        "pre_api_request": ["echo:on_pre_api_request", "passive:on_pre_api_request"],
+                        "post_llm_call": ["replies:on_post_llm_call"], "on_session_end": []}, (name, ours)
     sessions = world.hermes_home / "intercom" / "sessions"
     assert not (sessions.exists() and any(sessions.iterdir())), sorted(p.name for p in sessions.iterdir())
+
+
+# ── G16: passive notes, keys, other profiles, deadlines (passive.md § 5 Tests) ─────
+#
+# Each cell addresses sessions of its own (``_fresh``), so a held note never rides another cell's
+# turn. A turn is named by the probe's ``pre_llm_call`` row (``World.turns``): its session, its turn
+# id (what ``status`` names) and its typed text. "No turn" over a stretch is read after dispatcher
+# ticks (``World.wait_ticks``), each of which ran a deadline sweep.
+
+
+def _fresh(world: World, *, profile: str | None = None, title: str | None = None) -> str:
+    """A new owner-attached session (in *profile*), its one seed turn over."""
+    seed = f"z{secrets.token_hex(3)}"
+    sid = world.attached_session(f"TAG={seed} STEPS=0", profile=profile, title=title)
+    world.answered(seed)
+    world.quiet()
+    return sid
+
+
+def _turn(world: World, sid: str, extra: str = "", *, profile: str | None = None):
+    """One typed turn on *sid*: (its answered request, its turn id)."""
+    tag = f"t{secrets.token_hex(3)}"
+    world.attached_submit(sid, f"TAG={tag} STEPS=0 {extra}".rstrip(), profile=profile)
+    req = world.answered(tag)
+    row = world.poll(lambda: next((r for r in world.turns(sid) if f"TAG={tag}" in r["typed"]), None),
+                     TURN_S, f"the probe's row of turn {tag}")
+    return req, row["turn"]
+
+
+def _held_lines(prompt: str) -> list[str]:
+    return [line for line in prompt.splitlines() if line.startswith("📡 Held note")]
+
+
+def _passive(world: World, to: str, body: str, *, reply: str = "none", sender: str | None = None,
+             **opts) -> str:
+    receipt = world.tool_send(to, "passive", reply, body, sender=sender, **opts)
+    assert receipt.get("ok") is True and receipt["receipt"] == "held", receipt
+    return receipt["message_id"]
+
+
+@pytest.mark.parametrize("running", [True, False], ids=["running", "idle"])
+def test_passive_note_wakes_nothing_and_rides_the_next_turn(world: World, running: bool) -> None:
+    target, tok = _fresh(world), token()
+    long_tag = f"pl{secrets.token_hex(3)}"
+    hold = world.model.hold(long_tag, 0)
+    if running:
+        world.attached_submit(target, f"TAG={long_tag} STEPS=1")
+        assert hold.arrived.wait(TURN_S), "the long turn never reached the model"
+    since = time.time()
+    try:
+        mid = _passive(world, target, f"{tok} a passive note")
+    finally:
+        hold.release.set()
+    if running:
+        world.answered(long_tag)
+    world.wait_ticks(2)
+    world.quiet()
+    assert not world.turns(target, since), "the passive note started a turn"
+    reached = world.model.find(lambda r: r.t > since and "CALL=" not in r.prompt
+                               and (tok in r.prompt or any(tok in s for s in r.steers)))
+    assert not reached, "the passive note reached the model before the target's next turn"
+    assert world.status(mid) == "held"
+    req, turn = _turn(world, target)
+    (line,) = _held_lines(req.prompt)
+    assert tok in line and f"not from {USER_NAME}, no reply" in line, req.prompt
+    assert world.status(mid).startswith("delivered ") and world.status(mid).endswith(f"(turn {turn})")
+    again, _ = _turn(world, target)
+    assert tok not in again.prompt, "the note was handed over twice"
+
+
+def test_keyed_passive_notes_hand_over_the_newest_only(world: World) -> None:
+    target, key = _fresh(world), f"k{secrets.token_hex(3)}"
+    toks = [token() for _ in range(3)]
+    mids = [_passive(world, target, f"{tok} version {n}", key=key) for n, tok in enumerate(toks)]
+    req, turn = _turn(world, target)
+    (line,) = _held_lines(req.prompt)
+    assert toks[2] in line and not any(t in req.prompt for t in toks[:2]), req.prompt
+    assert world.status(mids[0]) == f"replaced by {mids[1]}"
+    assert world.status(mids[1]) == f"replaced by {mids[2]}"
+    assert world.status(mids[2]).endswith(f"(turn {turn})")
+
+
+@pytest.mark.parametrize("answered", [True, False], ids=["block", "no-block"])
+def test_reply_requested_note_is_answered_only_by_its_block(world: World, answered: bool) -> None:
+    target, tok = _fresh(world), token()
+    mid = _passive(world, target, f"{tok} did the fix land?", reply="requested")
+    req, _ = _turn(world, target, "" if answered else NO_BLOCK)
+    assert req.prompt.count("📡 Held notes · 1 note held for you") == 1, req.prompt
+    assert f"reply requested (message {mid})" in req.prompt, req.prompt
+    if answered:
+        rows = world.poll(lambda: _reply_rows(world, mid), TURN_S, f"the reply to {mid} reaching the sender")
+        assert any(f"answer from {req.tag}" in row for row in rows), rows
+        assert world.session_with(f"reply to your message {mid}") == world.sender
+        row = world.poll(lambda: (r := world.record(mid)) and r["reply_message_id"] and r, 30, f"{mid}'s reply")
+        assert row["reply_state"] == "sent" and row["reply"] == f"answer from {req.tag}", row
+        return
+    row = world.poll(lambda: (r := world.record(mid)) and r["reply_state"] and r, 30, f"{mid}'s reply state")
+    world.quiet()
+    assert row["reply_state"] == "no-block" and not row["reply_message_id"], row
+    assert not _reply_rows(world, mid), "an answer without a block went back to the sender"
+
+
+def test_a_vetoed_turn_leaves_the_note_for_the_following_turn(world: World) -> None:
+    target, tok = _fresh(world), token()
+    mid = _passive(world, target, f"{tok} held across a veto")
+    veto = f"v{secrets.token_hex(3)}"
+    world.attached_submit(target, f"TAG={veto} {VETO}")
+    world.poll(lambda: any(f"TAG={veto}" in r["typed"] for r in world.turns(target)), TURN_S, "the vetoed turn")
+    world.quiet()
+    assert not world.model.tagged(veto), "the vetoed turn made a model request"
+    assert world.status(mid) == "held"
+    req, turn = _turn(world, target)
+    (line,) = _held_lines(req.prompt)
+    assert tok in line, req.prompt
+    assert world.status(mid).endswith(f"(turn {turn})")
+
+
+def test_two_keyed_queued_sends_to_a_running_turn_make_one_turn_with_the_newer(world: World) -> None:
+    target, key = _fresh(world), f"q{secrets.token_hex(3)}"
+    long_tag, toks = f"ql{secrets.token_hex(3)}", [token(), token()]
+    hold = world.model.hold(long_tag, 0)
+    world.attached_submit(target, f"TAG={long_tag} STEPS=1")
+    assert hold.arrived.wait(TURN_S), "the long turn never reached the model"
+    try:
+        receipts = [world.tool_send(target, "queue", "none", f"{tok} build state {n}", key=key)
+                    for n, tok in enumerate(toks)]
+        since = time.time()
+    finally:
+        hold.release.set()
+    assert all(r.get("ok") is True and r["receipt"] == "queued" for r in receipts), receipts
+    world.answered(long_tag)
+    world.poll(lambda: world.turns(target, since), TURN_S, "the keyed queue's wake turn")
+    world.wait_ticks(2)
+    world.quiet()
+    (woken,) = world.turns(target, since)
+    (req,) = world.model.find(lambda r: toks[1] in r.prompt and "CALL=" not in r.prompt)
+    assert toks[0] not in req.prompt, req.prompt
+    assert req.t > max(r.t for r in world.model.tagged(long_tag)), "the wake ran before the turn ended"
+    assert world.status(receipts[0]["message_id"]) == f"replaced by {receipts[1]['message_id']}"
+    assert world.status(receipts[1]["message_id"]).endswith(f"(turn {woken['turn']})")
+
+
+def test_a_keyed_queued_send_to_an_idle_session_starts_at_once(world: World) -> None:
+    target, tok = _fresh(world), token()
+    receipt = world.tool_send(target, "queue", "none", f"{tok} build state", key=f"q{secrets.token_hex(3)}")
+    assert receipt.get("ok") is True and receipt["receipt"] == "started" and receipt["applied"] == "start", receipt
+    world.poll(lambda: world.model.find(lambda r: tok in r.prompt), TURN_S, "the keyed message's turn")
+
+
+def test_keyed_note_to_all_reaches_each_conversation_once_and_not_the_sender(world: World) -> None:
+    early, key, toks = _fresh(world), f"a{secrets.token_hex(3)}", [token(), token()]
+    first = _passive(world, "all", f"{toks[0]} status v1", key=key)
+    seed = f"z{secrets.token_hex(3)}"
+    late = world.attached_session(f"TAG={seed} STEPS=0")  # started after the note: its first turn has it
+    assert len([ln for ln in _held_lines(world.answered(seed).prompt) if toks[0] in ln]) == 1
+    req, _ = _turn(world, early)
+    assert len([ln for ln in _held_lines(req.prompt) if toks[0] in ln]) == 1, req.prompt
+    for sid in (early, late):
+        req, _ = _turn(world, sid)
+        assert toks[0] not in req.prompt, "the all note was handed over twice"
+    own, _ = _turn(world, world.sender)
+    assert toks[0] not in own.prompt, "the sender got its own all note"
+    assert world.status(first) == "held for all · handed to 2 sessions"
+    second = _passive(world, "all", f"{toks[1]} status v2", key=key)
+    for sid in (early, late):
+        req, _ = _turn(world, sid)
+        (line,) = [ln for ln in _held_lines(req.prompt) if key in ln or toks[1] in ln]
+        assert toks[1] in line and toks[0] not in req.prompt, req.prompt
+        again, _ = _turn(world, sid)
+        assert toks[1] not in again.prompt, "the second version was handed over twice"
+    assert world.status(second) == "held for all · handed to 2 sessions"
+    words = world.status(first)
+    assert words.startswith("held for all · handed to ") and words.endswith(f" · replaced by {second}"), words
+
+
+def test_the_subscription_monitor_call_is_handed_over(world: World) -> None:
+    target, line = _fresh(world), f"Subs: Claude 18% wk · Codex 25% {token()}"
+    ran = world.intercom_raw("send", "--to", "all", "--delivery", "passive", "--key", "subscription-usage",
+                             "--reply", "none", "--from", "subscription-monitor", "--message", line)
+    assert ran.returncode == 0 and "held (" in ran.stdout, (ran.returncode, ran.stdout, ran.stderr[-2000:])
+    req, _ = _turn(world, target)
+    (held,) = [ln for ln in _held_lines(req.prompt) if line in ln]
+    assert held.startswith("📡 Held note (") and "subscription-monitor" in held, held
+
+
+# ── G16: other profiles (the owner's multiplexer serves the named profile) ──────
+
+
+def test_send_default_to_named_profile_is_delivered_and_answered_back(world: World) -> None:
+    target, tag, tok = _fresh(world, profile=PROFILE), f"x{secrets.token_hex(3)}", token()
+    receipt = world.tool_send(target, "steer", "requested", f"{tok} TAG={tag} STEPS=0", profile=PROFILE)
+    assert receipt.get("ok") is True and receipt["target_session"] == target, receipt
+    req = world.answered(tag)
+    assert tok in req.prompt and req.host == "owner", req
+    assert any(f"TAG={tag}" in r["typed"] for r in world.turns(target)), \
+        ("the turn did not run in the target", target, [(r["session"], r["typed"][:60]) for r in world.turns()][-6:])
+    mid = receipt["message_id"]
+    rows = world.poll(lambda: _reply_rows(world, mid), TURN_S, f"the reply to {mid} reaching the sender")
+    assert any(f"answer from {tag}" in row for row in rows), rows
+    assert world.session_with(f"reply to your message {mid}") == world.sender
+    row = world.record(mid, profile=PROFILE)
+    assert row["reply_state"] == "sent" and row["sender_profile"] == "default", row
+
+
+def test_send_named_profile_to_default_is_delivered(world: World) -> None:
+    sender, target = _fresh(world, profile=PROFILE), _fresh(world)
+    tag, tok = f"y{secrets.token_hex(3)}", token()
+    receipt = world.tool_send(target, "steer", "none", f"{tok} TAG={tag} STEPS=0", sender=sender,
+                              sender_profile=PROFILE, profile="default")
+    assert receipt.get("ok") is True and receipt["target_session"] == target, receipt
+    req = world.answered(tag)
+    assert tok in req.prompt and f"hermes@{PROFILE}/" in req.prompt, req.prompt
+    assert world.session_with(f"message {receipt['message_id']}):") == target
+
+
+def test_bot_chat_of_the_named_profile_is_reached_by_its_title(world: World) -> None:
+    bot = _fresh(world, profile=PROFILE, title="Bot Chat")
+    tag, tok = f"b{secrets.token_hex(3)}", token()
+    receipt = world.tool_send("Bot Chat", "steer", "none", f"{tok} TAG={tag} STEPS=0", profile=PROFILE)
+    assert receipt.get("ok") is True and receipt["target_session"] == bot, receipt
+    assert tok in world.answered(tag).prompt
+    assert any(f"TAG={tag}" in r["typed"] for r in world.turns(bot)), \
+        ("the turn did not run in the Bot Chat", bot, [(r["session"], r["typed"][:60]) for r in world.turns()][-6:])
+
+
+# ── G16: deadlines (fired from the gateway's dispatcher tick) ───────────────────
+
+
+def _due(world: World, target: str, tok: str, tag: str, *, profile: str | None = None) -> str:
+    """A held note with ``within`` to *target*, its ``wake_at`` moved into the past."""
+    mid = _passive(world, target, f"{tok} TAG={tag} STEPS=0 a note with a deadline", within=5,
+                   **({"profile": profile} if profile else {}))
+    assert world.record(mid, profile=profile)["wake_at"] is not None
+    world.set_wake_at(mid, time.time() - 1, profile=profile)
+    return mid
+
+
+def _one_wake(world: World, target: str, since: float, tok: str, tag: str, mid: str,
+              *, profile: str | None = None, settle=None) -> None:
+    """The target got its wake turn (the wake line and the note), then no other over several sweeps
+    (*settle*; by default four dispatcher ticks)."""
+    world.poll(lambda: world.turns(target, since), TURN_S, "the deadline's wake turn")
+    req = world.answered(tag)
+    assert "is due; it follows." in req.prompt and tok in req.prompt, req.prompt
+    (settle or (lambda: world.wait_ticks(4)))()
+    world.quiet()
+    (woken,) = world.turns(target, since)
+    assert "is due; it follows." in woken["typed"], woken
+    words = world.status(mid, profile=profile)
+    assert " · woken " in words and words.endswith(f"(turn {woken['turn']})"), words
+
+
+def test_a_due_note_wakes_its_idle_target_once(world: World) -> None:
+    target, tok, tag = _fresh(world), token(), f"dl{secrets.token_hex(3)}"
+    since = time.time()
+    mid = _due(world, target, tok, tag)
+    _one_wake(world, target, since, tok, tag, mid)
+
+
+def test_a_note_delivered_before_its_deadline_causes_no_wake(world: World) -> None:
+    target, tok = _fresh(world), token()
+    mid = _passive(world, target, f"{tok} a note with a deadline", within=5)
+    req, turn = _turn(world, target)
+    assert tok in req.prompt
+    since = time.time()
+    world.set_wake_at(mid, since - 1)
+    world.wait_ticks(4)
+    world.quiet()
+    assert not world.turns(target, since), "a delivered note's deadline woke the target"
+    assert world.status(mid).endswith(f"(turn {turn})") and "woken" not in world.status(mid)
+
+
+def test_a_due_note_in_the_named_profile_wakes_from_the_default_tick(world: World) -> None:
+    target, tok, tag = _fresh(world, profile=PROFILE), token(), f"dp{secrets.token_hex(3)}"
+    since = time.time()
+    mid = _due(world, target, tok, tag, profile=PROFILE)
+    _one_wake(world, target, since, tok, tag, mid, profile=PROFILE)
+
+
+def test_a_deadline_that_passed_while_the_owner_was_down_fires_after_boot(world: World) -> None:
+    target, tok, tag = _fresh(world), token(), f"dr{secrets.token_hex(3)}"
+    mid = _passive(world, target, f"{tok} TAG={tag} STEPS=0 a note with a deadline", within=5)
+    world.quiet()
+    world.stop_owner()
+    world.set_wake_at(mid, time.time() - 1)
+    booted = time.time()
+    world.start_owner()
+    ready = time.time()
+    turn = world.poll(lambda: next(iter(world.turns(target, booted)), None), TURN_S, "the wake turn after boot")
+    # The dispatcher's first tick runs 5 s after it starts (before the owner is ready), then one
+    # every TICK_S: the wake is at an early tick, with a few seconds' slack for a loaded runner.
+    assert turn["t"] - ready < 5 + 2 * TICK_S + 5, (turn["t"] - ready, turn)
+    _one_wake(world, target, booted, tok, tag, mid)
+
+
+def test_without_the_dispatcher_a_due_note_waits_for_wake_due(world: World) -> None:
+    booted = world.restart_owner(dispatch_in_gateway=False)
+    target, tok, tag = _fresh(world), token(), f"dw{secrets.token_hex(3)}"
+    since = time.time()
+    mid = _due(world, target, tok, tag)
+    world.quiet(secs=3 * TICK_S + 5)  # longer than the first tick after boot would have taken
+    assert not world.ticks(booted), "the dispatcher ticked with kanban.dispatch_in_gateway: false"
+    assert not world.turns(target, since), "a due note woke the target without the dispatcher"
+    assert world.status(mid).startswith("held · wakes by "), world.status(mid)
+    def wake_due() -> None:
+        ran = world.intercom_raw("wake-due")
+        assert (ran.returncode, ran.stdout, ran.stderr) == (0, "", ""), \
+            (ran.returncode, ran.stdout, ran.stderr[-2000:])
+    wake_due()
+    _one_wake(world, target, since, tok, tag, mid, settle=wake_due)  # a consumed wake is never re-sent
