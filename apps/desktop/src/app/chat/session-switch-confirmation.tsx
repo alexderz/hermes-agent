@@ -49,6 +49,7 @@ export function SessionSwitchConfirmation({
   const paneId = view.kind === 'primary' ? 'workspace' : `session-tile:${storedId}`
   const target = intent?.storedSessionId === storedId && intent.paneId === paneId
   const appView = appViewForPath(pathname)
+
   // Pages replace only the primary workspace. A fronted tile is still visible
   // beside/instead of that page, while a modal overlay covers every pane.
   const foreground =
@@ -56,6 +57,7 @@ export function SessionSwitchConfirmation({
     (!focusedPane || focusedPane === paneId) &&
     !isOverlayView(appView) &&
     (view.kind !== 'primary' || appView === 'chat')
+
   // Match the normalized active-branch head by reference: database row ids
   // can repeat across profiles, and tool/branch folding omits raw source rows.
   // An empty destination must also wait for the old runtime rows to retire.
@@ -100,6 +102,18 @@ export function SessionSwitchConfirmation({
       return
     }
 
+    // An untagged source has no proven scope, not an ambient one. Rebinding
+    // metadata on its unchanged transcript is not a foreground switch.
+    if (
+      !intent.previous?.identity &&
+      intent.previous?.runtimeId === runtimeId &&
+      intent.previous.storedSessionId === storedId
+    ) {
+      cancelSessionSwitch(storedId)
+
+      return
+    }
+
     const owner = runtimeSessionOwner(runtimeId)
 
     const identity = sessionSwitchIdentity(
@@ -109,7 +123,7 @@ export function SessionSwitchConfirmation({
 
     // A same-id owner switch can still display the old bound source while
     // resume runs. Reject an unrelated owner, not that known outgoing runtime.
-    if (identity === intent.previousIdentity) {
+    if (identity === intent.previous?.identity) {
       return
     }
 
