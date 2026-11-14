@@ -22,3 +22,4 @@ One line per landed item.
 - 2026-11-14 G16c (DER-767): Keyed queue: wake through Hermes's queue, newest version from the record — alexderz/hermes-intercom@02a290587e
 - 2026-11-14 G16d (DER-767): Other profiles, explicitly (profile on send and list) — alexderz/hermes-intercom@639cd6c1b1
 - 2026-11-14 G16g (DER-767): Deadline on a passive note (within, woken from the gateway's kanban dispatcher tick) — alexderz/hermes-intercom@72620b3769
+- 2026-11-14 G16e (DER-767): README and version for passive, keys and profiles — alexderz/hermes-intercom@5298d843bf
