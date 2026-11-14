@@ -23,7 +23,11 @@ import {
   $gatewayState,
   $resumeFailedSessionId,
   $selectedStoredSessionId,
+  $sessionResumeRequest,
   $sessions,
+  forgetSessionOwnerHintsForSession,
+  getSessionOwnerHint,
+  requestSessionResume,
   rotateFreshDraftKey,
   setSelectedStoredSessionId
 } from '@/store/session'
@@ -33,6 +37,7 @@ import {
   clearAllSessionStates,
   publishSessionState,
   recordSessionEventScope,
+  runtimeSessionOwner,
   setSessionTileDelegate
 } from '@/store/session-states'
 import { stubMenuDomApis, stubResizeObserver } from '@/test/jsdom'
@@ -176,6 +181,7 @@ afterEach(() => {
   clearAllSessionStates()
   $activeSessionId.set(null)
   $selectedStoredSessionId.set(null)
+  $sessionResumeRequest.set(null)
   $sessions.set([])
   $layoutTree.set(null)
   vi.restoreAllMocks()
@@ -379,6 +385,7 @@ it.each(['primary', 'tile'] as const)('does not replay a %s completion covered b
     $sessionTiles.set([{ storedSessionId: 'B', runtimeId: 'runtime-B', dir: 'center' }])
     $layoutTree.set(group(['workspace', 'session-tile:B'], { id: 'main', active: 'workspace' }))
   }
+
   mount()
   act(() => openSession('B', navigate))
   act(() => navigate('/settings'))
@@ -450,6 +457,54 @@ it('preserves a first-mounted destination intent through StrictMode effect repla
     complete('runtime-B')
   })
   await waitFor(() => expect(trigger).toHaveBeenCalledTimes(1))
+})
+
+it('keeps an untagged non-ambient primary same-session reselect silent', async () => {
+  const owner = { connectionId: 'local', profile: 'other-profile' }
+  $sessions.set($sessions.get().map(row => (row.id === 'A' ? { ...row, profile: 'other-profile' } : row)))
+  requestSessionResume('A', owner)
+
+  try {
+    expect(getSessionOwnerHint('A')).toEqual(owner)
+    expect(runtimeSessionOwner('runtime-A')).toBeUndefined()
+    expect($activeGatewayProfile.get()).toBe('default')
+    mount()
+    act(() => openSession('A', navigate))
+    expect(screen.getByTestId('transcript').textContent).toBe('Transcript A')
+    expect($activeSessionId.get()).toBe('runtime-A')
+    expect(trigger).not.toHaveBeenCalled()
+  } finally {
+    forgetSessionOwnerHintsForSession('A')
+  }
+})
+
+it('keeps RPC-bound source ownership when a same-id destination hint changes before its runtime arrives', async () => {
+  const previousOwner = { connectionId: 'local', profile: 'other-profile' }
+  const nextOwner = { connectionId: 'local', profile: 'default' }
+  publishSessionState('runtime-A', { ...$sessionStates.get()['runtime-A']!, boundOwner: previousOwner })
+  mount()
+  act(() => {
+    requestSessionResume('A', nextOwner)
+    openSession('A', navigate, 'in-place', { workspaceMode: 'sessions', ownerRoute: nextOwner })
+  })
+  expect(trigger).not.toHaveBeenCalled()
+  act(() => $activeSessionId.set(null))
+  await act(async () => {
+    publishSessionState('runtime-next-A', {
+      ...createClientSessionState('A', [
+        { id: 'next-A', role: 'assistant', parts: [assistantTextPart('Next owner A')] }
+      ]),
+      boundOwner: nextOwner
+    })
+    $activeSessionId.set('runtime-next-A')
+  })
+
+  try {
+    await waitFor(() => expect(screen.getByTestId('transcript').textContent).toBe('Next owner A'))
+    expect(trigger).toHaveBeenCalledTimes(1)
+  } finally {
+    forgetSessionOwnerHintsForSession('A')
+  }
 })
 
 it('waits for the new normalized message objects even when profiles reuse message ids', async () => {

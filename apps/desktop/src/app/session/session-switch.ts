@@ -19,8 +19,14 @@ import { $focusedStoredSessionId, $focusedTreePaneId, TILE_PANE_PREFIX } from '@
 import type { SessionProfileRoute } from '@/store/session-request-router'
 import { $sessionStates, $sessionTiles, runtimeSessionOwner } from '@/store/session-states'
 
+interface SessionSwitchSource {
+  identity: string | null
+  runtimeId: string
+  storedSessionId: string
+}
+
 interface SessionSwitchIntent {
-  previousIdentity: string | null
+  previous: SessionSwitchSource | null
   paneId: string
   identity: string
   storedSessionId: string
@@ -43,8 +49,10 @@ function sessionSwitchOwner(storedSessionId: string, ownerRoute?: Partial<Sessio
   const tile = $sessionTiles.get().find(candidate => candidate.storedSessionId === storedSessionId)
   const states = $sessionStates.get()
   const activeRuntime = $activeSessionId.get()
+
   const primaryRuntime =
     activeRuntime && states[activeRuntime]?.storedSessionId === storedSessionId ? activeRuntime : null
+
   const tileRuntime =
     tile?.runtimeId && states[tile.runtimeId]?.storedSessionId === storedSessionId ? tile.runtimeId : null
 
@@ -64,7 +72,7 @@ function sessionSwitchOwner(storedSessionId: string, ownerRoute?: Partial<Sessio
 }
 
 function boundRuntimeOwner(runtimeId?: null | string, fallback?: SessionProfileRoute): SessionProfileRoute | undefined {
-  const owner = runtimeSessionOwner(runtimeId)
+  const owner = runtimeSessionOwner(runtimeId) ?? (runtimeId ? $sessionStates.get()[runtimeId]?.boundOwner : undefined)
 
   return typeof owner === 'string'
     ? { connectionId: fallback?.connectionId || connectionId(), profile: owner }
@@ -77,41 +85,41 @@ export function sessionSwitchIdentity(storedSessionId: string, ownerRoute?: Part
   return JSON.stringify([owner.connectionId, owner.targetProfile || owner.profile, storedSessionId])
 }
 
-export function focusedSessionSwitchIdentity(): string | null {
+function focusedSessionSwitchSource(): SessionSwitchSource | null {
   const tree = $layoutTree.get()
   const pane = $focusedTreePaneId.get() ?? (tree ? findGroupOfPane(tree, 'workspace')?.active : undefined)
+
   const tile = pane?.startsWith(TILE_PANE_PREFIX)
     ? $sessionTiles.get().find(candidate => `${TILE_PANE_PREFIX}${candidate.storedSessionId}` === pane)
     : undefined
+
   const runtimeId = pane === 'workspace' ? $activeSessionId.get() : tile?.runtimeId
   const stored = runtimeId ? $sessionStates.get()[runtimeId]?.storedSessionId : null
 
   // The selected id may already name an incoming transcript. The source is
   // the bound runtime, never a same-id row from another unified-list owner.
-  return stored
-    ? sessionSwitchIdentity(
-        stored,
-        boundRuntimeOwner(runtimeId, tile?.ownerRoute) ?? {
-          connectionId: connectionId(),
-          profile: tile?.ownerProfile || $activeGatewayProfile.get()
-        }
-      )
-    : null
+  if (!stored || !runtimeId) {
+    return null
+  }
+
+  const owner = boundRuntimeOwner(runtimeId, tile?.ownerRoute)
+
+  return { runtimeId, storedSessionId: stored, identity: owner ? sessionSwitchIdentity(stored, owner) : null }
 }
 
 export function beginSessionSwitch(
   storedSessionId: string,
   ownerRoute?: SessionProfileRoute,
-  previous = focusedSessionSwitchIdentity(),
+  previous = focusedSessionSwitchSource(),
   paneId = 'workspace'
 ): void {
   const owner = sessionSwitchOwner(storedSessionId, ownerRoute)
   const identity = sessionSwitchIdentity(storedSessionId, owner)
   $sessionSwitchIntent.set(
-    identity === previous
+    identity === previous?.identity
       ? null
       : {
-          previousIdentity: previous,
+          previous,
           paneId,
           identity,
           storedSessionId,
@@ -135,16 +143,17 @@ export function resolveSessionSwitchDestination(
 
   const ownerRoute =
     storedSessionId === intent.storedSessionId ? intent.ownerRoute : sessionSwitchOwner(storedSessionId)
+
   const identity = sessionSwitchIdentity(storedSessionId, ownerRoute)
   $sessionSwitchIntent.set(
-    identity === intent.previousIdentity ? null : { ...intent, storedSessionId, paneId, identity, ownerRoute }
+    identity === intent.previous?.identity ? null : { ...intent, storedSessionId, paneId, identity, ownerRoute }
   )
 }
 
 // Keyboard commands resolve their target inside the layout action. Capture the
 // source BEFORE it changes focus, then arm the same path as a clicked tab.
 export function withSessionTabSwitch(activate: () => string | null): string | null {
-  const previous = focusedSessionSwitchIdentity()
+  const previous = focusedSessionSwitchSource()
   const pane = activate()
 
   const stored =
