@@ -6,6 +6,7 @@ import { useRuntimeMessageRepository } from '@/app/chat/runtime-repository'
 import { I18nProvider } from '@/i18n'
 import { type ChatMessage, restorePendingClarifyToolCall } from '@/lib/chat-messages'
 import { $gateway } from '@/store/gateway'
+import { $activeGatewayProfile } from '@/store/profile'
 import {
   $secretRequest,
   clearAllPrompts,
@@ -15,7 +16,7 @@ import {
   setSecretRequest
 } from '@/store/prompts'
 import { rememberServerRequest, resetServerRequestsForTests } from '@/store/server-requests'
-import { $activeSessionId } from '@/store/session'
+import { $activeSessionId, $connection } from '@/store/session'
 
 import { SecretCard } from './secret-card'
 
@@ -46,6 +47,8 @@ afterEach(() => {
   resetServerRequestsForTests()
   $gateway.set(null)
   $activeSessionId.set(null)
+  $activeGatewayProfile.set('default')
+  $connection.set(null)
 })
 
 describe('inline secret entry', () => {
@@ -83,16 +86,17 @@ describe('inline secret entry', () => {
   it('keeps each session draft when the active session changes away and back', () => {
     const other = { ...request, sessionId: 's2', requestId: 'r2', profile: 'other' }
     $activeSessionId.set('s1')
+    $connection.set({ connectionId: 'conn-a', mode: 'ssh' } as never)
     setSecretRequest(request)
     setSecretRequest(other)
     render(<I18nProvider configClient={null}><ActiveSecret /></I18nProvider>)
     fireEvent.change(screen.getByLabelText('TEST_KEY'), { target: { value: 'dummy-a' } })
-    act(() => $activeSessionId.set('s2'))
+    act(() => { $activeSessionId.set('s2'); $activeGatewayProfile.set('other') })
     expect((screen.getByLabelText('TEST_KEY') as HTMLInputElement).value).toBe('')
     fireEvent.change(screen.getByLabelText('TEST_KEY'), { target: { value: 'dummy-b' } })
-    act(() => $activeSessionId.set('s1'))
+    act(() => { $activeSessionId.set('s1'); $activeGatewayProfile.set('default') })
     expect((screen.getByLabelText('TEST_KEY') as HTMLInputElement).value).toBe('dummy-a')
-    act(() => $activeSessionId.set('s2'))
+    act(() => { $activeSessionId.set('s2'); $activeGatewayProfile.set('other') })
     expect((screen.getByLabelText('TEST_KEY') as HTMLInputElement).value).toBe('dummy-b')
   })
 

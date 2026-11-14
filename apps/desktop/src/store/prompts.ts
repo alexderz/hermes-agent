@@ -1,9 +1,12 @@
 import { atom, computed, type ReadableAtom } from 'nanostores'
 
+import { forgetSecretAnchor } from '@/lib/secret-projection'
+
 import { $clarifyRequest, $clarifyRequests } from './clarify'
+import { $activeGatewayProfile } from './profile'
 import { isSessionGone, isSessionGoneForBackgroundPolling, markSessionGone } from './runtime-gone'
 import { hasOpenServerRequest, respondToServerRequest } from './server-requests'
-import { $activeSessionId } from './session'
+import { $activeSessionId, $connection } from './session'
 import { ambientRequestFor } from './session-gone-latch'
 import { requestForOwnedSession } from './session-states'
 
@@ -216,7 +219,13 @@ const approval = {
 }
 
 const sudo = keyedPromptStore<SudoRequest>()
-const secret = keyedPromptStore<SecretRequest>()
+// Unlike the older prompt stores, session ids are not globally unique across gateways/profiles.
+const $scopedSecrets = atom<Record<string, SecretRequest>>({})
+const secret = {
+  $all: computed($scopedSecrets, all => Object.fromEntries(Object.values(all).map(request => [keyFor(request.sessionId), request]))),
+  $active: computed([$scopedSecrets, $activeSessionId, $activeGatewayProfile, $connection], (all, id, profile, connection) =>
+    selectSecret(all, id, { profile, connectionId: connection?.connectionId }))
+}
 const vaultUnlock = keyedPromptStore<VaultUnlockRequest>()
 
 // "Save this login" for the page the agent is on (tools/browser_vault_tool): `vault.save_login`
@@ -430,8 +439,15 @@ export const sessionApprovalRequest = (sessionId: string | null) =>
  *  session: it belongs to the connection, not to a turn, so whichever chat is focused shows it). */
 export const sessionSudoRequest = (sessionId: string | null) =>
   computed(sudo.$all, all => all[keyFor(sessionId)] ?? (sessionId ? (all[keyFor(null)] ?? null) : null))
-export const sessionSecretRequest = (sessionId: string | null) =>
-  computed(secret.$all, all => all[keyFor(sessionId)] ?? null)
+export interface SecretScope { connectionId?: string | null; profile?: string | null }
+function selectSecret(all: Record<string, SecretRequest>, sessionId: string | null, scope?: SecretScope): SecretRequest | null {
+  const matches = Object.values(all).filter(request => request.sessionId === sessionId &&
+    (!scope || !request.connectionId || scope.connectionId === request.connectionId) &&
+    (!scope || !request.profile || scope.profile === request.profile))
+  return matches.length === 1 ? matches[0] : null
+}
+export const sessionSecretRequest = (sessionId: string | null, scope?: SecretScope) =>
+  computed($scopedSecrets, all => selectSecret(all, sessionId, scope))
 
 export const $sudoRequest = sudo.$active
 export const $sudoRequests = sudo.$all
@@ -456,28 +472,41 @@ export const writeSecretDraft = (request: SecretRequest, value: string) => {
 
 export const $secretRequest = secret.$active
 export const $secretRequests = secret.$all
+export const $scopedSecretRequests = $scopedSecrets
+const secretScopeKey = (request: SecretRequest) => JSON.stringify([request.connectionId ?? '', request.profile ?? '', request.sessionId])
 
 export const setSecretRequest = (request: SecretRequest) => {
-  const previous = secret.$all.get()[keyFor(request.sessionId)]
-
-  if (previous && secretDraftKey(previous) !== secretDraftKey(request)) {
+  const key = secretScopeKey(request)
+  const all = $scopedSecrets.get()
+  const previous = all[key]
+  if (previous && previous.requestId !== request.requestId) {
     secretDrafts.delete(secretDraftKey(previous))
+    forgetSecretAnchor(previous)
   }
-
-  secret.set(request)
+  $scopedSecrets.set({ ...all, [key]: request })
 }
 
-export const clearSecretRequest = (sessionId?: string | null, requestId?: string) => {
-  for (const request of Object.values(secret.$all.get())) {
-    if (
-      (sessionId === undefined || request.sessionId === sessionId) &&
-      (!requestId || request.requestId === requestId)
-    ) {
-      secretDrafts.delete(secretDraftKey(request))
-    }
+export const clearSecretRequest = (sessionId?: string | null, requestId?: string, scope?: SecretScope) => {
+  const all = $scopedSecrets.get()
+  const matches = Object.entries(all).filter(([, request]) =>
+    (sessionId === undefined || request.sessionId === sessionId) &&
+    (!requestId || request.requestId === requestId) &&
+    (!scope?.connectionId || !request.connectionId || request.connectionId === scope.connectionId) &&
+    (!scope?.profile || !request.profile || request.profile === scope.profile))
+  // Unscoped teardown must never erase two unrelated owners of the same session.
+  if (sessionId !== undefined && matches.length > 1) {
+    return
   }
-
-  secret.clear(sessionId, requestId)
+  if (!matches.length) {
+    return
+  }
+  const next = { ...all }
+  for (const [key, request] of matches) {
+    secretDrafts.delete(secretDraftKey(request))
+    forgetSecretAnchor(request)
+    delete next[key]
+  }
+  $scopedSecrets.set(next)
 }
 
 export const $vaultUnlockRequest = vaultUnlock.$active
@@ -570,7 +599,7 @@ export function sessionAwaitingInput(sessionId: string | null) {
 
 // Drop in-flight prompts for `sessionId` (a turn ended) across all three kinds —
 // or every parked prompt when no session is given (global reset / tests).
-export function clearAllPrompts(sessionId?: string | null, preserveOpenSecret = false): void {
+export function clearAllPrompts(sessionId?: string | null, preserveOpenSecret = false, scope?: SecretScope): void {
   if (sessionId === undefined) {
     approval.reset()
     sudo.reset()
@@ -584,10 +613,10 @@ export function clearAllPrompts(sessionId?: string | null, preserveOpenSecret = 
 
   approval.clear(sessionId)
   sudo.clear(sessionId)
-  const pendingSecret = secret.$all.get()[keyFor(sessionId)]
+  const pendingSecret = selectSecret($scopedSecrets.get(), sessionId, scope)
 
   if (!preserveOpenSecret || !pendingSecret || !hasOpenServerRequest(pendingSecret.requestId)) {
-    clearSecretRequest(sessionId)
+    clearSecretRequest(sessionId, undefined, scope)
   }
 
   vaultUnlock.clear(sessionId)

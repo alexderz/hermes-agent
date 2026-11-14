@@ -20,9 +20,10 @@ import { PromptOverlays } from '@/components/prompt-overlays'
 import { TitleMenuTrigger } from '@/components/ui/title-menu-trigger'
 import { type HermesGateway, type ResolvedOwner } from '@/hermes'
 import { useI18n } from '@/i18n'
-import { type ChatMessage, restorePendingClarifyToolCall } from '@/lib/chat-messages'
+import type { ChatMessage } from '@/lib/chat-messages'
 import { NEW_SESSION_TITLE, sessionTitle } from '@/lib/chat-runtime'
 import { useIncrementalExternalStoreRuntime } from '@/lib/incremental-external-store-runtime'
+import { projectSecret } from '@/lib/secret-projection'
 import { useStoreSelector } from '@/lib/use-session-slice'
 import { cn } from '@/lib/utils'
 import { migrateSessionDraft } from '@/store/composer'
@@ -80,6 +81,7 @@ import { ResumeExhaustedOverlay } from './resume-exhausted-overlay'
 import { isRouteSessionMismatch } from './route-session-state'
 import { useRuntimeMessageRepository } from './runtime-repository'
 import { ScrollToBottomButton } from './scroll-to-bottom-button'
+import { SecretRequestContext } from './secret-request-context'
 import { useSessionView } from './session-view'
 import { SessionActionsMenu } from './sidebar/session-actions-menu'
 import { routedSessionIsLoading, threadLoadingState } from './thread-loading'
@@ -339,7 +341,10 @@ export function ChatRuntimeBoundary({
     return next.window
   }, [messages, windowPages])
 
-  const secretStore = useMemo(() => sessionSecretRequest(runtimeId), [runtimeId])
+  const secretStore = useMemo(
+    () => sessionSecretRequest(runtimeId, { connectionId: ownerConnection || connectionId, profile: ownerProfile || activeProfile }),
+    [runtimeId, ownerConnection, connectionId, ownerProfile, activeProfile]
+  )
   const secret = useStore(secretStore)
 
   const currentMessages = useMemo(() => {
@@ -357,10 +362,11 @@ export function ChatRuntimeBoundary({
       return current
     }
 
-    return restorePendingClarifyToolCall(current, { tool_id: secret.requestId, args: {} }).messages
+    return projectSecret(current, secret, messages)
   }, [
     history.page,
     windowedMessages,
+    messages,
     secret,
     suppressMessages,
     ownerProfile,
@@ -493,7 +499,9 @@ export function ChatRuntimeBoundary({
   return (
     <ComposerScopeProvider value={composerScope}>
       <TranscriptWindowProvider value={transcriptWindow}>
-        <AssistantRuntimeProvider runtime={runtime}>{children}</AssistantRuntimeProvider>
+        <SecretRequestContext.Provider value={secret}>
+          <AssistantRuntimeProvider runtime={runtime}>{children}</AssistantRuntimeProvider>
+        </SecretRequestContext.Provider>
       </TranscriptWindowProvider>
     </ComposerScopeProvider>
   )
