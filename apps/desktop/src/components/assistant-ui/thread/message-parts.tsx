@@ -7,8 +7,9 @@ import {
   useMessagePartText
 } from '@assistant-ui/react'
 import { useStore } from '@nanostores/react'
-import { type ComponentProps, type FC, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { type ComponentProps, type FC, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from 'react'
 
+import { SecretRequestContext } from '@/app/chat/secret-request-context'
 import { useSessionView } from '@/app/chat/session-view'
 import { CatalogInstallTool } from '@/components/assistant-ui/catalog-install-tool'
 import { ClarifyTool } from '@/components/assistant-ui/clarify'
@@ -92,7 +93,9 @@ const DelegateToolPart: FC<TimelineToolCallProps> = props => {
 const ClarifyToolPart: FC<TimelineToolCallProps> = props => {
   const sessionId = useStore(useSessionView().$runtimeId)
   const secretStore = useMemo(() => sessionSecretRequest(sessionId), [sessionId])
-  const secret = useStore(secretStore)
+  const fallbackSecret = useStore(secretStore)
+  const scopedSecret = useContext(SecretRequestContext)
+  const secret = scopedSecret === undefined ? fallbackSecret : scopedSecret
   const requestId = (props as TimelineToolCallProps & { clarifyRequestId?: string }).clarifyRequestId
 
   if (secret && requestId === secret.requestId) {

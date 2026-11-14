@@ -34,7 +34,7 @@ export function SecretCard({ request }: { request: SecretRequest }) {
     try {
       respondToServerRequest(request.requestId, { value: answer })
       setValue('')
-      clearSecretRequest(request.sessionId, request.requestId)
+      clearSecretRequest(request.sessionId, request.requestId, request)
     } catch (error) {
       notifyError(error, t.prompts.secretSendFailed)
       setSubmitting(false)

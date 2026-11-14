@@ -183,15 +183,18 @@ def test_sudo_with_nobody_attaching_ends_at_its_timeout(monkeypatch):
     assert [(c["method"], c["reason"]) for c in _cancels(published)] == [("sudo", "timeout")]
 
 
-def test_secret_with_nobody_attaching_ends_at_its_timeout_and_is_skipped(monkeypatch):
+def test_secret_with_nobody_attaching_waits_until_interrupted(monkeypatch):
     from gateway import session_secret_prompt
     monkeypatch.setattr(session_secret_prompt, "SECRET_TIMEOUT_S", 0.5)
     events, published = _detached()
-    call = _secret(events, monkeypatch)
+    agent = SimpleNamespace(_interrupt_requested=False)
+    call = _secret(events, monkeypatch, agent)
+    _held_open(events, "secret")
+    assert not call.done.wait(2.0)
+    agent._interrupt_requested = True
     out = call.result()
-    assert call.elapsed >= 0.5
     assert out["missing_names"] == ["HAB_WAIT_KEY"] and out["setup_skipped"] is True
-    assert [(c["method"], c["reason"]) for c in _cancels(published)] == [("secret", "timeout")]
+    assert [(c["method"], c["reason"]) for c in _cancels(published)] == [("secret", "interrupted")]
 
 
 def test_vault_unlock_with_nobody_attaching_ends_at_its_timeout(monkeypatch):

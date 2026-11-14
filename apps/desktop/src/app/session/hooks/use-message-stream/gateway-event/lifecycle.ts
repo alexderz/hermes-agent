@@ -125,7 +125,7 @@ export function handleLifecycleEvent(ctx: GatewayEventContext): boolean {
       }
     } else if (runtimeId) {
       // No correlation ids on the wire — drop the session's prompt wholesale.
-      clearAllPrompts(runtimeId)
+      clearAllPrompts(runtimeId, false, { connectionId: event.connectionId, profile: event.profile })
     }
 
     return true
@@ -156,7 +156,7 @@ export function handleLifecycleEvent(ctx: GatewayEventContext): boolean {
       // new runtime's turn-end clears can never remove an entry keyed to THIS
       // one — a stale approval would re-mount the floating "needs approval"
       // bar whenever the reclaimed conversation is reopened (#86577).
-      clearAllPrompts(reclaimedRuntimeId)
+      clearAllPrompts(reclaimedRuntimeId, false, { connectionId: event.connectionId, profile: event.profile })
       clearClarifyRequest(undefined, reclaimedRuntimeId)
       // A tile bound to the reclaimed runtime would otherwise render an
       // empty transcript forever: its view reads $sessionStates[runtime]
