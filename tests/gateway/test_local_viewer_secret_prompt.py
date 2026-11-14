@@ -133,9 +133,13 @@ def test_interactive_secret_replays_after_viewer_reconnect():
             assert request['params']['env_var'] == 'HAB_KEY'
             events.fanout.attach(peer)
             assert resolve({'id': request['id'], 'result': {'value': ''}})
-        finally:
-            agent._interrupt_requested = True
             worker.join(5)
+            assert not worker.is_alive(), 'Cancel alone must release the secret worker'
+            assert agent._interrupt_requested is False
+        finally:
+            if worker.is_alive():
+                agent._interrupt_requested = True
+                worker.join(5)
     assert not worker.is_alive()
     assert out['setup_skipped'] is True
     assert open_requests(events, 's1') == []
