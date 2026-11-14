@@ -345,6 +345,7 @@ export function ChatRuntimeBoundary({
     () => sessionSecretRequest(runtimeId, { connectionId: ownerConnection || connectionId, profile: ownerProfile || activeProfile }),
     [runtimeId, ownerConnection, connectionId, ownerProfile, activeProfile]
   )
+
   const secret = useStore(secretStore)
 
   const currentMessages = useMemo(() => {

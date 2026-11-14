@@ -141,7 +141,7 @@ describe('PromptOverlays', () => {
     const input = screen.getByPlaceholderText('TEST_SECRET')
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(input.closest('[data-slot="secret-inline"]')).toBeTruthy()
-    expect(document.activeElement).not.toBe(input)
+    expect(window.document.activeElement).not.toBe(input)
     fireEvent.change(input, { target: { value: 'dummy-value' } })
     fireEvent.blur(input)
     fireEvent.keyDown(input, { key: 'Escape' })

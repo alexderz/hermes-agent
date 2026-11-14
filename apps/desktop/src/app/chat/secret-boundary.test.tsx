@@ -16,19 +16,23 @@ stubThreadEnvironment()
 stubThreadViewportSize()
 afterEach(() => {cleanup(); clearAllPrompts(); $activeSessionId.set(null); $connection.set(null)})
 const req = {sessionId:'s1', requestId:'srq-test',envVar:'TEST_KEY',prompt:'Dummy',profile:'default'}
+
 function mount(messages: ChatMessage[]) {
   $activeGatewayProfile.set('default')
   $activeSessionId.set('s1')
   setSecretRequest(req)
   const $messages = atom(messages)
   const view = {...PRIMARY_SESSION_VIEW,$messages,$runtimeId:atom<string|null>('s1'),$storedId:atom<string|null>(null)}
+
   const v=render(<I18nProvider configClient={null}><SessionViewProvider value={view}>
     <ChatRuntimeBoundary busy onCancel={()=>{}} onEdit={async()=>{}} onReload={async()=>{}} onThreadMessagesChange={()=>{}} suppressMessages={false}>
       <Thread/>
     </ChatRuntimeBoundary>
   </SessionViewProvider></I18nProvider>)
+
   return {...v,$messages}
 }
+
 it.each([
  {connectionId:'conn-a',profile:'other'},
  {connectionId:'conn-b',profile:'default'}
@@ -76,7 +80,7 @@ it('keeps the same anchored secret input when a parallel tool adds a later assis
  fireEvent.change(input,{target:{value:'dummy-unsubmitted'}})
  input.focus()
  const beforeAnchor = input.closest('[data-message-id]')?.getAttribute('data-message-id')
- expect(document.activeElement === input).toBe(true)
+ expect(window.document.activeElement === input).toBe(true)
  act(()=> $messages.set([...initial,{id:'m2',role:'assistant',pending:true,parts:[{type:'text',text:'Parallel tool progress'}]}]))
  await waitFor(() => expect(screen.getByText('Parallel tool progress')).toBeTruthy())
  const next=screen.getByLabelText('TEST_KEY') as HTMLInputElement
@@ -84,7 +88,7 @@ it('keeps the same anchored secret input when a parallel tool adds a later assis
  expect(next.value).toBe('dummy-unsubmitted')
  expect(readSecretDraft(req)).toBe('dummy-unsubmitted')
  expect(afterAnchor).toBe(beforeAnchor)
- expect(document.activeElement === next).toBe(true)
+ expect(window.document.activeElement === next).toBe(true)
 })
 it('does not move the pending secret beneath a queued future-turn user prompt', async()=>{
  const initial: ChatMessage[]=[{id:'m1',role:'assistant',pending:true,parts:[{type:'tool-call',toolCallId:'skill-1',toolName:'skill_view',args:{name:'dummy'},argsText:'{}'}]}]
@@ -106,5 +110,5 @@ it('keeps the same anchored secret input when pending replay arrives without a p
  const next=await screen.findByLabelText('TEST_KEY') as HTMLInputElement
  expect(next.value).toBe('dummy-unsubmitted')
  expect(next).toBe(input)
- expect(document.activeElement).toBe(input)
+ expect(window.document.activeElement).toBe(input)
 })

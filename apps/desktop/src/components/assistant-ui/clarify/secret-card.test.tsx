@@ -65,10 +65,10 @@ describe('inline secret entry', () => {
     act(() => setSecretRequest({ ...request })) // open_requests replay of the same request
     expect(readSecretDraft(request)).toBe('dummy-value')
     fireEvent.blur(input)
-    fireEvent(document, new Event('visibilitychange'))
+    fireEvent(window.document, new Event('visibilitychange'))
     fireEvent.scroll(window)
     fireEvent.keyDown(input, { key: 'Escape' })
-    fireEvent.pointerDown(document.body)
+    fireEvent.pointerDown(window.document.body)
     expect(respond).not.toHaveBeenCalled()
     expect(input.value).toBe('dummy-value')
     const other = { ...request, sessionId: 's2', requestId: 'r2', profile: 'other' }
