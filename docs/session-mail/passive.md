@@ -59,7 +59,7 @@ The answering instructions sit at the top, so they survive Hermes's spill of ver
 
 **Who gets `all` notes.** Conversation sessions only: not cron, subagent or one-shot runs (the set `list` hides by default), and never the sender's own lineage. Per-target notes go to whatever was addressed, runs included. A session started after the note was sent gets it at its first turn.
 
-**Private messaging chats** (`settings.echo_chats` and owner DMs): a per-target passive note is echoed into the chat at confirmed handover, with the existing escaper and once-only claim. Keyed `all` status is not echoed (it is the operator's own script output; an hourly post into every DM is the noise this feature avoids). Saturn has no messaging platforms, so this is upstream-only today.
+**Private messaging chats** (`settings.echo_chats` and owner DMs): a per-target passive note is echoed into the chat at confirmed handover, with the existing escaper and once-only claim. Keyed `all` status is not echoed (it is the operator's own script output; an hourly post into every DM is the noise this feature avoids). The current install has no messaging platforms, so this matters only where one is connected.
 
 ## 4. Guidance for the session-mail skill (draft)
 
