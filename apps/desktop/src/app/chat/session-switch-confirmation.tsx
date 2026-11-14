@@ -2,7 +2,7 @@ import { type ThreadMessage, useAuiState, useThreadRuntime } from '@assistant-ui
 import { useStore } from '@nanostores/react'
 import { useEffect, useMemo } from 'react'
 
-import { appViewForPath } from '@/app/routes'
+import { appViewForPath, isOverlayView } from '@/app/routes'
 import { sessionShouldHaveTranscript } from '@/app/session/hooks/use-session-actions/utils'
 import {
   $sessionSwitchIntent,
@@ -48,7 +48,14 @@ export function SessionSwitchConfirmation({
 
   const paneId = view.kind === 'primary' ? 'workspace' : `session-tile:${storedId}`
   const target = intent?.storedSessionId === storedId && intent.paneId === paneId
-  const foreground = visible && (!focusedPane || focusedPane === paneId) && appViewForPath(pathname) === 'chat'
+  const appView = appViewForPath(pathname)
+  // Pages replace only the primary workspace. A fronted tile is still visible
+  // beside/instead of that page, while a modal overlay covers every pane.
+  const foreground =
+    visible &&
+    (!focusedPane || focusedPane === paneId) &&
+    !isOverlayView(appView) &&
+    (view.kind !== 'primary' || appView === 'chat')
   // Match the normalized active-branch head by reference: database row ids
   // can repeat across profiles, and tool/branch folding omits raw source rows.
   // An empty destination must also wait for the old runtime rows to retire.
@@ -99,6 +106,12 @@ export function SessionSwitchConfirmation({
       storedId,
       typeof owner === 'string' ? { profile: owner } : (owner ?? undefined)
     )
+
+    // A same-id owner switch can still display the old bound source while
+    // resume runs. Reject an unrelated owner, not that known outgoing runtime.
+    if (identity === intent.previousIdentity) {
+      return
+    }
 
     if (identity !== intent.identity) {
       cancelSessionSwitch(storedId)

@@ -1,10 +1,14 @@
 import { atom } from 'nanostores'
 
+import { findGroupOfPane } from '@/components/pane-shell/tree/model'
+import { $layoutTree } from '@/components/pane-shell/tree/store'
 import { triggerHaptic } from '@/lib/haptics'
 import { $sessionSwitchHaptics } from '@/store/haptics'
-import { $activeGatewayProfile } from '@/store/profile'
+import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
 import {
+  $activeSessionId,
   $connection,
+  $freshDraftKey,
   $gatewayState,
   $resumeFailedSessionId,
   $selectedStoredSessionId,
@@ -13,7 +17,7 @@ import {
 } from '@/store/session'
 import { $focusedStoredSessionId, $focusedTreePaneId, TILE_PANE_PREFIX } from '@/store/session-focus'
 import type { SessionProfileRoute } from '@/store/session-request-router'
-import { $sessionTiles } from '@/store/session-states'
+import { $sessionStates, $sessionTiles, runtimeSessionOwner } from '@/store/session-states'
 
 interface SessionSwitchIntent {
   previousIdentity: string | null
@@ -21,6 +25,7 @@ interface SessionSwitchIntent {
   identity: string
   storedSessionId: string
   connectionId: string
+  ownerRoute: SessionProfileRoute
 }
 
 // Window-local intent survives first mount of a tab; never persisted or armed
@@ -33,27 +38,65 @@ function connectionId(): string {
   return connection?.connectionId || (connection?.mode === 'local' ? 'local' : '')
 }
 
-export function sessionSwitchIdentity(storedSessionId: string, ownerRoute?: Partial<SessionProfileRoute>): string {
+function sessionSwitchOwner(storedSessionId: string, ownerRoute?: Partial<SessionProfileRoute>): SessionProfileRoute {
   const ambient = { connectionId: connectionId(), profile: $activeGatewayProfile.get() }
+  const tile = $sessionTiles.get().find(candidate => candidate.storedSessionId === storedSessionId)
+  const states = $sessionStates.get()
+  const activeRuntime = $activeSessionId.get()
+  const primaryRuntime =
+    activeRuntime && states[activeRuntime]?.storedSessionId === storedSessionId ? activeRuntime : null
+  const tileRuntime =
+    tile?.runtimeId && states[tile.runtimeId]?.storedSessionId === storedSessionId ? tile.runtimeId : null
 
   const knownOwner =
     ownerRoute ??
-    $sessionTiles.get().find(tile => tile.storedSessionId === storedSessionId)?.ownerRoute ??
+    boundRuntimeOwner(tileRuntime, tile?.ownerRoute) ??
+    boundRuntimeOwner(primaryRuntime) ??
     knownSessionOwner(ownerLookupSessionRows(), storedSessionId)
 
   const owner = typeof knownOwner === 'string' ? { profile: knownOwner } : knownOwner
 
-  return JSON.stringify([
-    owner?.connectionId || ambient.connectionId,
-    owner?.targetProfile || owner?.profile || ambient.profile,
-    storedSessionId
-  ])
+  return {
+    ...owner,
+    connectionId: owner?.connectionId || ambient.connectionId,
+    profile: owner?.profile || ambient.profile
+  }
+}
+
+function boundRuntimeOwner(runtimeId?: null | string, fallback?: SessionProfileRoute): SessionProfileRoute | undefined {
+  const owner = runtimeSessionOwner(runtimeId)
+
+  return typeof owner === 'string'
+    ? { connectionId: fallback?.connectionId || connectionId(), profile: owner }
+    : (owner ?? fallback)
+}
+
+export function sessionSwitchIdentity(storedSessionId: string, ownerRoute?: Partial<SessionProfileRoute>): string {
+  const owner = sessionSwitchOwner(storedSessionId, ownerRoute)
+
+  return JSON.stringify([owner.connectionId, owner.targetProfile || owner.profile, storedSessionId])
 }
 
 export function focusedSessionSwitchIdentity(): string | null {
-  const stored = $focusedStoredSessionId.get()
+  const tree = $layoutTree.get()
+  const pane = $focusedTreePaneId.get() ?? (tree ? findGroupOfPane(tree, 'workspace')?.active : undefined)
+  const tile = pane?.startsWith(TILE_PANE_PREFIX)
+    ? $sessionTiles.get().find(candidate => `${TILE_PANE_PREFIX}${candidate.storedSessionId}` === pane)
+    : undefined
+  const runtimeId = pane === 'workspace' ? $activeSessionId.get() : tile?.runtimeId
+  const stored = runtimeId ? $sessionStates.get()[runtimeId]?.storedSessionId : null
 
-  return stored ? sessionSwitchIdentity(stored) : null
+  // The selected id may already name an incoming transcript. The source is
+  // the bound runtime, never a same-id row from another unified-list owner.
+  return stored
+    ? sessionSwitchIdentity(
+        stored,
+        boundRuntimeOwner(runtimeId, tile?.ownerRoute) ?? {
+          connectionId: connectionId(),
+          profile: tile?.ownerProfile || $activeGatewayProfile.get()
+        }
+      )
+    : null
 }
 
 export function beginSessionSwitch(
@@ -62,11 +105,19 @@ export function beginSessionSwitch(
   previous = focusedSessionSwitchIdentity(),
   paneId = 'workspace'
 ): void {
-  const identity = sessionSwitchIdentity(storedSessionId, ownerRoute)
+  const owner = sessionSwitchOwner(storedSessionId, ownerRoute)
+  const identity = sessionSwitchIdentity(storedSessionId, owner)
   $sessionSwitchIntent.set(
     identity === previous
       ? null
-      : { previousIdentity: previous, paneId, identity, storedSessionId, connectionId: connectionId() }
+      : {
+          previousIdentity: previous,
+          paneId,
+          identity,
+          storedSessionId,
+          connectionId: connectionId(),
+          ownerRoute: owner
+        }
   )
 }
 
@@ -82,9 +133,11 @@ export function resolveSessionSwitchDestination(
     return
   }
 
-  const identity = storedSessionId === intent.storedSessionId ? intent.identity : sessionSwitchIdentity(storedSessionId)
+  const ownerRoute =
+    storedSessionId === intent.storedSessionId ? intent.ownerRoute : sessionSwitchOwner(storedSessionId)
+  const identity = sessionSwitchIdentity(storedSessionId, ownerRoute)
   $sessionSwitchIntent.set(
-    identity === intent.previousIdentity ? null : { ...intent, storedSessionId, paneId, identity }
+    identity === intent.previousIdentity ? null : { ...intent, storedSessionId, paneId, identity, ownerRoute }
   )
 }
 
@@ -145,10 +198,49 @@ $resumeFailedSessionId.listen(id => {
     cancelSessionSwitch(id)
   }
 })
-$sessionTiles.listen(tiles => {
+$freshDraftKey.listen(() => cancelSessionSwitch())
+$selectedStoredSessionId.listen(id => {
+  if (!id) {
+    cancelSessionSwitch()
+  }
+})
+$activeGatewayProfile.listen(profile => {
   const intent = $sessionSwitchIntent.get()
 
-  if (intent && tiles.some(tile => tile.storedSessionId === intent.storedSessionId && tile.error)) {
+  if (
+    intent &&
+    ![intent.ownerRoute.profile, intent.ownerRoute.targetProfile].some(
+      ownerProfile => ownerProfile !== undefined && normalizeProfileKey(ownerProfile) === normalizeProfileKey(profile)
+    )
+  ) {
+    cancelSessionSwitch()
+  }
+})
+$layoutTree.listen((tree, previous) => {
+  const intent = $sessionSwitchIntent.get()
+
+  // Layout/store lifetime, not React cleanup: StrictMode may replay effects
+  // and a first-mounted target may not have a transcript component yet.
+  if (
+    intent &&
+    previous &&
+    findGroupOfPane(previous, intent.paneId) &&
+    (!tree || !findGroupOfPane(tree, intent.paneId))
+  ) {
+    cancelSessionSwitch()
+  }
+})
+$sessionTiles.listen((tiles, previous) => {
+  const intent = $sessionSwitchIntent.get()
+
+  if (!intent) {
+    return
+  }
+
+  const target = tiles.find(tile => `${TILE_PANE_PREFIX}${tile.storedSessionId}` === intent.paneId)
+  const removed = previous?.some(tile => `${TILE_PANE_PREFIX}${tile.storedSessionId}` === intent.paneId) && !target
+
+  if (removed || tiles.some(tile => tile.storedSessionId === intent.storedSessionId && tile.error)) {
     cancelSessionSwitch(intent.storedSessionId)
   }
 })

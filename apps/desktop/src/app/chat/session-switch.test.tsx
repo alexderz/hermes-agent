@@ -1,6 +1,7 @@
 import { useStore } from '@nanostores/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { StrictMode } from 'react'
 import { MemoryRouter, useLocation, useNavigate } from 'react-router'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
@@ -15,6 +16,7 @@ import { createClientSessionState } from '@/lib/chat-runtime'
 import { registerHapticTrigger } from '@/lib/haptics'
 import { isMacPlatform } from '@/lib/platform'
 import { setHapticsMuted, setSessionSwitchHaptics } from '@/store/haptics'
+import { $activeGatewayProfile } from '@/store/profile'
 import {
   $activeSessionId,
   $connection,
@@ -22,6 +24,7 @@ import {
   $resumeFailedSessionId,
   $selectedStoredSessionId,
   $sessions,
+  rotateFreshDraftKey,
   setSelectedStoredSessionId
 } from '@/store/session'
 import {
@@ -113,14 +116,16 @@ function Harness() {
   )
 }
 
-function mount() {
-  return render(
+function mount(strict = false) {
+  const app = (
     <QueryClientProvider client={new QueryClient()}>
       <MemoryRouter initialEntries={['/A']}>
         <Harness />
       </MemoryRouter>
     </QueryClientProvider>
   )
+
+  return render(strict ? <StrictMode>{app}</StrictMode> : app)
 }
 
 function bind(id: string, text = `Transcript ${id}`) {
@@ -151,6 +156,7 @@ beforeEach(() => {
   vi.spyOn(performance, 'now').mockImplementation(() => clock)
   setHapticsMuted(false)
   setSessionSwitchHaptics(true)
+  $activeGatewayProfile.set('default')
   $connection.set({ mode: 'local', connectionId: 'local' } as never)
   $gatewayState.set('open')
   $sessionTiles.set([])
@@ -173,6 +179,277 @@ afterEach(() => {
   $sessions.set([])
   $layoutTree.set(null)
   vi.restoreAllMocks()
+})
+
+it('does not replay a pending primary switch after a fresh draft supersedes it', async () => {
+  mount()
+  act(() => {
+    openSession('B', navigate)
+    setSelectedStoredSessionId('B')
+    $activeSessionId.set(null)
+  })
+  act(() => {
+    navigate('/')
+    setSelectedStoredSessionId(null)
+    $activeSessionId.set(null)
+  })
+  await act(async () => {
+    navigate('/B')
+    bind('B')
+  })
+  expect(screen.getByTestId('transcript').textContent).toBe('Transcript B')
+  expect(trigger).not.toHaveBeenCalled()
+})
+
+it('does not replay a pending switch after an unrelated same-connection profile change', async () => {
+  mount()
+  act(() => openSession('B', navigate))
+  act(() => $activeGatewayProfile.set('other-profile'))
+  await act(async () => bind('B'))
+  act(() => $activeGatewayProfile.set('default'))
+  expect(trigger).not.toHaveBeenCalled()
+})
+
+it('retires a pending switch when another fresh draft replaces an already blank source', async () => {
+  setSelectedStoredSessionId(null)
+  $activeSessionId.set(null)
+  mount()
+  act(() => openSession('B', navigate))
+  act(() => {
+    navigate('/')
+    rotateFreshDraftKey()
+  })
+  await act(async () => {
+    navigate('/B')
+    bind('B')
+  })
+  expect(trigger).not.toHaveBeenCalled()
+})
+
+it.each(['tile', 'layout'] as const)('does not replay an ended %s destination after restoration', async lifetime => {
+  $sessionTiles.set([{ storedSessionId: 'B', runtimeId: 'runtime-B', dir: 'center' }])
+  $layoutTree.set(group(['workspace', 'session-tile:B'], { id: 'main', active: 'workspace' }))
+  mount()
+  act(() => openSession('B', navigate))
+  const savedTiles = $sessionTiles.get()
+  const savedTree = $layoutTree.get()
+  act(() => {
+    if (lifetime === 'tile') {
+      $sessionTiles.set([])
+    } else {
+      $layoutTree.set(group(['workspace'], { id: 'main', active: 'workspace' }))
+    }
+  })
+  act(() => {
+    $sessionTiles.set(savedTiles)
+    $layoutTree.set(savedTree)
+  })
+  await act(async () => {
+    publishSessionState(
+      'runtime-B',
+      createClientSessionState('B', [
+        { id: 'message-B', role: 'assistant', parts: [assistantTextPart('Transcript B')] }
+      ])
+    )
+  })
+  expect(screen.getAllByTestId('transcript').some(node => node.textContent === 'Transcript B')).toBe(true)
+  expect(trigger).not.toHaveBeenCalled()
+})
+
+it('uses the bound runtime owner rather than the first duplicate list row for same-session silence', async () => {
+  $sessions.set([
+    { id: 'A', profile: 'default', connection_id: 'foreign', message_count: 1 },
+    { id: 'A', profile: 'default', connection_id: 'local', message_count: 1 }
+  ] as never)
+  recordSessionEventScope({ session_id: 'runtime-A', connectionId: 'local', profile: 'default' })
+  mount()
+  act(() =>
+    openSession('A', navigate, 'in-place', {
+      workspaceMode: 'sessions',
+      ownerRoute: { connectionId: 'local', profile: 'default' }
+    })
+  )
+  expect(screen.getByTestId('transcript').textContent).toBe('Transcript A')
+  expect(trigger).not.toHaveBeenCalled()
+})
+
+it('uses the tile owner route when its runtime has no event-proven owner', async () => {
+  const ownerRoute = { connectionId: 'foreign', profile: 'other-profile' }
+  $sessionTiles.set([{ storedSessionId: 'B', runtimeId: 'runtime-B', dir: 'center', ownerRoute }])
+  publishSessionState(
+    'runtime-B',
+    createClientSessionState('B', [{ id: 'message-B', role: 'assistant', parts: [assistantTextPart('Transcript B')] }])
+  )
+  $layoutTree.set(group(['workspace', 'session-tile:B'], { id: 'main', active: 'workspace' }))
+  mount()
+  act(() => openSession('B', navigate))
+  await waitFor(() => expect(trigger).toHaveBeenCalledTimes(1))
+})
+
+it('distinguishes a real owner change even when the stored session id is unchanged', async () => {
+  $sessions.set([{ id: 'A', profile: 'default', connection_id: 'local', message_count: 1 }] as never)
+  recordSessionEventScope({ session_id: 'runtime-A', connectionId: 'foreign', profile: 'default' })
+  mount()
+  act(() =>
+    openSession('A', navigate, 'in-place', {
+      workspaceMode: 'sessions',
+      ownerRoute: { connectionId: 'local', profile: 'default' }
+    })
+  )
+  expect(trigger).not.toHaveBeenCalled()
+  act(() => $activeSessionId.set(null))
+  await act(async () => {
+    recordSessionEventScope({ session_id: 'runtime-local-A', connectionId: 'local', profile: 'default' })
+    publishSessionState(
+      'runtime-local-A',
+      createClientSessionState('A', [
+        { id: 'local-A', role: 'assistant', parts: [assistantTextPart('Local transcript A')] }
+      ])
+    )
+    $activeSessionId.set('runtime-local-A')
+  })
+  await waitFor(() => expect(trigger).toHaveBeenCalledTimes(1))
+})
+
+it.each(['picker', 'keyboard'] as const)(
+  'uses a warm tile runtime owner over duplicate rows for %s switches',
+  async action => {
+    $sessions.set([
+      { id: 'B', profile: 'default', connection_id: 'foreign', message_count: 1 },
+      ...$sessions.get()
+    ] as never)
+    recordSessionEventScope({ session_id: 'runtime-B', connectionId: 'local', profile: 'default' })
+    $sessionTiles.set([{ storedSessionId: 'B', runtimeId: 'runtime-B', dir: 'center' }])
+    publishSessionState(
+      'runtime-B',
+      createClientSessionState('B', [
+        { id: 'message-B', role: 'assistant', parts: [assistantTextPart('Transcript B')] }
+      ])
+    )
+    $layoutTree.set(group(['workspace', 'session-tile:B'], { id: 'main', active: 'workspace' }))
+    mount()
+    act(() => {
+      if (action === 'picker') {
+        openSessionFromPicker('B', navigate)
+      } else {
+        fireEvent.keyDown(window, { key: '2', code: 'Digit2', ctrlKey: !isMacPlatform(), metaKey: isMacPlatform() })
+      }
+    })
+    await waitFor(() => expect(trigger).toHaveBeenCalledTimes(1))
+    clock += 100
+    act(() =>
+      openSession('B', navigate, 'in-place', {
+        workspaceMode: 'sessions',
+        ownerRoute: { connectionId: 'local', profile: 'default' }
+      })
+    )
+    expect(trigger).toHaveBeenCalledTimes(1)
+  }
+)
+
+it.each(['sidebar', 'picker', 'keyboard'] as const)(
+  'confirms a foreground warm tile from %s without changing the workspace page',
+  async action => {
+    $sessionTiles.set([{ storedSessionId: 'B', runtimeId: 'runtime-B', dir: 'center' }])
+    publishSessionState(
+      'runtime-B',
+      createClientSessionState('B', [
+        { id: 'message-B', role: 'assistant', parts: [assistantTextPart('Transcript B')] }
+      ])
+    )
+    $layoutTree.set(group(['workspace', 'session-tile:B'], { id: 'main', active: 'workspace' }))
+    mount()
+    act(() => navigate('/capabilities'))
+    act(() => {
+      if (action === 'sidebar') {
+        openSession('B', navigate)
+      } else if (action === 'picker') {
+        openSessionFromPicker('B', navigate)
+      } else {
+        fireEvent.keyDown(window, { key: '2', code: 'Digit2', ctrlKey: !isMacPlatform(), metaKey: isMacPlatform() })
+      }
+    })
+    expect(screen.getByTestId('path').textContent).toBe('/capabilities')
+    await waitFor(() => expect(trigger).toHaveBeenCalledTimes(1))
+  }
+)
+
+it.each(['primary', 'tile'] as const)('does not replay a %s completion covered by settings', async destination => {
+  if (destination === 'tile') {
+    $sessionTiles.set([{ storedSessionId: 'B', runtimeId: 'runtime-B', dir: 'center' }])
+    $layoutTree.set(group(['workspace', 'session-tile:B'], { id: 'main', active: 'workspace' }))
+  }
+  mount()
+  act(() => openSession('B', navigate))
+  act(() => navigate('/settings'))
+  await act(async () => bind('B'))
+  expect(trigger).not.toHaveBeenCalled()
+  act(() => navigate('/B'))
+  expect(trigger).not.toHaveBeenCalled()
+})
+
+it('does not replay a first-mounted tile after actual profile-bucket removal and restoration', async () => {
+  const completions: Array<(runtime: string) => void> = []
+  setSessionTileDelegate({
+    resumeTile: () =>
+      new Promise<string>(resolve => {
+        completions.push(resolve)
+      })
+  } as never)
+  mount()
+  act(() => openSession('B', navigate, 'tab'))
+  expect(completions).toHaveLength(1)
+  act(() => $activeGatewayProfile.set('other-profile'))
+  expect($sessionTiles.get().some(tile => tile.storedSessionId === 'B')).toBe(false)
+  act(() => {
+    $activeGatewayProfile.set('default')
+    $layoutTree.set(group(['workspace', 'session-tile:B'], { id: 'main', active: 'session-tile:B' }))
+    noteActiveTreeGroup('main')
+  })
+  expect($sessionTiles.get().some(tile => tile.storedSessionId === 'B')).toBe(true)
+  await act(async () => {
+    publishSessionState(
+      'runtime-B',
+      createClientSessionState('B', [
+        { id: 'message-B', role: 'assistant', parts: [assistantTextPart('Transcript B')] }
+      ])
+    )
+    completions.at(-1)!('runtime-B')
+  })
+  expect(trigger).not.toHaveBeenCalled()
+})
+
+it('confirms the primary destination exactly once under StrictMode', async () => {
+  mount(true)
+  act(() => openSession('B', navigate))
+  expect(trigger).not.toHaveBeenCalled()
+  await act(async () => bind('B'))
+  await waitFor(() => expect(trigger).toHaveBeenCalledTimes(1))
+  act(() => openSession('B', navigate))
+  expect(trigger).toHaveBeenCalledTimes(1)
+})
+
+it('preserves a first-mounted destination intent through StrictMode effect replay', async () => {
+  let complete!: (runtime: string) => void
+  setSessionTileDelegate({
+    resumeTile: () =>
+      new Promise<string>(resolve => {
+        complete = resolve
+      })
+  } as never)
+  mount(true)
+  act(() => openSession('B', navigate, 'tab'))
+  expect(trigger).not.toHaveBeenCalled()
+  await act(async () => {
+    publishSessionState(
+      'runtime-B',
+      createClientSessionState('B', [
+        { id: 'message-B', role: 'assistant', parts: [assistantTextPart('Transcript B')] }
+      ])
+    )
+    complete('runtime-B')
+  })
+  await waitFor(() => expect(trigger).toHaveBeenCalledTimes(1))
 })
 
 it('waits for the new normalized message objects even when profiles reuse message ids', async () => {
@@ -442,6 +719,35 @@ it('confirms a selected session on its owning profile rather than the ambient pr
   recordSessionEventScope({ session_id: 'runtime-B', connectionId: 'local', profile: 'other-profile' })
   await act(async () => bind('B'))
   await waitFor(() => expect(screen.getByTestId('transcript').textContent).toBe('Transcript B'))
+  expect(trigger).toHaveBeenCalledTimes(1)
+})
+
+it('preserves pending confirmation during legitimate owner-profile activation', async () => {
+  $sessions.set(
+    $sessions.get().map(row => (row.id === 'B' ? { ...row, connection_id: 'local', profile: 'other-profile' } : row))
+  )
+  mount()
+  act(() => openSession('B', navigate))
+  act(() => $activeGatewayProfile.set('other-profile'))
+  recordSessionEventScope({ session_id: 'runtime-B', connectionId: 'local', profile: 'other-profile' })
+  await act(async () => bind('B'))
+  expect(trigger).toHaveBeenCalledTimes(1)
+})
+
+it('keeps the most recent explicit reselect while the target is still loading', async () => {
+  recordSessionEventScope({ session_id: 'runtime-A', connectionId: 'local', profile: 'default' })
+  $sessions.set(
+    $sessions.get().map(row => (row.id === 'B' ? { ...row, connection_id: 'local', profile: 'other-profile' } : row))
+  )
+  mount()
+  act(() => {
+    openSession('B', navigate)
+    $activeSessionId.set(null)
+    setSelectedStoredSessionId('B')
+  })
+  act(() => openSessionFromPicker('B', navigate))
+  recordSessionEventScope({ session_id: 'runtime-B', connectionId: 'local', profile: 'other-profile' })
+  await act(async () => bind('B'))
   expect(trigger).toHaveBeenCalledTimes(1)
 })
 
