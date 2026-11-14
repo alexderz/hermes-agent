@@ -36,12 +36,12 @@ function tap(editor: HTMLElement, from: [number, number], to: [number, number] =
 }
 
 describe('composer text entry on a touch host (#145166)', () => {
-  it('one still tap focuses the editor, which offers casing, correction and spelling', () => {
+  it('one still tap focuses the editor with spellcheck off and keyboard assistance preserved', () => {
     const editor = render(<Editor touch />).getByTestId('editor')
 
     expect(editor.getAttribute('autocapitalize')).toBe('sentences')
     expect(editor.getAttribute('autocorrect')).toBe('on')
-    expect(editor.getAttribute('spellcheck')).toBe('true')
+    expect(editor.getAttribute('spellcheck')).toBe('false')
 
     // A swipe across the composer is a scroll, not a tap, even one that
     // comes back to where it started: focus stays put.

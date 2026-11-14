@@ -905,7 +905,7 @@ export const UserEditComposer: FC<UserEditComposerProps> = ({ cwd, gateway, sess
           >
             <div
               aria-label={copy.editMessage}
-              // The main composer's text entry: off on desktop, the platform's on touch.
+              // Same text-entry policy as the main composer, with spellcheck off.
               {...composerTextEntryProps(touchPointer)}
               {...tapFocus}
               className={cn(

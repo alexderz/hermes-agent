@@ -8,14 +8,12 @@ import { placeCaretEnd } from './rich-editor'
 const TAP_MAX_MOVE_PX = 10
 const TAP_MAX_MS = 500
 
-/** Text-entry attributes for the composer editor. Desktop keeps them off: the
- *  composer takes paths, code and commands, and Chromium's macOS
- *  text-replacement path shares the autocorrect gate (spellcheck stays off, so
- *  smart quotes and dashes stay out). A touch host types prose on a soft
- *  keyboard and gets the platform's casing, correction and spelling. */
+/** Keep browser spellcheck off: its popup can dismiss the soft keyboard.
+ *  Touch keeps platform casing and autocorrect; desktop keeps macOS text
+ *  replacement through the autocorrect gate without enabling spellcheck. */
 export function composerTextEntryProps(touch: boolean) {
   return touch
-    ? ({ autoCapitalize: 'sentences', autoCorrect: 'on', spellCheck: true } as const)
+    ? ({ autoCapitalize: 'sentences', autoCorrect: 'on', spellCheck: false } as const)
     : ({ autoCapitalize: 'off', autoCorrect: isMacPlatform() ? 'on' : 'off', spellCheck: false } as const)
 }
 
