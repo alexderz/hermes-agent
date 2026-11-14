@@ -1,4 +1,4 @@
-"""G6 echo: hook selection, the once-only claim, the post decision and the missing-escaper warning."""
+"""Echo: hook selection, the once-only claim, the post decision and the missing-escaper warning."""
 
 from __future__ import annotations
 
@@ -64,7 +64,7 @@ class EchoTestBase(unittest.TestCase):
         (self.home / "config.yaml").write_text(
             "plugins:\n  enabled: [intercom]\n  entries:\n    intercom:\n"
             "      allow_gateway_injection: true\n      settings: {}\n", encoding="utf-8")
-        self.ctx = FakeCtx(user_name="Alex", echo_chats=[f"telegram:{GROUP}", f"matrix:{ROOM}"],
+        self.ctx = FakeCtx(user_name="Sam", echo_chats=[f"telegram:{GROUP}", f"matrix:{ROOM}"],
                            owner_user_ids=[f"telegram:{OWNER}"])
         patch = mock.patch.object(route.client, "deliver_sync", self.deliver)
         patch.start()
@@ -81,10 +81,10 @@ class EchoTestBase(unittest.TestCase):
         self.addCleanup(self.db.close)
         self.started = 1.0
         self.add("local-sender", "Sender Chat", "cli")
-        self.add("local-target", "Budgeting", "tui")
-        self.add("tg-private", "Alex DM", "telegram",
+        self.add("local-target", "Reviewer", "tui")
+        self.add("tg-private", "Sam DM", "telegram",
                  origin={"platform": "telegram", "chat_id": OWNER, "chat_type": "dm", "user_id": OWNER})
-        self.add("tg-shared", "Family group", "telegram",
+        self.add("tg-shared", "Team group", "telegram",
                  origin={"platform": "telegram", "chat_id": OTHER_GROUP, "chat_type": "group"})
         self.add("mx-private", "Matrix room", "matrix",
                  origin={"platform": "matrix", "chat_id": ROOM, "chat_type": "group"})
@@ -139,7 +139,7 @@ class EchoTestBase(unittest.TestCase):
         return result
 
     def pre_api(self, request_messages, platform="telegram", retry_count=0):
-        result = echo.on_pre_api_request(session_id="tg-private", user_message="Alex's task",
+        result = echo.on_pre_api_request(session_id="tg-private", user_message="Sam's task",
                                          request_messages=request_messages, platform=platform,
                                          retry_count=retry_count, model="m")
         self.join_posts()
@@ -149,7 +149,7 @@ class EchoTestBase(unittest.TestCase):
     def steered(steer_text, *, then_tool=False):
         rows = [
             {"role": "system", "content": "system"},
-            {"role": "user", "content": "Alex's task"},
+            {"role": "user", "content": "Sam's task"},
             {"role": "assistant", "content": "", "tool_calls": [{"id": "t1"}]},
             {"role": "tool", "tool_call_id": "t1", "content": "result"},
             {"role": "user", "content": f"[steer]\n{steer_text}\n[/steer]", "display_kind": "steer"},
@@ -193,7 +193,7 @@ class HookSelectionTests(EchoTestBase):
     def test_late_steer_is_echoed_by_the_later_turn(self):
         message_id, text = self.send()
         # The steer missed the last request: no request ever carried it in this turn.
-        self.pre_api([{"role": "user", "content": "Alex's task"}])
+        self.pre_api([{"role": "user", "content": "Sam's task"}])
         self.assertEqual(self.ctx.posts, [])
         # The finalizer hands it back; it becomes the next turn's prompt.
         self.pre_llm(f"[steer]\n{text}\n[/steer]")
@@ -204,7 +204,7 @@ class HookSelectionTests(EchoTestBase):
         _message_id, text = self.send()
         rows = self.steered(text, then_tool=False)
         rows.append({"role": "assistant", "content": "answer so far"})
-        rows.append({"role": "user", "content": "Alex's next words"})
+        rows.append({"role": "user", "content": "Sam's next words"})
         self.pre_api(rows)
         self.assertEqual(self.ctx.posts, [])
 
@@ -298,7 +298,7 @@ class PostDecisionTests(EchoTestBase):
     def test_typed_lookalike_or_changed_span_never_posts(self):
         message_id, text = self.send()
         self.pre_llm(text.replace("22:00", "23:00"))
-        lookalike = (f"{MARK} Not Alex · no reply needed · hermes@Sender Chat says "
+        lookalike = (f"{MARK} Not Sam · no reply needed · hermes@Sender Chat says "
                      f"(session local-sender · message {message_id}):\nhi\n{MARK} End of message {message_id}")
         self.pre_llm(lookalike)
         self.pre_api([{"role": "user", "content": lookalike}])
@@ -307,7 +307,7 @@ class PostDecisionTests(EchoTestBase):
 
     def test_text_without_a_frame_reads_no_record(self):
         with mock.patch.object(echo.replies, "find_messages") as find:
-            self.pre_llm("Alex's own words")
+            self.pre_llm("Sam's own words")
             self.pre_api([{"role": "user", "content": "plain"}])
         find.assert_not_called()
         self.assertEqual(self.ctx.posts, [])
@@ -318,7 +318,7 @@ class PostDecisionTests(EchoTestBase):
         self.pre_llm(text)
         posted = self.ctx.posts[0]["text"]
         self.assertEqual(posted, frame.escape_echo(self.echoes[message_id], "telegram"))
-        self.assertTrue(posted.startswith(f"{MARK} Not Alex"))
+        self.assertTrue(posted.startswith(f"{MARK} Not Sam"))
         self.assertNotIn("@everyone", posted)
         self.assertNotIn("<@U123>", posted)
         self.assertNotIn("](", posted)

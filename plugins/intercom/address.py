@@ -1,4 +1,4 @@
-"""Addressing: resolve a ``to`` string to one session, and list sessions (LLD B3).
+"""Addressing: resolve a ``to`` string to one session, and list sessions (README, "The tool").
 
 The first rule that matches wins: an exact title (including ``Home``), then a session id
 or id prefix, then ``@<slug>`` when project addressing is available. A successful id is
@@ -13,7 +13,7 @@ import os
 import sqlite3
 from pathlib import Path
 
-# Pinned sentences (UX F1b). Refusals do not add a "Nothing was sent." prefix; that is the route.
+# Fixed sentences: tests and receipts compare them word for word. Refusals do not add a "Nothing was sent." prefix; that is the route.
 PROJECT_UNAVAILABLE = (
     "Project addressing is not available on this Hermes. Use "
     "list (filter by project) and address the session by id."
@@ -28,7 +28,8 @@ FUZZY_CUTOFF = 0.6
 RUN_SOURCES = frozenset({"cron", "subagent", "oneshot"})
 _PREFIX_PAGE = 200
 
-# Snapshot taken at register() for the tool text (G10). resolve() does not read it.
+# Snapshot taken at register() for the tool text, which is fixed for the process.
+# resolve() does not read it: it checks again on every call.
 registered_project_addressing: bool | None = None
 
 
@@ -136,6 +137,21 @@ def list_sessions(*, include_runs=False, query=None, limit=None, sender=None, li
                 merged[tip] = item
             else:
                 previous["state"] = _merge_state(previous["state"], item["state"])
+        # The stored list is one page of recent sessions, so busy cron runs can push an
+        # older chat that is still open (even mid-turn) off it. Every open session is in
+        # the live list: add the ones the stored page missed.
+        for row in _rows_of(live):
+            source = row.get("source")
+            source = source.strip() if isinstance(source, str) else ""
+            if source in RUN_SOURCES and not include_runs:
+                continue
+            raw = _primary_id(row)
+            if not raw:
+                continue
+            tip = _tip(db, raw)
+            if tip in merged:
+                continue
+            merged[tip] = _list_item(row, tip, db, live_index, projects)
         sessions = list(merged.values())
         needle = query.strip().casefold() if isinstance(query, str) else ""
         if needle:
@@ -746,7 +762,7 @@ def _started_desc(row: dict):
 
 
 def _owner_lister(scope: str = "live", picker: bool = False) -> dict:
-    """Production lister: G2's ``client.list_sessions``. Tests pass their own."""
+    """Production lister: ``client.list_sessions``. Tests pass their own."""
     try:
         from . import client as owner_client
     except ImportError:

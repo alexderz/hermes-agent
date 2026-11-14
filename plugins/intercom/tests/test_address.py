@@ -1,4 +1,4 @@
-"""G4 addressing: resolve rules, project addressing, and list (LLD B3)."""
+"""Addressing: resolve rules, project addressing, and list."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ UNAVAILABLE = (
     "list (filter by project) and address the session by id."
 )
 NO_OWNER = "Project @{slug} has no owner session set. Address a session by id (from list)."
-ORCHESTRATOR = "Budgeting \u2014 Orchestrator"
+PLANNER = "Reviewer \u2014 Planner"
 
 
 def _sha256(path: Path) -> str:
@@ -142,14 +142,14 @@ class AddressTests(unittest.TestCase):
     def test_home_and_exact_title_are_case_sensitive(self):
         self.open_writer()
         self.add_session("local-home", title="Home", started_at=10)
-        self.add_session("local-budget", title="Budgeting", started_at=11)
+        self.add_session("local-review", title="Reviewer", started_at=11)
         self.close_writer()
         home = address.resolve("Home", lister=_raising_lister)
         self.assertEqual(home, {"ok": True, "session_id": "local-home", "title": "Home"})
         padded = address.resolve("  Home  ", lister=_raising_lister)
         self.assertEqual(padded["session_id"], "local-home")
-        titled = address.resolve("Budgeting", lister=_raising_lister)
-        self.assertEqual(titled["session_id"], "local-budget")
+        titled = address.resolve("Reviewer", lister=_raising_lister)
+        self.assertEqual(titled["session_id"], "local-review")
         wrong_case = address.resolve("home", lister=_quiet_lister())
         self.assertEqual(wrong_case["error"], "unknown")
         self.assertFalse(wrong_case["ok"])
@@ -265,18 +265,18 @@ class AddressTests(unittest.TestCase):
 
     def test_unknown_title_lists_closest_or_none(self):
         self.open_writer()
-        self.add_session("local-orch", title=ORCHESTRATOR, started_at=5)
+        self.add_session("local-orch", title=PLANNER, started_at=5)
         self.add_session("local-home", title="Home", started_at=4)
         self.close_writer()
-        stored = [{"id": "local-orch", "title": ORCHESTRATOR, "last_active_at": 8.0}]
-        typo = address.resolve("Budgetting \u2014 Orchestrator", lister=_quiet_lister(stored, []))
+        stored = [{"id": "local-orch", "title": PLANNER, "last_active_at": 8.0}]
+        typo = address.resolve("Reviewerr \u2014 Planner", lister=_quiet_lister(stored, []))
         self.assertEqual(typo["error"], "unknown")
         self.assertEqual(typo["message"], "No session matches that address.")
         self.assertEqual(typo["candidates"][0]["id"], "local-orch")
-        self.assertEqual(typo["candidates"][0]["title"], ORCHESTRATOR)
+        self.assertEqual(typo["candidates"][0]["title"], PLANNER)
         self.assertEqual(typo["candidates"][0]["last_active"], 8.0)
         self.assertEqual(typo["candidates"][0]["availability"], "not open")
-        partial = address.resolve("Orchestrator", lister=_quiet_lister(stored, [{"id": "local-orch"}]))
+        partial = address.resolve("Planner", lister=_quiet_lister(stored, [{"id": "local-orch"}]))
         self.assertEqual(partial["error"], "unknown")
         self.assertEqual(partial["candidates"][0]["id"], "local-orch")
         self.assertEqual(partial["candidates"][0]["availability"], "open")
@@ -291,14 +291,14 @@ class AddressTests(unittest.TestCase):
         self.open_writer()
         for index in range(address._PREFIX_PAGE):
             self.add_session(f"local-fill-{index}", title=f"xxxx {index}", started_at=1000 + index)
-        self.add_session("local-old", title="Budgeting notes", started_at=1)
-        self.add_session("local-hidden", title="Budgeting hidden", started_at=2)
+        self.add_session("local-old", title="Reviewer notes", started_at=1)
+        self.add_session("local-hidden", title="Reviewer hidden", started_at=2)
         self.db.set_session_hidden("local-hidden", True)
-        self.add_session("local-archived", title="Budgeting archived", started_at=3)
+        self.add_session("local-archived", title="Reviewer archived", started_at=3)
         self.db.set_session_archived("local-archived", True, notify=False)
-        self.add_session("local-cron", title="Budgeting cron", source="cron", started_at=4)
+        self.add_session("local-cron", title="Reviewer cron", source="cron", started_at=4)
         self.close_writer()
-        result = address.resolve("Budgeting", lister=_quiet_lister())
+        result = address.resolve("Reviewer", lister=_quiet_lister())
         self.assertEqual(result["error"], "unknown")
         self.assertEqual(
             [item["id"] for item in result["candidates"]],
@@ -308,9 +308,9 @@ class AddressTests(unittest.TestCase):
     def test_closest_titles_cap_at_five(self):
         self.open_writer()
         for index in range(6):
-            self.add_session(f"local-near-{index}", title=f"Orchestrator {index}", started_at=index)
+            self.add_session(f"local-near-{index}", title=f"Planner {index}", started_at=index)
         self.close_writer()
-        result = address.resolve("Orchestrator", lister=_quiet_lister())
+        result = address.resolve("Planner", lister=_quiet_lister())
         self.assertEqual(result["error"], "unknown")
         self.assertEqual(len(result["candidates"]), 5)
 
@@ -320,15 +320,15 @@ class AddressTests(unittest.TestCase):
         self.add_session("local-owner-parent", title="Owner", started_at=1)
         self.db.end_session("local-owner-parent", "compression")
         self.add_session("local-owner-child", title="Reports", parent="local-owner-parent", started_at=2)
-        self.add_session("local-orch", title=ORCHESTRATOR, started_at=3)
+        self.add_session("local-orch", title=PLANNER, started_at=3)
         self.close_writer()
         path = self.make_projects([
-            {"slug": "budgeting", "name": "Budgeting", "owner": "local-owner-parent"},
+            {"slug": "reviewer", "name": "Reviewer", "owner": "local-owner-parent"},
             {"slug": "other", "name": "Other", "owner": "local-orch"},
         ])
         before = _sha256(path)
         with _assert_projects_readonly():
-            result = address.resolve("@budgeting", lister=_raising_lister)
+            result = address.resolve("@reviewer", lister=_raising_lister)
         self.assertEqual(result["session_id"], "local-owner-child")
         self.assertEqual(result["title"], "Reports")
         self.assertEqual(_sha256(path), before)
@@ -338,69 +338,69 @@ class AddressTests(unittest.TestCase):
     def test_at_title_beats_slug_only_when_feature_is_on(self):
         self.enable_projects()
         self.open_writer()
-        self.add_session("local-at-title", title="@budgeting", started_at=2)
+        self.add_session("local-at-title", title="@reviewer", started_at=2)
         self.add_session("local-owner", title="Owner", started_at=1)
         self.close_writer()
-        self.make_projects([{"slug": "budgeting", "owner": "local-owner"}])
-        titled = address.resolve("@budgeting", lister=_raising_lister)
+        self.make_projects([{"slug": "reviewer", "owner": "local-owner"}])
+        titled = address.resolve("@reviewer", lister=_raising_lister)
         self.assertEqual(titled["session_id"], "local-at-title")
         self.write_config(enabled=[], plugin="projects")
-        refused = address.resolve("@budgeting", lister=_raising_lister)
+        refused = address.resolve("@reviewer", lister=_raising_lister)
         self.assertEqual(refused["error"], "project-addressing-unavailable")
         self.assertNotIn("local-at-title", repr(refused))
 
     def test_no_owner_set_uses_stored_slug_and_guesses_nothing(self):
         self.enable_projects()
         self.open_writer()
-        self.add_session("local-orch", title=ORCHESTRATOR, started_at=1)
+        self.add_session("local-orch", title=PLANNER, started_at=1)
         self.close_writer()
         for owner in (None, "", "   "):
             with self.subTest(owner=owner):
                 path = self.home / "projects.db"
                 if path.exists():
                     path.unlink()
-                self.make_projects([{"slug": "budgeting", "name": "Budgeting", "owner": owner}])
-                result = address.resolve("@budgeting", lister=_raising_lister)
+                self.make_projects([{"slug": "reviewer", "name": "Reviewer", "owner": owner}])
+                result = address.resolve("@reviewer", lister=_raising_lister)
                 self.assertEqual(result["error"], "no-owner-set")
-                self.assertEqual(result["message"], NO_OWNER.format(slug="budgeting"))
+                self.assertEqual(result["message"], NO_OWNER.format(slug="reviewer"))
                 self.assertEqual(result["candidates"], [])
                 self.assertNotIn("local-orch", repr(result))
                 self.assertNotIn("Nothing was sent", result["message"])
-        other_case = address.resolve("@Budgeting", lister=_raising_lister)
+        other_case = address.resolve("@Reviewer", lister=_raising_lister)
         self.assertEqual(other_case["error"], "unknown")
         self.assertNotIn("local-orch", repr(other_case))
 
     def test_unknown_slug_lists_closest_slugs_only(self):
         self.enable_projects()
         self.open_writer()
-        self.add_session("local-orch", title=ORCHESTRATOR, started_at=1)
+        self.add_session("local-orch", title=PLANNER, started_at=1)
         self.close_writer()
         slugs = [
-            "budgeting", "budget-a", "budget-b", "budget-c", "budget-d", "budget-e",
-            "budget-platform-extra",
+            "reviewer", "review-a", "review-b", "review-c", "review-d", "review-e",
+            "review-platform-extra",
         ]
         self.make_projects(
             [{"slug": slug, "owner": "local-orch"} for slug in slugs]
-            + [{"slug": "budget-archived", "owner": "local-orch", "archived": True}]
+            + [{"slug": "review-archived", "owner": "local-orch", "archived": True}]
         )
-        result = address.resolve("@budgetting", lister=_raising_lister)
+        result = address.resolve("@reviewerr", lister=_raising_lister)
         self.assertEqual(result["error"], "unknown")
         self.assertEqual(result["message"], "No project matches that slug.")
         found = [item["slug"] for item in result["candidates"]]
-        self.assertIn("budgeting", found)
+        self.assertIn("reviewer", found)
         self.assertLessEqual(len(found), 5)
-        self.assertNotIn("budget-archived", found)
+        self.assertNotIn("review-archived", found)
         self.assertNotIn("local-orch", repr(result))
         for item in result["candidates"]:
             self.assertEqual(set(item), {"slug"})
-        many = address.resolve("@budget-", lister=_raising_lister)
+        many = address.resolve("@review-", lister=_raising_lister)
         many_slugs = [item["slug"] for item in many["candidates"]]
         self.assertEqual(len(many_slugs), 5)
-        self.assertEqual(many_slugs[0], "budget-a")
-        self.assertNotIn("budget-platform-extra", many_slugs)
-        self.assertNotIn("budget-archived", many_slugs)
-        self.assertNotIn("budgeting", many_slugs)
-        archived = address.resolve("@budget-archived", lister=_raising_lister)
+        self.assertEqual(many_slugs[0], "review-a")
+        self.assertNotIn("review-platform-extra", many_slugs)
+        self.assertNotIn("review-archived", many_slugs)
+        self.assertNotIn("reviewer", many_slugs)
+        archived = address.resolve("@review-archived", lister=_raising_lister)
         self.assertEqual(archived["error"], "unknown")
         self.assertNotIn("local-orch", repr(archived))
         self.assertNotEqual(archived.get("session_id"), "local-orch")
@@ -411,8 +411,8 @@ class AddressTests(unittest.TestCase):
         self.add_session("local-own-aaa", title="One", started_at=2)
         self.add_session("local-own-aab", title="Two", started_at=1)
         self.close_writer()
-        self.make_projects([{"slug": "budgeting", "owner": "local-own-aa"}])
-        result = address.resolve("@budgeting", lister=_quiet_lister())
+        self.make_projects([{"slug": "reviewer", "owner": "local-own-aa"}])
+        result = address.resolve("@reviewer", lister=_quiet_lister())
         self.assertEqual(result["error"], "ambiguous")
         self.assertEqual(
             [item["id"] for item in result["candidates"]],
@@ -424,27 +424,27 @@ class AddressTests(unittest.TestCase):
         self.open_writer()
         self.add_session("local-other", title="Other", started_at=1)
         self.close_writer()
-        self.make_projects([{"slug": "budgeting", "owner": "local-missing"}])
-        result = address.resolve("@budgeting", lister=_raising_lister)
+        self.make_projects([{"slug": "reviewer", "owner": "local-missing"}])
+        result = address.resolve("@reviewer", lister=_raising_lister)
         self.assertEqual(result["error"], "unknown")
         self.assertEqual(result["message"], "No session matches that address.")
         self.assertEqual(result["candidates"], [])
 
-    def test_feature_absent_never_picks_orchestrator_title(self):
+    def test_feature_absent_never_picks_planner_title(self):
         self.open_writer()
-        self.add_session("local-orch", title=ORCHESTRATOR, started_at=1)
-        self.add_session("local-at", title="@budgeting", started_at=2)
+        self.add_session("local-orch", title=PLANNER, started_at=1)
+        self.add_session("local-at", title="@reviewer", started_at=2)
         self.close_writer()
         column_path = self.home / "projects.db"
         # The three absence cases share the sessions above; rebuild the db per case.
         builders = {
             "plugin-off": lambda: (
                 self.write_config(enabled=[], plugin="projects"),
-                self.make_projects([{"slug": "budgeting", "owner": "local-orch"}]),
+                self.make_projects([{"slug": "reviewer", "owner": "local-orch"}]),
             ),
             "column-missing": lambda: (
                 self.write_config(enabled=["projects"], plugin="projects"),
-                self.make_projects([{"slug": "budgeting"}], owner_column=False),
+                self.make_projects([{"slug": "reviewer"}], owner_column=False),
             ),
             "no-file": lambda: self.write_config(enabled=["projects"], plugin="projects"),
         }
@@ -457,7 +457,7 @@ class AddressTests(unittest.TestCase):
                     column_path.unlink()
                 build()
                 before = _sha256(column_path) if column_path.exists() else None
-                result = address.resolve("@budgeting", lister=_raising_lister)
+                result = address.resolve("@reviewer", lister=_raising_lister)
                 self.assertEqual(result["error"], "project-addressing-unavailable")
                 self.assertEqual(result["message"], UNAVAILABLE)
                 self.assertEqual(result["candidates"], [])
@@ -474,13 +474,13 @@ class AddressTests(unittest.TestCase):
         path.write_bytes(b"not a sqlite database\n")
         before = path.read_bytes()
         self.assertFalse(address.check_project_addressing())
-        result = address.resolve("@budgeting", lister=_raising_lister)
+        result = address.resolve("@reviewer", lister=_raising_lister)
         self.assertEqual(result["error"], "project-addressing-unavailable")
         self.assertEqual(path.read_bytes(), before)
 
     def test_plugin_id_must_be_an_enabled_string(self):
         self.write_config(enabled=["other"], plugin="projects")
-        self.make_projects([{"slug": "budgeting", "owner": "local-x"}])
+        self.make_projects([{"slug": "reviewer", "owner": "local-x"}])
         self.assertFalse(address.check_project_addressing())
         self.write_config(enabled=["projects"], plugin="3")
         # Non-string settings are written as YAML ints when unquoted; rewrite by hand.
@@ -496,7 +496,7 @@ class AddressTests(unittest.TestCase):
         self.open_writer()
         self.add_session("local-home", title="Home", started_at=1)
         self.close_writer()
-        path = self.make_projects([{"slug": "budgeting", "owner": "local-home"}])
+        path = self.make_projects([{"slug": "reviewer", "owner": "local-home"}])
         path.chmod(0o444)
         before = _sha256(path)
         with mock.patch("hermes_cli.projects_db.connect", side_effect=AssertionError("migrating connect")):
@@ -508,22 +508,22 @@ class AddressTests(unittest.TestCase):
 
     def test_slug_read_error_is_unavailable(self):
         self.enable_projects()
-        self.make_projects([{"slug": "budgeting", "owner": "local-x"}])
+        self.make_projects([{"slug": "reviewer", "owner": "local-x"}])
         with mock.patch.object(address, "_unarchived_project_rows", side_effect=sqlite3.OperationalError("boom")):
-            result = address.resolve("@budgeting", lister=_raising_lister)
+            result = address.resolve("@reviewer", lister=_raising_lister)
         self.assertEqual(result["error"], "project-addressing-unavailable")
 
     def test_register_snapshot_does_not_stick_for_resolve(self):
         self.enable_projects()
-        self.make_projects([{"slug": "budgeting", "owner": None}])
+        self.make_projects([{"slug": "reviewer", "owner": None}])
         self.open_writer()
-        self.add_session("local-orch", title=ORCHESTRATOR, started_at=1)
+        self.add_session("local-orch", title=PLANNER, started_at=1)
         self.close_writer()
         plugin = _load_plugin()
         try:
             ctx = _Ctx()
             plugin.register(ctx)
-            # G9's reply hook and G6's echo hooks: with inbound "never" no legacy drain is registered.
+            # The reply hook and the echo hooks: with inbound "never" no legacy drain is registered.
             self.assertEqual([hook[0] for hook in ctx.hooks],
                              ["post_llm_call", "pre_llm_call", "pre_api_request"])
             echo = sys.modules[plugin.__name__ + ".echo"]
@@ -536,7 +536,7 @@ class AddressTests(unittest.TestCase):
             addr = sys.modules[plugin.__name__ + ".address"]
             self.assertTrue(addr.registered_project_addressing)
             self.write_config(enabled=[], plugin="projects")
-            result = addr.resolve("@budgeting", lister=_raising_lister)
+            result = addr.resolve("@reviewer", lister=_raising_lister)
             self.assertEqual(result["error"], "project-addressing-unavailable")
             self.assertEqual(result["message"], UNAVAILABLE)
             self.assertNotIn("local-orch", repr(result))
@@ -622,43 +622,43 @@ class AddressTests(unittest.TestCase):
 
     def test_list_query_matches_title_or_project_not_id(self):
         work = self.home / "work"
-        budget = work / "budget"
+        review = work / "review"
         rows = [
-            {"id": "budget-session-id", "title": "Notes", "source": "cli", "running": False,
+            {"id": "review-session-id", "title": "Notes", "source": "cli", "running": False,
              "last_active_at": 2, "workspace": str(work / "other" / "app")},
             {"id": "local-notes", "title": "Plain", "source": "cli", "running": False,
-             "last_active_at": 3, "workspace": str(budget)},
+             "last_active_at": 3, "workspace": str(review)},
         ]
         self.make_projects(
-            [{"slug": "budgeting", "name": "Budgeting", "id": "p1"}],
+            [{"slug": "reviewer", "name": "Reviewer", "id": "p1"}],
             owner_column=False,
-            folders=[("p1", str(budget))],
+            folders=[("p1", str(review))],
         )
         self.write_config(enabled=[], plugin=None)
-        listed = address.list_sessions(query="BUDGET", lister=_quiet_lister(rows, []))
+        listed = address.list_sessions(query="REVIEW", lister=_quiet_lister(rows, []))
         self.assertEqual([item["id"] for item in listed["sessions"]], ["local-notes"])
-        self.assertEqual(listed["sessions"][0]["project"], "Budgeting")
-        missed = address.list_sessions(query="budget-session", lister=_quiet_lister(rows, []))
+        self.assertEqual(listed["sessions"][0]["project"], "Reviewer")
+        missed = address.list_sessions(query="review-session", lister=_quiet_lister(rows, []))
         self.assertEqual(missed["sessions"], [])
         titled = address.list_sessions(query="notes", lister=_quiet_lister(rows, []))
-        self.assertEqual([item["id"] for item in titled["sessions"]], ["budget-session-id"])
+        self.assertEqual([item["id"] for item in titled["sessions"]], ["review-session-id"])
 
     def test_list_project_from_folders_without_the_plugin(self):
         work = self.home / "work"
-        budget = work / "budget"
-        web = budget / "web"
+        review = work / "review"
+        web = review / "web"
         slug_only = work / "slug-only"
         archived = work / "archived-root"
         self.make_projects(
             [
-                {"id": "p-budget", "slug": "budgeting", "name": "Budgeting"},
-                {"id": "p-web", "slug": "budget-web", "name": "Budget Web"},
+                {"id": "p-review", "slug": "reviewer", "name": "Reviewer"},
+                {"id": "p-web", "slug": "review-web", "name": "Review Web"},
                 {"id": "p-slug", "slug": "slug-name", "name": "  "},
                 {"id": "p-old", "slug": "old", "name": "Old Name", "archived": True},
             ],
             owner_column=False,
             folders=[
-                ("p-budget", str(budget)),
+                ("p-review", str(review)),
                 ("p-web", str(web)),
                 ("p-slug", str(slug_only)),
                 ("p-old", str(archived)),
@@ -667,8 +667,8 @@ class AddressTests(unittest.TestCase):
         self.write_config(enabled=[], plugin="projects")
         rows = [
             {"id": "s-web", "title": "Web", "source": "cli", "workspace": str(web / "src"), "last_active_at": 5},
-            {"id": "s-budget", "title": "Root", "source": "cli", "workspace": str(budget / "src"), "last_active_at": 4},
-            {"id": "s-near", "title": "Near", "source": "cli", "workspace": str(work / "budgeting"), "last_active_at": 3},
+            {"id": "s-review", "title": "Root", "source": "cli", "workspace": str(review / "src"), "last_active_at": 4},
+            {"id": "s-near", "title": "Near", "source": "cli", "workspace": str(work / "reviewer"), "last_active_at": 3},
             {"id": "s-app", "title": "App", "source": "cli", "workspace": str(work / "other" / "app"), "last_active_at": 2},
             {"id": "s-empty", "title": "Empty", "source": "cli", "workspace": "  ", "last_active_at": 1},
             {"id": "s-slug", "title": "Slug", "source": "cli", "workspace": str(slug_only), "last_active_at": 6},
@@ -676,9 +676,9 @@ class AddressTests(unittest.TestCase):
         ]
         listed = address.list_sessions(lister=_quiet_lister(rows, []))
         by_id = {item["id"]: item for item in listed["sessions"]}
-        self.assertEqual(by_id["s-web"]["project"], "Budget Web")
-        self.assertEqual(by_id["s-budget"]["project"], "Budgeting")
-        self.assertEqual(by_id["s-near"]["project"], "budgeting")
+        self.assertEqual(by_id["s-web"]["project"], "Review Web")
+        self.assertEqual(by_id["s-review"]["project"], "Reviewer")
+        self.assertEqual(by_id["s-near"]["project"], "reviewer")
         self.assertEqual(by_id["s-app"]["project"], "app")
         self.assertEqual(by_id["s-empty"]["project"], "")
         self.assertEqual(by_id["s-slug"]["project"], "slug-name")
@@ -754,6 +754,35 @@ class AddressTests(unittest.TestCase):
         self.assertEqual(item["last_active"], 5)
         self.assertEqual(item["state"], "running")
 
+    def test_list_keeps_live_sessions_missing_from_the_stored_page(self):
+        # The owner's stored list is one page of recent sessions; busy cron runs can push
+        # an older, still-open chat off it. The live list must still bring it in.
+        stored = [
+            {"id": "local-cron-new", "title": "Check-in", "source": "cron", "running": False, "last_active_at": 9},
+            {"id": "local-paged", "title": "Paged", "source": "cli", "running": False, "last_active_at": 8},
+        ]
+        live = [
+            {"id": "local-old-chat", "session_id": "local-old-chat", "title": "Old chat", "source": "tui",
+             "running": True, "last_active_at": 7, "workspace": ""},
+            {"id": "local-old-idle", "title": "Open idle", "source": "cli", "running": False},
+            {"id": "local-old-run", "title": "Build run", "source": "oneshot", "running": True},
+            {"id": "local-paged", "title": "Paged", "source": "cli", "running": True},
+        ]
+        listed = address.list_sessions(lister=_quiet_lister(stored, live))
+        by_id = {item["id"]: item for item in listed["sessions"]}
+        self.assertEqual(by_id["local-old-chat"]["state"], "running")
+        self.assertEqual(by_id["local-old-chat"]["title"], "Old chat")
+        self.assertEqual(by_id["local-old-chat"]["source"], "tui")
+        self.assertEqual(by_id["local-old-idle"]["state"], "idle")
+        self.assertEqual(by_id["local-paged"]["state"], "running")
+        self.assertNotIn("local-old-run", by_id)
+        self.assertNotIn("local-cron-new", by_id)
+        self.assertEqual([item["id"] for item in listed["sessions"]].count("local-paged"), 1)
+        with_runs = address.list_sessions(include_runs=True, lister=_quiet_lister(stored, live))
+        run_ids = {item["id"]: item["state"] for item in with_runs["sessions"]}
+        self.assertEqual(run_ids["local-old-run"], "running")
+        self.assertIn("local-cron-new", run_ids)
+
     def test_default_lister_calls_client_list_sessions(self):
         import client
 
@@ -820,7 +849,7 @@ class _Ctx:
 
 
 def _load_plugin():
-    name = "hermes_intercom_g4_address"
+    name = "hermes_intercom_test_address"
     spec = importlib.util.spec_from_file_location(
         name,
         PACKAGE_DIR / "__init__.py",
