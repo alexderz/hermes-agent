@@ -54,6 +54,9 @@ export const esNotifications = {
   testSent:
     'Prueba enviada. Si no aparece nada, revisa los permisos de notificaciones del sistema operativo y el modo Concentración o No molestar.',
   testUnsupported: 'Este sistema no admite notificaciones nativas.',
+  sessionSwitchHapticsTitle: 'Respuesta háptica al cambiar de sesión',
+  sessionSwitchHapticsDesc:
+    'Una vibración sutil cuando la conversación seleccionada está lista. Solo en dispositivos y navegadores compatibles; silenciar la interfaz también la desactiva.',
   muteSoundsTitle: 'Silenciar sonidos de la interfaz',
   muteSoundsDesc:
     'Silencia los avisos automáticos de finalización, activación y reflexión, la respuesta háptica y los sonidos de las notificaciones del sistema. Las vistas previas de sonido y las respuestas habladas siguen reproduciéndose.',

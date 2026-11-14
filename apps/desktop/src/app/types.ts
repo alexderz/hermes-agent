@@ -2,6 +2,7 @@ import type * as React from 'react'
 
 import type { ChatMessage } from '@/lib/chat-messages'
 import type { Tiered } from '@/store/interface-mode'
+import type { SessionOwnerScope } from '@/store/session-request-router'
 import type { SessionMessage, UsageStats } from '@/types/hermes'
 
 export interface ContextSuggestion {
@@ -150,6 +151,8 @@ export interface PersistedDisplayTranscriptProvenance {
 
 export interface ClientSessionState {
   storedSessionId: string | null
+  /** Owner captured by the RPC that bound this runtime, not a later resume hint. */
+  boundOwner?: SessionOwnerScope
   transcriptAuthorityEpoch?: number
   transcriptProvenance?: PersistedDisplayTranscriptProvenance
   messages: ChatMessage[]

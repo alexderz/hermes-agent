@@ -23,6 +23,7 @@ import {
 } from 'react'
 
 import { ShellMenuItems } from '@/app/context-menu/shell-menu-items'
+import { withSessionTabSwitch } from '@/app/session/session-switch'
 import { TITLEBAR_DRAG_HANDLE_WIDTH } from '@/app/shell/titlebar'
 import { ActionsContextMenu, type MenuKit, renderActionItem } from '@/components/ui/actions-menu'
 import { Codicon } from '@/components/ui/codicon'
@@ -341,15 +342,20 @@ function CompactZoneTabs({ activeId, belowControls, closeable, newTab, node, tab
         activeId={activeId}
         newTab={node.minimized ? null : newTab}
         onClose={closeable ? () => closeTabPane(activeId) : undefined}
-        onSelect={paneId => {
-          clearTabSelection()
+        onSelect={paneId =>
+          withSessionTabSwitch(() => {
+            clearTabSelection()
 
-          if (node.minimized) {
-            restoreTreePane(paneId)
-          }
+            if (node.minimized) {
+              restoreTreePane(paneId)
+            }
 
-          activateTreePane(node.id, paneId)
-        }}
+            noteActiveTreeGroup(node.id)
+            activateTreePane(node.id, paneId)
+
+            return paneId
+          })
+        }
         tabActions={tabActions}
         tabs={tabs}
       />
@@ -609,16 +615,19 @@ export function TreeGroup({
   // one the zone menu's Close and ⌘W use.
   const closeTab = (paneId: string) => closeTabPane(paneId)
 
-  const activateTab = (paneId: string) => {
-    noteActiveTreeGroup(node.id)
-    clearTabSelection()
+  const activateTab = (paneId: string) =>
+    withSessionTabSwitch(() => {
+      noteActiveTreeGroup(node.id)
+      clearTabSelection()
 
-    if (node.minimized) {
-      restoreTreePane(paneId)
-    }
+      if (node.minimized) {
+        restoreTreePane(paneId)
+      }
 
-    activateTreePane(node.id, paneId)
-  }
+      activateTreePane(node.id, paneId)
+
+      return paneId
+    })
 
   // A pane whose store owns Close keeps the gesture even when the pane itself
   // is uncloseable — the workspace tab empties to a fresh draft rather than

@@ -52,6 +52,9 @@ export const jaNotifications = {
   testBody: '通知は正常に動作しています。',
   testSent: 'テストを送信しました。表示されない場合は、OS の通知許可と集中モード／おやすみモードを確認してください。',
   testUnsupported: 'このシステムはネイティブ通知に対応していません。',
+  sessionSwitchHapticsTitle: 'セッション切り替え時の触覚フィードバック',
+  sessionSwitchHapticsDesc:
+    '選択した会話の準備ができると軽く振動します。対応するデバイスとブラウザーでのみ動作し、インターフェース音のミュート時は振動しません。',
   muteSoundsTitle: 'インターフェース音をミュート',
   muteSoundsDesc:
     '完了・ウェイクワード・思考中の自動通知音、触覚フィードバック、OS 通知の音を無効にします。サウンドのプレビューと音声による応答は引き続き再生されます。',

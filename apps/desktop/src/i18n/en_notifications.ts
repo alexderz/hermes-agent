@@ -52,6 +52,9 @@ export const enNotifications = {
   testBody: 'Notifications are working.',
   testSent: 'Test sent. If nothing appears, check your OS notification permissions and Focus/Do Not Disturb.',
   testUnsupported: 'This system does not support native notifications.',
+  sessionSwitchHapticsTitle: 'Session-switch haptics',
+  sessionSwitchHapticsDesc:
+    'A subtle tick when the selected conversation is ready. Works only on supported devices and browsers; interface mute also silences it.',
   muteSoundsTitle: 'Mute interface sounds',
   muteSoundsDesc:
     'Silences automatic completion, wake-word and thinking cues, haptic feedback, and OS notification sounds. Sound previews and spoken replies still play.',
