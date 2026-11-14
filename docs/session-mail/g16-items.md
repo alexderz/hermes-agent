@@ -392,3 +392,36 @@ git grep -n -i -E "$HOUSE_PATTERN" -- . ':!tests/fixtures' ; test $? -eq 1
 
 - **Blocked by:** G16f · **Blocks:** deploy
 - **Out of scope:** everything the plan marks settled; the live install; showing other hidden sessions.
+
+## G16i — Webapp shows session-mail messages folded, like bot messages (operator request 2026-11-14)
+
+Repo: `intercom` · branch `der-767/webapp-fold` · builder claude · blocked by G16h
+
+- Type: Task · Parent: `DER-767`
+- Source: operator request 2026-11-14 ("I want intercom message to show up like the bot ones, there but faded and collapsed", with a Webapp screenshot): session-mail messages render as full user bubbles, bot messages as a faded centered "Message from <sender> ▸ show message" notice.
+- Builder: Claude Opus
+
+**Mechanism (no Hermes change):** the Webapp folds any user row whose text matches `AGENT_MESSAGE_RE` (`apps/desktop/src/components/assistant-ui/thread/user-message.tsx:96-97`, rendered by `AgentMessageNote` at `:183-235`, chosen at `:538`):
+`^(?:Message from (?:🤖\s*)?([^:\n(]{1,64}?)(?:\s*\(@([a-z0-9][a-z0-9_-]{0,63})(?:@[a-zA-Z0-9][a-zA-Z0-9_-]{0,63})?\))?:\s*|\[Message from agent '([^']{1,64})'\]\s*)([\s\S]*)$`
+The assistant message that follows such a row also folds, once settled, under "Replied to <sender> ▸ show reply" (`assistant-message.tsx:133-180`); that is the bot behaviour the operator asked for and is accepted.
+
+**Outcome:** a session-mail message that starts a turn (queue, interrupt, and the wake lines of keyed queue and deadlines) shows in the Webapp as "Message from 📡 <sender>" with "show message", and the turn's reply as "Replied to 📡 <sender>".
+
+**Acceptance:**
+- `frame.build` puts one line before the `📡 Not …` header line: `Message from 📡 <label> (@<profile>):` for a session sender (`<profile>` = the sender's profile name, which matches the handle pattern), `Message from 📡 <label>:` for script and messaging senders. `<label>` is the sender's title (scripts: their `--from` name), with `:`, `(`, `)` and line breaks replaced by spaces, whitespace collapsed, and cut so that `📡 <label>` is at most 64 characters. The header line, its `header_sha` span (header line through `📡 End of message <id>`), the authority line, body and footer are unchanged, so `replies.find_spans`/`find_messages` and every reply rule still work.
+- The echo into private chats (`echo` in the `build` return value) does not get the line.
+- Quoted-frame defence (`frame.py:225-260`): a body line that starts `Message from 📡` is defanged like a quoted `📡` header line, so a sender cannot fake a second notice inside a body.
+- Held-note blocks from `pre_llm_call` (G16b) and steer delivery are unchanged (they are not user rows).
+- `build`'s docstring and any code assuming the text starts with `📡` (`frame.py:742`, `_ECHO_HEADER_RE` users, `__init__.py:229`) are updated or proven unaffected.
+- README "What a message looks like" shows the new first line and says why (Webapp folds it like bot messages).
+- Tests: a test holding a Python translation of `AGENT_MESSAGE_RE` (comment names its source file) asserts the framed text of a session, script, messaging, reply and ask message matches it with the expected sender and handle, including a label containing `:` and `(` and a 100-character label; reply spans and `header_sha` unchanged for a framed message; the echo has no `Message from` line; a body line `Message from 📡 X:` is defanged.
+
+**Verify:**
+```
+cd <intercom-repo>
+HERMES_HOME="$(mktemp -d)" <hermes-test-python> -I -m unittest discover -s tests -p 'test_*.py' -t .
+git grep -n -i -E "$HOUSE_PATTERN" -- . ':!tests/fixtures' ; test $? -eq 1
+```
+
+- **Blocked by:** G16h · **Blocks:** deploy (the manager checks the fold on the trial dashboard with a browser before deploying)
+- **Out of scope:** everything the plan marks settled; any Hermes or Webapp change; the reply fold (accepted as bot parity); messages already in history (they keep their old look).
