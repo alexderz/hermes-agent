@@ -1,6 +1,6 @@
 import { type ThreadMessage, useAuiState, useThreadRuntime } from '@assistant-ui/react'
 import { useStore } from '@nanostores/react'
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 
 import { appViewForPath, isOverlayView } from '@/app/routes'
 import { sessionShouldHaveTranscript } from '@/app/session/hooks/use-session-actions/utils'
@@ -16,6 +16,7 @@ import { useStoreSelector } from '@/lib/use-session-slice'
 import { $gatewayState, $sessions, sessionMatchesStoredId } from '@/store/session'
 import { $focusedTreePaneId } from '@/store/session-focus'
 import { $sessionStates, runtimeSessionOwner } from '@/store/session-states'
+import { $sessionSwitchVisual } from '@/store/session-switch-visual'
 
 import { useSessionView } from './session-view'
 
@@ -33,6 +34,7 @@ export function SessionSwitchConfirmation({
   pathname,
   suppressed
 }: SessionSwitchConfirmationProps) {
+  const marker = useRef<HTMLSpanElement>(null)
   const intent = useStore($sessionSwitchIntent)
   const view = useSessionView()
   const storedId = useStore(view.$storedId)
@@ -133,7 +135,16 @@ export function SessionSwitchConfirmation({
       return
     }
 
-    confirmSessionSwitch(intent, identity)
+    if (
+      confirmSessionSwitch(intent, identity) &&
+      $sessionSwitchVisual.get() &&
+      !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    ) {
+      marker.current?.closest('[data-chat-surface]')?.animate([{ opacity: 0.72 }, { opacity: 1 }], {
+        duration: 180,
+        easing: 'ease-out'
+      })
+    }
   }, [
     committed,
     committedMessages,
@@ -149,5 +160,5 @@ export function SessionSwitchConfirmation({
     transcriptStoredId
   ])
 
-  return null
+  return <span hidden ref={marker} />
 }
