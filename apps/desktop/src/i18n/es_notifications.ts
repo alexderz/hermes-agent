@@ -54,6 +54,9 @@ export const esNotifications = {
   testSent:
     'Prueba enviada. Si no aparece nada, revisa los permisos de notificaciones del sistema operativo y el modo Concentración o No molestar.',
   testUnsupported: 'Este sistema no admite notificaciones nativas.',
+  sessionSwitchVisualTitle: 'Confirmación visual al cambiar de sesión',
+  sessionSwitchVisualDesc:
+    'Muestra brevemente la conversación seleccionada con una transición cuando está lista. Se desactiva con movimiento reducido.',
   sessionSwitchHapticsTitle: 'Respuesta háptica al cambiar de sesión',
   sessionSwitchHapticsDesc:
     'Una vibración sutil cuando la conversación seleccionada está lista. Solo en dispositivos y navegadores compatibles; silenciar la interfaz también la desactiva.',

@@ -54,6 +54,9 @@ export const frNotifications = {
   testSent:
     "Test envoyé. Si rien n'apparaît, vérifiez les autorisations de notification de votre système et le mode Ne pas déranger.",
   testUnsupported: 'Ce système ne prend pas en charge les notifications natives.',
+  sessionSwitchVisualTitle: 'Confirmation visuelle du changement de session',
+  sessionSwitchVisualDesc:
+    'Affiche brièvement la conversation sélectionnée en fondu lorsqu’elle est prête. Désactivé si les animations réduites sont préférées.',
   sessionSwitchHapticsTitle: 'Retour haptique au changement de session',
   sessionSwitchHapticsDesc:
     'Une légère vibration lorsque la conversation sélectionnée est prête. Uniquement sur les appareils et navigateurs compatibles ; couper les sons de l’interface la désactive aussi.',

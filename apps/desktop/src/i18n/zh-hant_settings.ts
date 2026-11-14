@@ -260,6 +260,8 @@ export const zhHantSettings = {
       testBody: '通知運作正常。',
       testSent: '測試已傳送。若沒有出現，請檢查系統通知權限與專注模式／勿擾模式。',
       testUnsupported: '此系統不支援原生通知。',
+      sessionSwitchVisualTitle: '工作階段切換視覺回饋',
+      sessionSwitchVisualDesc: '所選對話準備就緒時短暫淡入。啟用減少動態效果時不會播放。',
       sessionSwitchHapticsTitle: '工作階段切換觸覺回饋',
       sessionSwitchHapticsDesc: '所選對話準備就緒時輕振一下。僅適用於支援的裝置和瀏覽器；介面靜音也會關閉此回饋。',
       muteSoundsTitle: '靜音介面提示音',

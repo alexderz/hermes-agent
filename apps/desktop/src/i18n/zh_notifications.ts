@@ -51,6 +51,8 @@ export const zhNotifications = {
   testBody: '通知工作正常。',
   testSent: '测试已发送。如果没有出现，请检查系统通知权限和专注模式／勿扰模式。',
   testUnsupported: '此系统不支持原生通知。',
+  sessionSwitchVisualTitle: '会话切换视觉反馈',
+  sessionSwitchVisualDesc: '所选对话准备就绪时短暂淡入。启用减少动态效果时不会播放。',
   sessionSwitchHapticsTitle: '会话切换触感反馈',
   sessionSwitchHapticsDesc: '所选对话准备就绪时轻振一下。仅适用于支持的设备和浏览器；界面静音也会关闭此反馈。',
   muteSoundsTitle: '静音界面提示音',
