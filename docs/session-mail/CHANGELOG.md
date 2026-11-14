@@ -23,3 +23,4 @@ One line per landed item.
 - 2026-11-14 G16d (DER-767): Other profiles, explicitly (profile on send and list) — alexderz/hermes-intercom@639cd6c1b1
 - 2026-11-14 G16g (DER-767): Deadline on a passive note (within, woken from the gateway's kanban dispatcher tick) — alexderz/hermes-intercom@72620b3769
 - 2026-11-14 G16e (DER-767): README and version for passive, keys and profiles — alexderz/hermes-intercom@5298d843bf
+- 2026-11-14 G16f (DER-767): End-to-end cells on a real gateway owner for passive, keyed queue, profiles and deadlines — hermes-agent@47adcd0fa3 (landed by manager: E2E 52/52 and reviewer approve; scripts/check adds no finding over the parent, per the Verify ruling)
