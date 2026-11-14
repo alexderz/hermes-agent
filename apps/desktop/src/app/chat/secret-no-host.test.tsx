@@ -228,3 +228,112 @@ it('prefers conflicting durable row ids over a coincidentally identical rendered
   expect(respond).toHaveBeenCalledExactlyOnceWith({ value: 'dummy-conflict' })
   expect(readSecretDraft(request)).toBe('')
 })
+
+it('keeps a first-turn no-host request local when only an older completed same-prose turn is resumed', async () => {
+  const { $messages, respond } = mount([{ id: 'user-first', role: 'user', parts: [{ type: 'text', text: 'go' }] }])
+  fireEvent.change(await screen.findByLabelText('TEST_KEY'), { target: { value: 'dummy-first' } })
+
+  const older = reconcileAuthoritativeMessages([
+    { id: 5, role: 'user', content: 'go', timestamp: 50 },
+    { id: 6, role: 'assistant', content: 'Older completed reply', timestamp: 51 }
+  ], [])
+
+  act(() => $messages.set(older))
+  await screen.findByText('Older completed reply')
+  const input = screen.getByLabelText('TEST_KEY') as HTMLInputElement
+  expect(anchorOf(input)).toBe(`secret-message:${request.requestId}`)
+  expect(input.value).toBe('dummy-first')
+  expect(respond).not.toHaveBeenCalled()
+})
+
+it('recovers a first-turn no-host request when the actual pending turn returns after partial older history', async () => {
+  const { $messages, respond } = mount([{ id: 'user-first', role: 'user', parts: [{ type: 'text', text: 'go' }] }])
+  fireEvent.change(await screen.findByLabelText('TEST_KEY'), { target: { value: 'dummy-return' } })
+
+  const olderRows: SessionMessage[] = [
+    { id: 5, role: 'user', content: 'go', timestamp: 50 },
+    { id: 6, role: 'assistant', content: 'Older completed reply', timestamp: 51 }
+  ]
+
+  act(() => $messages.set(reconcileAuthoritativeMessages(olderRows, [])))
+  await screen.findByText('Older completed reply')
+
+  const active = reconcileAuthoritativeMessages(olderRows, [], {
+    session_id: 's1', inflight: { user: 'go', assistant: 'Actual pending reply returns', streaming: true }, queued: null
+  })
+
+  act(() => $messages.set(active))
+  await screen.findByText('Actual pending reply returns')
+  const input = screen.getByLabelText('TEST_KEY') as HTMLInputElement
+  expect(anchorOf(input)).toBe(active.findLast(row => row.role === 'assistant')?.id)
+  expect(input.value).toBe('dummy-return')
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+  expect(respond).toHaveBeenCalledExactlyOnceWith({ value: 'dummy-return' })
+})
+
+it('keeps the same conflict-fallback input and focus across appended rows, then releases its placement on Save and Cancel', async () => {
+  const original = reconcileAuthoritativeMessages([
+    { id: 11, role: 'user', content: 'go', timestamp: 100 },
+    { id: 12, role: 'assistant', content: 'Original pending reply', timestamp: 101 }
+  ], []).map(row => row.role === 'assistant' ? { ...row, pending: true } : row)
+
+  const { $messages, respond } = mount(original)
+  fireEvent.change(await screen.findByLabelText('TEST_KEY'), { target: { value: 'dummy-focus' } })
+
+  const conflict = reconcileAuthoritativeMessages([
+    { id: 22, role: 'user', content: 'go', timestamp: 100 },
+    { id: 23, role: 'assistant', content: 'Conflicting durable reply', timestamp: 101 }
+  ], [])
+
+  act(() => $messages.set(conflict))
+  await screen.findByText('Conflicting durable reply')
+  const input = screen.getByLabelText('TEST_KEY') as HTMLInputElement
+  input.focus()
+  expect(anchorOf(input)).toBe(`secret-message:${request.requestId}`)
+
+  const appended: ChatMessage[] = [
+    { id: 'parallel-text', role: 'assistant', pending: true, parts: [{ type: 'text', text: 'Parallel progress' }] },
+    { id: 'parallel-tool', role: 'assistant', pending: true, parts: [{ type: 'tool-call', toolCallId: 'parallel-call', toolName: 'skill_view', args: {}, argsText: '{}', result: 'Fixture loaded' }] }
+  ]
+
+  for (const row of appended) {
+    act(() => $messages.set([...$messages.get(), row]))
+    await waitFor(() => expect(window.document.querySelector(`[data-message-id="${row.id}"]`)).toBeTruthy())
+    expect(screen.getByLabelText('TEST_KEY')).toBe(input)
+    expect(window.document.activeElement).toBe(input)
+    expect(input.value).toBe('dummy-focus')
+  }
+
+  act(() => $messages.set([...$messages.get(), { id: 'user-queued-next', role: 'user', parts: [{ type: 'text', text: 'Queued future request' }] }]))
+  await screen.findByText('Queued future request')
+  act(() => setSecretRequest({ ...request }))
+  expect(screen.getByLabelText('TEST_KEY')).toBe(input)
+  expect(window.document.activeElement).toBe(input)
+  const ids = Array.from(window.document.querySelectorAll('[data-message-id]'), row => row.getAttribute('data-message-id'))
+  expect(ids.indexOf(anchorOf(input) ?? '')).toBeLessThan(ids.indexOf('parallel-text'))
+  expect(ids.indexOf(anchorOf(input) ?? '')).toBeLessThan(ids.indexOf('user-queued-next'))
+  expect(JSON.stringify(projectSecret($messages.get(), request))).not.toContain('dummy-focus')
+  expect(respond).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+  expect(respond).toHaveBeenCalledExactlyOnceWith({ value: 'dummy-focus' })
+  expect(readSecretDraft(request)).toBe('')
+
+  act(() => {
+    $messages.set([...conflict, { id: 'later-settled', role: 'assistant', parts: [{ type: 'text', text: 'Later settled reply' }] }])
+    rememberServerRequest({ id: request.requestId, method: 'secret', params: {}, respond, fail: vi.fn() })
+    setSecretRequest(request)
+  })
+  await waitFor(() => {
+    const current = screen.getByLabelText('TEST_KEY')
+    const currentIds = Array.from(window.document.querySelectorAll('[data-message-id]'), row => row.getAttribute('data-message-id'))
+    expect(currentIds.indexOf(anchorOf(current) ?? '')).toBeGreaterThan(currentIds.indexOf('later-settled'))
+  })
+  const nextInput = await screen.findByLabelText('TEST_KEY') as HTMLInputElement
+  const nextIds = Array.from(window.document.querySelectorAll('[data-message-id]'), row => row.getAttribute('data-message-id'))
+  expect(nextIds.indexOf(anchorOf(nextInput) ?? '')).toBeGreaterThan(nextIds.indexOf('later-settled'))
+  expect(nextInput.value).toBe('')
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+  expect(respond).toHaveBeenCalledTimes(2)
+  expect(respond).toHaveBeenLastCalledWith({ value: '' })
+  expect(readSecretDraft(request)).toBe('')
+})

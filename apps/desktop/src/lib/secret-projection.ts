@@ -19,10 +19,12 @@ interface Anchor {
 }
 
 const anchors = new Map<string, Anchor>()
+const fallbackPositions = new Map<string, RowIdentity>()
 const keyOf = (request: SecretRequest) => JSON.stringify([request.connectionId ?? '', request.profile ?? '', request.sessionId, request.requestId])
 
 export function forgetSecretAnchor(request: SecretRequest) {
   anchors.delete(keyOf(request))
+  fallbackPositions.delete(keyOf(request))
 }
 
 function matchesSecret(part: ChatMessagePart, request: SecretRequest): boolean {
@@ -55,6 +57,16 @@ function sameRow(message: ChatMessage, identity: RowIdentity): boolean {
     ? message.rowId === identity.rowId : message.id === identity.id
 }
 
+function hasPendingTurn(source: ChatMessage[], start: number): boolean {
+  for (let index = start + 1; index < source.length && source[index].role !== 'user'; index++) {
+    if (source[index].pending && !source[index].interrupted) {
+      return true
+    }
+  }
+
+  return false
+}
+
 function findTurn(source: ChatMessage[], turn?: RowIdentity, hostToolCallId?: string, precedingTurn?: RowIdentity): number {
   const hostIndex = hostToolCallId ? source.findIndex(message => message.parts.some(part =>
     part.type === 'tool-call' && part.toolCallId === hostToolCallId)) : -1
@@ -85,7 +97,9 @@ function findTurn(source: ChatMessage[], turn?: RowIdentity, hostToolCallId?: st
 
   // An unpersisted turn can gain a new durable identity, but rows already
   // preceding it cannot become it. Client/server clocks need not agree.
+  // Without a preceding boundary, matching prose needs a still-pending turn.
   const candidates = source.flatMap((message, index) => index > precedingIndex && isStartedUser(message) &&
+    (precedingTurn || hasPendingTurn(source, index)) &&
     chatMessageText(message) === turn.userText ? [index] : [])
 
   return candidates.length === 1 ? candidates[0] : -2
@@ -145,8 +159,19 @@ function resolveAnchor(source: ChatMessage[], request: SecretRequest, previous?:
 }
 
 function fallback(messages: ChatMessage[], request: SecretRequest): ChatMessage[] {
+  const key = keyOf(request)
+  const previous = fallbackPositions.get(key)
+  const after = previous ? messages.findIndex(message => sameRow(message, previous)) : -1
   const queued = messages.findIndex(message => message.role === 'user' && !isStartedUser(message))
-  const insertion = queued >= 0 ? queued : messages.length
+  const boundary = queued >= 0 ? queued : messages.length
+  const insertion = after >= 0 ? Math.min(after + 1, boundary) : boundary
+  const preceding = messages[insertion - 1]
+
+  // Keep a request-local position, not a host association. Ordinary appends
+  // must not move the input; replaced/empty history can establish a new place.
+  if (preceding) {
+    fallbackPositions.set(key, { id: preceding.id, rowId: preceding.rowId })
+  }
 
   const row: ChatMessage = {
     id: `secret-message:${request.requestId}`,
@@ -183,6 +208,8 @@ export function projectSecret(messages: ChatMessage[], request: SecretRequest, s
       return fallback(messages, request)
     }
 
+    fallbackPositions.delete(key)
+
     const row: ChatMessage = { id: target.message.id, role: 'assistant', pending: true, parts: [secretPart] }
 
     return [...messages.slice(0, at + 1), row, ...messages.slice(at + 1)]
@@ -194,6 +221,7 @@ export function projectSecret(messages: ChatMessage[], request: SecretRequest, s
     return fallback(messages, request)
   }
 
+  fallbackPositions.delete(key)
   const message = messages[index]
   const hostIndex = message.parts.findIndex(part => part.type === 'tool-call' && part.toolCallId === target.hostToolCallId)
   const insertAt = hostIndex < 0 ? message.parts.length : hostIndex + 1
