@@ -724,12 +724,8 @@ export function useSessionActions({
 
         if (stored) {
           markSessionCreatedThisRun(stored)
-          // Seed the sidebar preview with the user's first message so the row
-          // reads meaningfully while the turn is in flight, instead of flashing
-          // "Untitled session" until the turn persists and auto-title runs. The
-          // server later returns its own preview/title and supersedes this.
-          // The row carries the create route's exact owner (backend profile +
-          // connection), never the ambient profile — see upsertOptimisticSession.
+          // Seed the preview until the server supplies its title. Capture the
+          // create route's exact owner, not the profile ambient when it finishes.
           upsertOptimisticSession(created, stored, null, preview?.trim() || null, null, undefined, capturedRoute)
           // Anything still parked under the pre-session draft bucket belongs
           // to this chat now (#114122); the composer moves it on scope swap.
@@ -760,11 +756,12 @@ export function useSessionActions({
         const runtimeStartedAt = Date.now()
         setSessionStartedAt(runtimeStartedAt)
         const yoloArmed = $yoloActive.get()
-        const runtimeInfo = applyRuntimeInfo(created.info, { owner: runtimeOwner(capturedRoute, capturedProfile) })
+        const boundOwner = runtimeOwner(capturedRoute, capturedProfile)
+        const runtimeInfo = applyRuntimeInfo(created.info, { owner: boundOwner })
 
         updateSessionState(
           created.session_id,
-          state => ({ ...state, ...(runtimeInfo ?? {}), runtimeStartedAt }),
+          state => ({ ...state, ...(runtimeInfo ?? {}), boundOwner, runtimeStartedAt }),
           stored
         )
 
@@ -2285,9 +2282,7 @@ export function useSessionActions({
           clearedClarifyProjection?.messages ??
           messagesForView
 
-        // The eagerly painted REST page is persisted-display authority: stamp
-        // its provenance so the next warm switch to this session paints it
-        // immediately instead of holding it as an unproven runtime tail.
+        // Persisted REST provenance lets a warm switch paint without a runtime-tail hold.
         const transcriptProvenance =
           prefetchApplied && prefetchMatchesResumedSession && stored
             ? createPersistedDisplayTranscriptProvenance({
@@ -2302,6 +2297,7 @@ export function useSessionActions({
           state => ({
             // The deferred build reports the session's own effort later (#79807).
             ...markReasoningEffortPending({ ...state, ...(runtimeInfo ?? {}) }),
+            boundOwner: sessionOwner,
             runtimeStartedAt,
             messages: visibleMessagesForView,
             transcriptProvenance,

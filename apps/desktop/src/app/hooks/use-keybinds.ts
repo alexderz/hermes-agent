@@ -7,6 +7,7 @@ import { setTerminalTakeover } from '@/app/right-sidebar/store'
 import { toggleTerminalPane } from '@/app/right-sidebar/terminal/reveal-focus'
 import { closeActiveTerminal, createTerminal, cycleTerminal } from '@/app/right-sidebar/terminal/terminals'
 import { appViewForPath, isOverlayView } from '@/app/routes'
+import { withSessionTabSwitch } from '@/app/session/session-switch'
 import {
   activateTreeTabSlot,
   cycleTreeTabInFocusedZone,
@@ -200,7 +201,7 @@ export function useKeybinds(deps: KeybindRuntimeDeps): void {
 
   for (let slot = 1; slot <= TAB_SLOT_COUNT; slot += 1) {
     tabSlotHandlers[`view.tabSlot.${slot}`] = () => {
-      const pane = activateTreeTabSlot(slot)
+      const pane = withSessionTabSwitch(() => activateTreeTabSlot(slot))
 
       if (!pane) {
         return false
@@ -221,7 +222,7 @@ export function useKeybinds(deps: KeybindRuntimeDeps): void {
   // falls through to the recent-session switcher. Landing on the workspace
   // under a full page routes back to the chat (same as view.tabSlot.1).
   const cycleTab = (direction: 1 | -1) => {
-    const pane = cycleTreeTabInFocusedZone(direction)
+    const pane = withSessionTabSwitch(() => cycleTreeTabInFocusedZone(direction))
 
     if (pane) {
       leavePageForWorkspaceChat(pane)
