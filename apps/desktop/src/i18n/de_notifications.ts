@@ -53,6 +53,9 @@ export const deNotifications = {
   testSent:
     'Test gesendet. Wenn nichts erscheint, überprüfen Sie die Benachrichtigungsberechtigungen Ihres Betriebssystems und Fokus/Nicht stören.',
   testUnsupported: 'Dieses System unterstützt keine nativen Benachrichtigungen.',
+  sessionSwitchVisualTitle: 'Visuelle Rückmeldung beim Sitzungswechsel',
+  sessionSwitchVisualDesc:
+    'Blendet das gewählte Gespräch kurz ein, sobald es bereit ist. Bei reduzierter Bewegung deaktiviert.',
   sessionSwitchHapticsTitle: 'Haptik beim Sitzungswechsel',
   sessionSwitchHapticsDesc:
     'Ein sanfter Impuls, sobald das ausgewählte Gespräch bereit ist. Nur auf unterstützten Geräten und in unterstützten Browsern; die Stummschaltung der Oberfläche schaltet ihn ebenfalls aus.',

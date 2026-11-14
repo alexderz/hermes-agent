@@ -40,6 +40,7 @@ import {
   runtimeSessionOwner,
   setSessionTileDelegate
 } from '@/store/session-states'
+import { setSessionSwitchVisual } from '@/store/session-switch-visual'
 import { stubMenuDomApis, stubResizeObserver } from '@/test/jsdom'
 
 vi.mock('@/themes/context', () => ({ useTheme: () => ({ resolvedMode: 'dark', setMode: () => undefined }) }))
@@ -185,6 +186,9 @@ afterEach(() => {
   $sessions.set([])
   $layoutTree.set(null)
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+  Reflect.deleteProperty(Element.prototype, 'animate')
+  setSessionSwitchVisual(false)
 })
 
 it('does not replay a pending primary switch after a fresh draft supersedes it', async () => {
@@ -601,6 +605,30 @@ it('does not replay a hidden tab’s late completion on a later automatic reveal
   expect(trigger).not.toHaveBeenCalled()
 })
 
+it.each([
+  [false, false, false, false],
+  [false, true, false, false],
+  [true, false, false, false],
+  [true, true, false, false],
+  [true, false, true, false],
+  [true, true, true, false],
+  [true, true, false, true]
+])('confirms independently: visual=%s haptic=%s mute=%s reduced=%s', async (visual, haptic, mute, reduced) => {
+  const animate = vi.fn()
+  vi.stubGlobal('matchMedia', () => ({ matches: reduced, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
+  Object.defineProperty(Element.prototype, 'animate', { configurable: true, value: animate })
+  setSessionSwitchVisual(visual)
+  setSessionSwitchHaptics(haptic)
+  setHapticsMuted(mute)
+  mount()
+  act(() => openSession('B', navigate))
+  expect(animate).not.toHaveBeenCalled()
+  await act(async () => bind('B'))
+  await waitFor(() => expect(screen.getByTestId('transcript').textContent).toBe('Transcript B'))
+  expect(animate).toHaveBeenCalledTimes(visual && !reduced ? 1 : 0)
+  expect(trigger).toHaveBeenCalledTimes(haptic && !mute ? 1 : 0)
+})
+
 it('confirms one explicit in-place switch only after its real transcript binds and commits', async () => {
   mount()
   expect(screen.getByTestId('transcript').textContent).toBe('Transcript A')
@@ -619,6 +647,15 @@ it('confirms one explicit in-place switch only after its real transcript binds a
 })
 
 it('confirms a first-mounted tab after resume and a warm picker focus without remounting its transcript', async () => {
+  const animated: Element[] = []
+  vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
+  Object.defineProperty(Element.prototype, 'animate', {
+    configurable: true,
+    value: function (this: Element) {
+      animated.push(this)
+    }
+  })
+  setSessionSwitchVisual(true)
   let complete!: (runtime: string) => void
   setSessionTileDelegate({
     resumeTile: () =>
@@ -648,22 +685,33 @@ it('confirms a first-mounted tab after resume and a warm picker focus without re
   act(() => openSessionFromPicker('B', navigate))
   await waitFor(() => expect(trigger).toHaveBeenCalledTimes(3))
   expect(screen.getAllByTestId('transcript')).toContain(transcript)
+  expect(animated).toHaveLength(3)
+  expect(animated[0]).toBe(transcript.closest('[data-chat-surface]'))
+  expect(animated[2]).toBe(transcript.closest('[data-chat-surface]'))
 })
 
 it('only confirms C after rapid A to B to C, ignoring a stale B completion and later metadata', async () => {
+  const animate = vi.fn()
+  vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
+  Object.defineProperty(Element.prototype, 'animate', { configurable: true, value: animate })
+  setSessionSwitchVisual(true)
   mount()
+  expect(animate).not.toHaveBeenCalled()
   act(() => openSession('B', navigate))
   act(() => openSession('C', navigate))
   await act(async () => bind('B'))
   expect(trigger).not.toHaveBeenCalled()
+  expect(animate).not.toHaveBeenCalled()
   await act(async () => bind('C'))
   await waitFor(() => expect(trigger).toHaveBeenCalledTimes(1))
+  expect(animate).toHaveBeenCalledTimes(1)
   clock += 100
   act(() =>
     $sessions.set($sessions.get().map(row => ({ ...row, _lineage_root_id: `root-${row.id}`, title: 'Updated title' })))
   )
   await act(async () => bind('C', 'Updated transcript'))
   expect(trigger).toHaveBeenCalledTimes(1)
+  expect(animate).toHaveBeenCalledTimes(1)
 })
 
 it('confirms direct tab activation but not restored tabs or same-tab activation', async () => {

@@ -20,6 +20,8 @@ export interface NotificationSettingsTranslations {
   testSent: string
   testUnsupported: string
   muteSoundsTitle: string
+  sessionSwitchVisualTitle: string
+  sessionSwitchVisualDesc: string
   sessionSwitchHapticsTitle: string
   sessionSwitchHapticsDesc: string
   muteSoundsDesc: string
