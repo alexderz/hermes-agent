@@ -18,15 +18,16 @@
 The model reads directives from the turn's prompt (the newest user row that is not a steer):
 
 - ``TAG=<word>`` names the turn; ``STEPS=<n>`` makes it read a file ``n`` times before answering;
-- ``CALL=<to>|<delivery>|<reply>|<message to end of line>`` makes it call the intercom tool once,
-  with ``OPTS=<arg>=<value>,...`` (``key``, ``within``, ``profile``) added to its arguments;
+- ``CALL=<to>|<delivery>|<reply>|<message to end of line>`` makes it call the intercom tool once
+  (``ACTION=<word>`` selects the action, default ``send``), with ``OPTS=<arg>=<value>,...`` (``key``,
+  ``within``, ``profile``) added to its arguments;
 - ``ECHOWAIT`` anywhere in the turn's rows makes its final answer wait (bounded) until the fake ntfy
   server has a post naming every intercom message in those rows: the latency a real model has.
 
 The final answer is ``DONE <tag>``, plus ``[REPLY <id>] answer from <tag> [/REPLY]`` for each intercom
 message in the turn's rows whose label asks for an answer, and for each held note that asks for one
-unless the prompt has ``NOBLOCK``. A test can hold any request of a turn (``Model.hold``) to keep
-that turn running while it delivers.
+unless the prompt has ``NOBLOCK``. ``NOFRAME`` suppresses only those framed ``[REPLY]`` blocks. A test
+can hold any request of a turn (``Model.hold``) to keep that turn running while it delivers.
 """
 
 from __future__ import annotations
@@ -62,10 +63,12 @@ STEER_OPEN = "[OUT-OF-BAND USER MESSAGE"
 HEADER_RE = re.compile(r"^📡 Not [^\n]*message ([0-9a-f]{8})\):$", re.MULTILINE)
 ANSWER_LABELS = ("· reply requested ·", "· waiting on your reply ·")
 _CALL_RE = re.compile(r"CALL=([^|\n]+?)\|(\w+)\|(\w+)\|([^\n]*)")
+_ACTION_RE = re.compile(r"ACTION=(\w+)")
 _OPTS_RE = re.compile(r"OPTS=(\S+)")
 # A held note (the full block) that asks for an answer: "[n] <sender> · HH:MM · reply requested (message <id>)".
 HELD_ASK_RE = re.compile(r"^\[\d+\] [^\n]* · reply requested \(message ([0-9a-f]+)\)$", re.MULTILINE)
 NO_BLOCK = "NOBLOCK"      # in the typed text: answer the turn, but no [REPLY] block for a held note
+NO_FRAME = "NOFRAME"      # in the typed text: no [REPLY] block for a framed message; held notes still get one
 HOLD_S = 120.0
 ECHO_WAIT_S = 20.0
 BOOT_S = 60.0
@@ -260,7 +263,8 @@ class Model:
         tools = {(t.get("function") or {}).get("name") for t in body.get("tools") or []}
         call = _CALL_RE.search(prompt)
         if call and not called:
-            args = {"action": "send", "to": call.group(1), "delivery": call.group(2),
+            action = chosen.group(1) if (chosen := _ACTION_RE.search(prompt)) else "send"
+            args = {"action": action, "to": call.group(1), "delivery": call.group(2),
                     "reply": call.group(3), "message": call.group(4)}
             if opts := _OPTS_RE.search(prompt):
                 args.update(pair.split("=", 1) for pair in opts.group(1).split(","))
@@ -345,10 +349,11 @@ def find_receipt(value: Any) -> dict | None:
 
 def final_answer(tag: str, rows: list[str]) -> str:
     lines = [f"DONE {tag}"]
-    for row in rows:
-        for header in HEADER_RE.finditer(row):
-            if any(label in header.group(0) for label in ANSWER_LABELS):
-                lines.append(f"[REPLY {header.group(1)}] answer from {tag} [/REPLY]")
+    if not rows or NO_FRAME not in rows[0]:
+        for row in rows:
+            for header in HEADER_RE.finditer(row):
+                if any(label in header.group(0) for label in ANSWER_LABELS):
+                    lines.append(f"[REPLY {header.group(1)}] answer from {tag} [/REPLY]")
     if rows and NO_BLOCK not in rows[0]:
         for row in rows:
             lines += [f"[REPLY {mid}] answer from {tag} [/REPLY]" for mid in HELD_ASK_RE.findall(row)]
@@ -483,19 +488,22 @@ PROFILE = "spike"          # the named profile the owner's multiplexer serves
 TICK_S = 2                 # kanban.dispatch_interval_seconds: the deadline sweep's clock
 
 
-def home_config(model_url: str, *, launch: bool = True, dispatch_in_gateway: bool = True) -> str:
+def home_config(model_url: str, *, launch: bool = True, dispatch_in_gateway: bool = True,
+                injection: bool = True, block: str = "") -> str:
     """A temp home's config.yaml: the chaos knobs, plus what the ticket names for intercom.
 
     The launch (default) profile multiplexes the named profile and runs the kanban dispatcher (whose
     tick fires deadlines) every ``TICK_S``; it has the ntfy adapter. The named profile (*launch*
-    False) has intercom and the probe only.
+    False) has intercom and the probe only. ``injection`` is ``allow_gateway_injection``. ``block``
+    is extra YAML at column 0 (a peer trial's webhook and ``intercom_peer`` platforms); the named
+    profile never receives it.
     """
     plugins = f"intercom, ntfy-platform, {HOOK_PROBE}" if launch else f"intercom, {HOOK_PROBE}"
     echo = f"        echo_chats: [\"ntfy:{PRIVATE_TOPIC}\"]\n" if launch else ""
     owner = ("gateway:\n  multiplex_profiles: true\n"
              f"kanban:\n  dispatch_in_gateway: {str(dispatch_in_gateway).lower()}\n"
              f"  dispatch_interval_seconds: {TICK_S}\n") if launch else ""
-    return chaos_config(model_url, stale_timeout=600, request_timeout=600, max_turns=12, extra=(
+    text = chaos_config(model_url, stale_timeout=600, request_timeout=600, max_turns=12, extra=(
         "auxiliary:\n  title_generation:\n    enabled: false\n"
         "models_dev:\n  url: http://127.0.0.1:9/api.json\n"
         f"telemetry:\n  shared_metrics:\n    enabled: false\n    send: false\n    offer_version: {OFFER_VERSION}\n"
@@ -505,10 +513,16 @@ def home_config(model_url: str, *, launch: bool = True, dispatch_in_gateway: boo
         f"  enabled: [{plugins}]\n"
         "  entries:\n"
         "    intercom:\n"
-        "      allow_gateway_injection: true\n"
+        f"      allow_gateway_injection: {str(injection).lower()}\n"
         "      settings:\n"
         f"        user_name: {USER_NAME}\n"
         + echo))
+    extra = block.strip("\n")
+    if extra:
+        if not text.endswith("\n"):
+            text += "\n"
+        text += extra + "\n"
+    return text
 
 
 def env_file(ntfy_url: str) -> str:
@@ -520,7 +534,8 @@ def env_file(ntfy_url: str) -> str:
 
 
 class World:
-    def __init__(self, root: Path, intercom_src: Path, tag: str) -> None:
+    def __init__(self, root: Path, intercom_src: Path, tag: str, *, block: str = "",
+                 peers: list | None = None, ssl_cert_file: str | None = None) -> None:
         self.root, self.tag = root, tag
         self.home = root / "home"
         self.hermes_home = self.home / ".hermes"
@@ -534,7 +549,12 @@ class World:
         self.model = Model(self.ntfy, self.work / "notes.txt")
         self.server = _ModelServer(self.model)
         self.server.start()
-        (self.hermes_home / "config.yaml").write_text(home_config(self.server.base_url), encoding="utf-8")
+        # Kept so a later rewrite (injection flip, owner restart) does not drop the peer platforms.
+        self.block = block
+        self.injection = True
+        self.dispatch_in_gateway = True
+        (self.hermes_home / "config.yaml").write_text(
+            home_config(self.server.base_url, block=block), encoding="utf-8")
         (self.hermes_home / ".env").write_text(env_file(self.ntfy.url), encoding="utf-8")
         self.plugin = self.hermes_home / "plugins" / "intercom"
         # The named profile the multiplexer serves: its own config, intercom and the probe.
@@ -549,6 +569,10 @@ class World:
             probe.mkdir(parents=True)
             (probe / "plugin.yaml").write_text(HOOK_PROBE_YAML, encoding="utf-8")
             (probe / "__init__.py").write_text(HOOK_PROBE_INIT, encoding="utf-8")
+        if peers is not None:
+            folder = self.hermes_home / "plugin-data" / "intercom"
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / "peers.json").write_text(json.dumps(peers), encoding="utf-8")
         env = hermetic_env(self.home, self.hermes_home, tag)
         for key in ("NOTIFY_SOCKET", "INVOCATION_ID", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
                     "XDG_CACHE_HOME", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "TMUX", "TMUX_PANE"):
@@ -557,6 +581,9 @@ class World:
         env.update(HERMES_GATEWAY_LOCK_DIR=str(root / "locks"), HERMES_GATEWAY_MAX_STARTS="0",
                    HERMES_DISABLE_LAZY_INSTALLS="1", NO_PROXY="127.0.0.1,localhost", no_proxy="127.0.0.1,localhost",
                    LANG="C.UTF-8", LC_ALL="C.UTF-8")
+        if ssl_cert_file:
+            env["SSL_CERT_FILE"] = ssl_cert_file
+            env["CURL_CA_BUNDLE"] = ssl_cert_file
         self.env = env
         self.procs: dict[str, subprocess.Popen] = {}
         self.endpoint: Any = None
@@ -729,13 +756,16 @@ class World:
 
     # sends
     def tool_send(self, to: str, delivery: str, reply: str, body: str, *, sender: str | None = None,
-                  sender_profile: str | None = None, **opts: Any) -> dict:
+                  sender_profile: str | None = None, action: str = "send", **opts: Any) -> dict:
         """The sender session's model calls the intercom tool once; returns the tool's receipt.
 
-        *opts* are the tool's other ``send`` arguments (``key``, ``within``, ``profile``)."""
+        *opts* are the tool's other ``send`` arguments (``key``, ``within``, ``profile``). *action*
+        selects the tool action; ``send`` stays the default and is not written into the prompt."""
         tag = f"s{secrets.token_hex(4)}"
         extra = f" OPTS={','.join(f'{k}={v}' for k, v in opts.items())}" if opts else ""
-        self.attached_submit(sender or self.sender, f"TAG={tag}{extra} CALL={to}|{delivery}|{reply}|{body}",
+        chosen = f" ACTION={action}" if action != "send" else ""
+        self.attached_submit(sender or self.sender,
+                             f"TAG={tag}{extra}{chosen} CALL={to}|{delivery}|{reply}|{body}",
                              profile=sender_profile)
         req = self.poll(lambda: next((r for r in self.model.tagged(tag) if r.results), None), TURN_S,
                         f"the intercom tool result of {tag}")
@@ -845,11 +875,30 @@ class World:
         Returns the time it was started."""
         self.quiet()
         self.stop_owner()
-        (self.hermes_home / "config.yaml").write_text(home_config(self.server.base_url, **config),
-                                                      encoding="utf-8")
+        if "injection" in config:
+            self.injection = bool(config.pop("injection"))
+        if "block" in config:
+            self.block = str(config.pop("block"))
+        if "dispatch_in_gateway" in config:
+            self.dispatch_in_gateway = bool(config["dispatch_in_gateway"])
+        else:
+            config["dispatch_in_gateway"] = self.dispatch_in_gateway
+        (self.hermes_home / "config.yaml").write_text(
+            home_config(self.server.base_url, injection=self.injection, block=self.block, **config),
+            encoding="utf-8")
         started = time.time()
         self.start_owner()
         return started
+
+    def set_injection(self, allowed: bool) -> None:
+        """Rewrite ``allow_gateway_injection`` in place. The route reads it fresh on every send."""
+        self.injection = bool(allowed)
+        path = self.hermes_home / "config.yaml"
+        text = home_config(self.server.base_url, injection=self.injection, block=self.block,
+                           dispatch_in_gateway=self.dispatch_in_gateway)
+        tmp = path.with_name(f".config.{secrets.token_hex(4)}.tmp")
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
 
     def _probe(self, home: Path) -> list[dict]:
         path = home / "hook-probe.jsonl"
