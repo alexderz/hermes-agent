@@ -18,7 +18,7 @@ Status: plan, round 2. It folds in the architect's review in full (`reviews/peer
 ## Shape
 
 ```
-remote bot ──curl (client cert, --resolve name:8645:<<agent-host> mesh addr>)──▶ agent-peer proxy (separate Caddy, mesh addr :8645)
+remote bot ──curl (client cert, --resolve name:8645:<agent host mesh addr>)──▶ agent-peer proxy (separate Caddy, mesh addr :8645)
      mTLS: CA pool + leaf folder (fail closed) · per-peer route: CN=<name> ⇒ rewrite to /webhooks/peer-<name>, else 403
                                   └─▶ 127.0.0.1:8644 Hermes webhook receiver (HMAC V2, delivery id, 1 MiB, 30/min)
                                         └─ deliver_only ─▶ platform intercom_peer (plugin) ─▶ session mail ─▶ Bot Chat (@hermes)
@@ -94,10 +94,10 @@ Bot Chat ──intercom send to: "peer:<name>" / [REPLY <id>] block──▶ HTT
 - **Replies to a peer row are block only.** `replies._answer` / `_deliver` branch for `sender_source == 'peer'` before `_unwakeable`, and post only the `[REPLY <id>]` block with `reply_to`. A Bot Chat turn without a block sends nothing (Bot Chat's whole answer is addressed to Alex).
 - **Tool schema:** fixed at register, with one fixed clause about `peer:<name>`. `list` shows peers to Bot Chat only, as a runtime result.
 
-### P3. The agent-peer proxy and its reload hook (house-infra, the agent host; HME applies or reviews)
+### P3. The agent-peer proxy and its reload hook (house-infra, agent host; HME applies or reviews)
 
 - **A separate Caddy instance,** `caddy-agent-peers.service`, written as **JSON, not a Caddyfile**:
-  - `listen: ["<<agent-host> mesh addr>:8645"]` explicitly;
+  - `listen: ["<agent host mesh addr>:8645"]` explicitly;
   - **one TLS connection policy with no `match`,** carrying `client_authentication`:
     - `mode require_and_verify`;
     - `trust_pool file ca.pem`;
@@ -105,7 +105,7 @@ Bot Chat ──intercom send to: "peer:<name>" / [REPLY <id>] block──▶ HTT
   - per-peer routes: a path `/webhooks/peer-<cn>` plus `expression {tls_client_subject} == "CN=<cn>"`, then `rewrite * /webhooks/peer-<cn>`, then `reverse_proxy 127.0.0.1:8644`. Everything else gets `respond 403`.
   - Admin listens on a unix socket so that it can reload; `persist_config off`.
   - With client auth on, session tickets (including TLS 1.3 tickets) are already off. Keep-alive stays at the default unless the trial shows a revoked peer's open connection surviving a reload.
-- **Server certificate:** the proxy needs a hostname, because client auth turns on strict SNI and a bare IP gets 421. Use `agent-peers.mesh.<house domain>`, publicly trusted through the house's existing DNS-challenge setup (as `caddy-edge` does). Peers then need no `--cacert`. Peers connect with `--resolve agent-peers.mesh.<domain>:8645:<<agent-host> mesh addr>`, which the Bot needs anyway because its sandbox DNS answers 198.18.0.1 for every name (the CA owner session, 2026-11-15). HME confirms the name and the credential path.
+- **Server certificate:** the proxy needs a hostname, because client auth turns on strict SNI and a bare IP gets 421. Use `agent-peers.mesh.<house domain>`, publicly trusted through the house's existing DNS-challenge setup (as `the existing edge proxy` does). Peers then need no `--cacert`. Peers connect with `--resolve agent-peers.mesh.<domain>:8645:<agent host mesh addr>`, which the Bot needs anyway because its sandbox DNS answers 198.18.0.1 for every name (the CA owner session, 2026-11-15). HME confirms the name and the credential path.
 - **Hook** `/etc/house-infra/agent-peer-ca/proxy-reload` (root, called by `agent-peer-ca sign|revoke`; it never calls the CA helper): it renders the per-peer routes from `active/`, runs `caddy validate` and reloads this instance only.
 - **Firewall:** the mesh zone already accepts the mesh range; nothing is widened.
 

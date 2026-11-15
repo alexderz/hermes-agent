@@ -1,7 +1,7 @@
 Commit: 9c139c332c
 Verdict: changes
 
-Architect review of `docs/session-mail/peers.md` (G17). I checked it against the code at 9c139c332c. The Caddy findings come from Caddy v2.11.4 source (`modules/caddytls/connpolicy.go`, `leaffolderloader.go`) and from a loopback-only trial: `bind 127.0.0.1`, throwaway CA under `<trial dir>`. `caddy-edge` (pid 1716) and the live install were not touched.
+Architect review of `docs/session-mail/peers.md` (G17). I checked it against the code at 9c139c332c. The Caddy findings come from Caddy v2.11.4 source (`modules/caddytls/connpolicy.go`, `leaffolderloader.go`) and from a loopback-only trial: `bind 127.0.0.1`, throwaway CA under `<trial dir>`. `the existing edge proxy`  and the live install were not touched.
 
 The shape holds. P1 works through `ctx.register_platform`, with no core patch. Four changes are blocking:
 - F1: a retry after a 502 is lost as a duplicate.
@@ -59,7 +59,7 @@ The Caddy design also needs fixes (F10–F12).
   ```
   TS=$(date +%s); BODY='{"text":"…"}'
   SIG=$(printf '%s.%s' "$TS" "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -r | cut -d' ' -f1)
-  curl --max-time 30 --resolve <proxy-name>:8645:<mesh-addr> --cacert <server-ca>.pem \
+  curl --max-time 30 --resolve <proxy-name>:8645:<agent host mesh addr> --cacert <server-ca>.pem \
        --cert peer.pem --key peer.key \
        -H 'Content-Type: application/json' -H "X-Request-ID: $(uuidgen)" \
        -H "X-Webhook-Timestamp: $TS" -H "X-Webhook-Signature-V2: $SIG" \
@@ -147,7 +147,7 @@ The Caddy design also needs fixes (F10–F12).
    - State `platforms.intercom_peer.enabled: true`.
    - Static routes are read at construction (`webhook.py:221`), so adding a peer means a gateway restart. Say so, or say why not to use the hot-reloaded `webhook_subscriptions.json` (`webhook.py:438-484`). Don't use it: it is agent-writable.
    - Name the platform `intercom_peer`, not `intercom-peer`. Platform values use underscores (`config.py:217-241`).
-   - Add a Verify case: 8644 does not answer on <mesh-addr>.
+   - Add a Verify case: 8644 does not answer on <agent host mesh addr>.
 
 9. **Medium: where "only Bot Chat may send to peers" lives.**
    - One check, at the top of `peers.send`, reached from `route.send` (`route.py:138`), so the tool (`plugins/intercom/__init__.py:256-272`), CLI script sends and the reply hook all pass it.
@@ -171,10 +171,10 @@ The Caddy design also needs fixes (F10–F12).
       - Trial: with a different SNI, the `{}` policy served the certificate without asking for one and issued a TLS 1.3 ticket; only the Host matcher (an empty 200) kept the request from the upstream.
       - Fix: write the proxy as JSON with **one** connection policy, no `match`, carrying `client_authentication`.
       - Keep the per-peer `tls_client_subject` expression matcher as the second gate.
-    - IP-only clients: client auth turns on strict SNI/Host enforcement, so `https://<mesh-addr>:8645` gets **421** (trial).
-      - The proxy needs a hostname, and peers use `--resolve <name>:8645:<mesh-addr>`.
+    - IP-only clients: client auth turns on strict SNI/Host enforcement, so `https://<agent host mesh addr>:8645` gets **421** (trial).
+      - The proxy needs a hostname, and peers use `--resolve <name>:8645:<agent host mesh addr>`.
       - **Missing from the plan:** who issues the proxy's server certificate (SAN = that name) and which CA file peers pass as `--cacert`. P3 and P4 must state both.
-    - Binding: a site address does not bind. Without `bind`, adapt produced `listen: [":18645"]` (all interfaces). State `listen: ["<mesh-addr>:8645"]` explicitly.
+    - Binding: a site address does not bind. Without `bind`, adapt produced `listen: [":18645"]` (all interfaces). State `listen: ["<agent host mesh addr>:8645"]` explicitly.
 
 12. **Medium (P3): limiting each certificate to its own path.**
     - Use per-peer routes as in Q4, with `rewrite * /webhooks/peer-<cn>` before `reverse_proxy`, because the path matcher is case-insensitive and normalises (trial).
@@ -204,7 +204,7 @@ The Caddy design also needs fixes (F10–F12).
     - "With ticket resumption tried" is cheap; keep it.
 
 16. **Note: trial side effects (mine, not the plan's).**
-    - The first trial run wrote `~/.config/caddy/autosave.json` and created `~/.local/share/caddy/`. Both are owned by hermes, created 2026-11-15 13:13; neither is `caddy-edge`'s, which runs as user `caddy`.
+    - The first trial run wrote `~/.config/caddy/autosave.json` and created `~/.local/share/caddy/`. Both are owned by hermes, created 2026-11-15 13:13; neither is `the existing edge proxy`'s, which runs as user `caddy`.
     - The trial files are in `<trial dir>`.
     - All trial listeners (127.0.0.1:18645-18648) are stopped.
     - All of these are safe to delete.
