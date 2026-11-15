@@ -1,12 +1,5 @@
 import type { ModelOptionProvider, ModelOptionsResult, ModelPricing } from '@hermes/shared'
-import {
-  DEFAULT_REASONING_EFFORT,
-  planBlocks,
-  sectionAt,
-  splitRecommended,
-  usageLevel,
-  usageTag
-} from '@hermes/shared'
+import { DEFAULT_REASONING_EFFORT, planBlocks, sectionAt, splitRecommended, usageLevel, usageTag } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -24,6 +17,7 @@ import {
 import { PlanLimitLine, UsageLevelTag } from '@/components/model-picker'
 import { ProviderStatusChip } from '@/components/provider-status-chip'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
 import { DisclosureCaret } from '@/components/ui/disclosure-caret'
 import {
@@ -1034,6 +1028,7 @@ function ModelFamilyRow({
   const copyPicker = t.modelPicker
   const closeMenu = useContext(ModelMenuCloseContext)
   const showPricing = useStore($showModelPricing)
+  const [optionsOpen, setOptionsOpen] = useState(false)
 
   const rowKey = `${provider.slug}:${family.id}`
 
@@ -1118,8 +1113,15 @@ function ModelFamilyRow({
   const favoriteLabel = favorite ? copy.removeFavorite : copy.addFavorite
 
   return (
-    <DropdownMenuSub onOpenChange={open => onSubOpenChange?.(open, rowKey)}>
+    <DropdownMenuSub
+      onOpenChange={open => {
+        setOptionsOpen(open)
+        onSubOpenChange?.(open, rowKey)
+      }}
+      open={optionsOpen}
+    >
       <DropdownMenuSubTrigger
+        hideChevron
         onClick={event => {
           // Shift-click stars, the same gesture that pins a chat row in the
           // sidebar. Nothing is picked and the menu stays open, so a second
@@ -1198,6 +1200,27 @@ function ModelFamilyRow({
           </ModelChip>
         ))}
         {isCurrent ? <Codicon className="text-foreground" name="check" size="0.75rem" /> : null}
+        <Button
+          aria-label={`${t.shell.modelOptions.options}: ${name}`}
+          className="ml-auto"
+          onClick={event => {
+            event.preventDefault()
+            event.stopPropagation()
+            setOptionsOpen(true)
+            onSubOpenChange?.(true, rowKey)
+          }}
+          onKeyDown={event => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.stopPropagation()
+            }
+          }}
+          size="icon-xs"
+          tabIndex={-1}
+          type="button"
+          variant="ghost"
+        >
+          <Codicon name="chevron-right" size="1rem" />
+        </Button>
       </DropdownMenuSubTrigger>
       <ModelEditSubmenu
         canDisableReasoning={caps?.can_disable_reasoning ?? undefined}
@@ -1458,7 +1481,10 @@ function nousPricingPoll(data: ModelOptionsResult | undefined, updates: number):
 // current-model pin above, so a pinned custom model lands under "Other models" instead of taking the
 // first pick's "Recommended" heading.
 function recommendedFirst(provider: ModelOptionProvider, families: ModelFamily[]): ModelFamily[] {
-  const split = splitRecommended(provider, families.map(family => family.id))
+  const split = splitRecommended(
+    provider,
+    families.map(family => family.id)
+  )
 
   if (!split) {
     return families

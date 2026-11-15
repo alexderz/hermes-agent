@@ -1164,9 +1164,11 @@ export function ChatBar({
       foldVoice={foldVoice}
       hasComposerPayload={hasComposerPayload}
       hideModelPill={guidedChat}
-      // Short viewport: Send only (no model pill, no voice row), except while the
-      // model menu is open (its search raises the keyboard; see $composerModelMenuOpen).
-      minimal={minimal || chatOnboardingSolo || (short && !modelMenuOpen)}
+      keepModelPicker={touchPointer && short && !minimal && !chatOnboardingSolo}
+      // Touch keyboard: keep a compact model trigger even after its menu closes,
+      // without bringing the voice row back. Genuine narrow-width minimal still wins.
+      // Non-touch retains its existing open-menu exception.
+      minimal={minimal || chatOnboardingSolo || (short && (touchPointer || !modelMenuOpen))}
       onDictate={dictate}
       onQueue={() => {
         // Queueing clears the draft too, so the list over it closes with it.

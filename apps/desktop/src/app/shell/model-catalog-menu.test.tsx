@@ -644,6 +644,18 @@ describe('in-flight local downloads', () => {
 // editable behind it. The caret is that advertisement, and ArrowRight is the
 // way in for anyone not driving the menu with a mouse (#86966).
 describe('the per-row options submenu is discoverable', () => {
+  it('opens model options by tapping the caret without selecting the model or closing the menu', async () => {
+    const select = renderMenu()
+
+    await screen.findByText('Gemini 3.1 Pro')
+    fireEvent.click(screen.getByRole('button', { name: 'Options: Gemini 3.1 Pro' }))
+
+    expect(await screen.findByText('Effort')).toBeTruthy()
+    expect(screen.getByRole('menuitemradio', { name: 'Extra High' })).toBeTruthy()
+    expect(select).not.toHaveBeenCalled()
+    expect(closeMenu).not.toHaveBeenCalled()
+  })
+
   it('marks each model row as opening a submenu', async () => {
     renderMenu()
 

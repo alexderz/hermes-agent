@@ -212,7 +212,7 @@ export interface ComposerModelPillContext {
   model: string
   /** The session's live reasoning effort ('' when the model has none). */
   reasoningEffort: string
-  /** Compact mode skips label providers; touch keeps the core model name visible. */
+  /** Compact mode skips label providers; normal-height touch shows the core model name. */
   compact: boolean
 }
 

@@ -14,6 +14,7 @@ import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
 import { ChevronDown } from '@/lib/icons'
 import { formatModelPillLabel, providerDisplayName } from '@/lib/model-status-label'
+import { useShortViewport } from '@/lib/short-viewport'
 import { $touchPointer } from '@/lib/touch-interaction'
 import { cn } from '@/lib/utils'
 import { $currentModelSource, setModelPickerOpen } from '@/store/session'
@@ -62,9 +63,10 @@ export function ModelPill({
 }) {
   const copy = useI18n().t.shell.statusbar
   const touchPointer = useStore($touchPointer)
+  const short = useShortViewport()
   // The phone footer may yield its model label to quota values. Keep the
-  // current choice readable on its picker instead of leaving only a chevron.
-  const iconOnly = compact && !touchPointer
+  // current choice readable normally; keyboard-height collapse keeps its chevron.
+  const iconOnly = compact && (!touchPointer || short)
   // Two return branches below, one handle: only ever one of them mounts.
   const tourMarker = useTourMarker('model-pill')
   const view = useSessionView()
