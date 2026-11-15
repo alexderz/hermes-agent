@@ -1,6 +1,6 @@
 # G17 build items (groom, 2026-11-15)
 
-Plan: `peers.md`. Alex approved the plan 2026-11-15 (SM-Q40 "Ok"). Groom check: `reviews/peers-groom.md` (15 findings, all applied with the reviewer's text). Serial build.
+Plan: `peers.md`. Alex approved the plan 2026-11-15 (SM-Q40 "Ok"). Groom check: `reviews/peers-groom.md` (15 findings, all applied with the reviewer's text). Build: serial at first; from 2026-11-15 15:30 the driver runs independent items in parallel (Alex: "You can run multiple groks if you wish, build in parallel"). Builders for G17b to G17e are Grok (Alex: shift usage off Claude). G17c is now blocked by G17a only, and G17d by G17b and G17c.
 
 ## G17a — Inbound: the intercom_peer platform delivers webhook posts into Bot Chat
 
