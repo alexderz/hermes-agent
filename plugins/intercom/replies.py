@@ -6,17 +6,23 @@
    turn's prompt;
 2. the messages in them: a line starting ``📡 Not `` and ending ``message <8 hex>):``, spanning to
    ``📡 End of message <id>``, whose SHA-256 equals the row's ``header_sha`` (``find_messages``,
-   which the echo reuses);
+   which the echo reuses), plus the held notes confirmed as handed over in this turn
+   (``record.confirmed_in_turn(turn_id)``; ``passive.py``), which have no span. A span row with
+   a wake marker (a keyed queued message's wake line) is not a candidate itself: its newest
+   version is, through the turn-id lookup;
 3. real candidates only: ``kind='send'``, ``reply_mode != 'none'``, ``reply_state IS NULL`` and
    a target in this session's compression lineage. A ``none`` note is never a candidate;
 4. the reply text by ``reply_mode``:
    - ``requested`` / ``waiting``: the ``[REPLY <id>]`` block, else the whole answer. A sender in
      a shared chat (or a ``NULL`` scope with a messaging source) gets the block only; with no
      block, ``stored`` / ``shared-chat-no-block``;
-   - ``optional`` (the message was a reply): the block only; with no block, ``no-block``;
+   - ``optional`` (the message was a reply) and every held note (``requested='passive'``, or a
+     keyed queued message handed over outside its wake's turn): the block only; with no block,
+     ``no-block``. A keyed queued message in its wake's turn takes the ``requested`` branch;
 5. silence: an empty or ``[SILENT]`` text (whole, first line or last line) is ``silent``;
 6. store, then deliver on a fresh thread through ``route.send(..., delivery="steer",
-   reply_mode="optional", reply_to=id)``. ``cron``, ``subagent``, ``oneshot`` and script
+   reply_mode="optional", reply_to=id)``, into the row's ``sender_profile`` when it came from
+   another profile. ``cron``, ``subagent``, ``oneshot`` and script
    senders are stored only: their run is over and nothing can wake it. Nothing retries;
 7. stopped and failed turns fire no hook, so nothing is sent for them.
 
@@ -126,19 +132,28 @@ def turn_rows(user_message, conversation_history) -> list[str]:
 
 
 def on_post_llm_call(session_id=None, user_message=None, assistant_response=None,
-                     conversation_history=None, **_kw) -> None:
+                     conversation_history=None, turn_id=None, **_kw) -> None:
     """Send each real candidate's reply back. Returns before any reply is delivered."""
     if not isinstance(session_id, str) or not session_id:
         return
     try:
-        messages = find_messages(turn_rows(user_message, conversation_history))
+        found = find_messages(turn_rows(user_message, conversation_history))
+        # A wake line is never answered itself; the version it woke the turn for is.
+        wakes = {row["wake_admission"] for row, _span in found if row.get("wake_admission")}
+        messages = [(row, span) for row, span in found if not row.get("wake_admission")]
+        # Held notes confirmed as handed over in this turn (passive.py); they carry no span.
+        seen = {row["id"] for row, _span in messages}
+        messages.extend((row, None) for row in record.confirmed_in_turn(turn_id)
+                        if row["id"] not in seen)
         if not messages:
             return
         lineage = _lineage(session_id)
         answer = _text(assistant_response)
         for row, _span in messages:
             if _is_candidate(row, lineage):
-                _answer(row, answer, session_id)
+                held = row.get("requested") == record.PASSIVE or (
+                    bool(row.get("wake_admission")) and row["wake_admission"] not in wakes)
+                _answer(row, answer, session_id, held=held)
     except Exception as exc:  # health: allow BLE001 -- log the type only; the answer can be in the traceback
         logger.warning("intercom: reply hook failed (%s)", type(exc).__name__)
 
@@ -157,15 +172,19 @@ def is_silent(text) -> bool:
     return SILENT in (lines[0].upper(), lines[-1].upper())
 
 
-def reply_for(row: dict, answer: str) -> tuple[str, str | None, str | None]:
+def reply_for(row: dict, answer: str, *, held: bool | None = None) -> tuple[str, str | None, str | None]:
     """Steps 4-5 for one candidate: ``(reply_state, reply text, detail)``.
 
     ``reply_state`` is ``sent`` (to be delivered or stored), ``silent``, ``stored`` or
-    ``no-block``.
+    ``no-block``. *held* says the row rode a turn that exists for something else; by default,
+    a passive row.
     """
+    if held is None:
+        held = row.get("requested") == record.PASSIVE
     block = reply_block(answer, row["id"])
     if block is None:
-        if row["reply_mode"] == "optional":
+        # A held note rides a turn that exists for something else: block only.
+        if row["reply_mode"] == "optional" or held:
             return "no-block", None, None
         if _shared_sender(row):
             return "stored", None, "shared-chat-no-block"
@@ -194,8 +213,8 @@ def _unwakeable(row: dict) -> bool:
     return not row.get("sender_session_id") or row.get("sender_source") in UNWAKEABLE_SOURCES
 
 
-def _answer(row: dict, answer: str, session_id: str) -> None:
-    state, text, detail = reply_for(row, answer)
+def _answer(row: dict, answer: str, session_id: str, *, held: bool | None = None) -> None:
+    state, text, detail = reply_for(row, answer, held=held)
     now = time.time()
     if state == "sent" and _unwakeable(row):
         state = "stored"
@@ -215,7 +234,8 @@ def _answer(row: dict, answer: str, session_id: str) -> None:
 def _deliver(row: dict, text: str, session_id: str) -> None:
     try:
         receipt = route.send(session_id, row["sender_session_id"], text, ctx=_ctx["ctx"],
-                             delivery="steer", reply_mode="optional", reply_to=row["id"])
+                             delivery="steer", reply_mode="optional", reply_to=row["id"],
+                             profile=row.get("sender_profile"))
     except Exception as exc:  # health: allow BLE001 -- log the type only; the reply text can be in the traceback
         logger.warning("intercom: reply to message %s failed (%s)", row["id"], type(exc).__name__)
         return
@@ -250,7 +270,8 @@ def ask(args: dict, *, session_id=None, ctx=None, lister=None, **_kw) -> dict:
 
     receipt = route.send(session_id, args.get("to"), args.get("message"), ctx=ctx,
                          delivery=args.get("delivery") or "steer", reply_mode="waiting",
-                         kind="ask", lister=lister, on_inserted=on_inserted)
+                         kind="ask", lister=lister, on_inserted=on_inserted, key=args.get("key"),
+                         profile=args.get("profile"))
     message_id = receipt.get("message_id")
     if receipt.get("ok") is not True:
         _drop(message_id)

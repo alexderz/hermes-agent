@@ -44,6 +44,27 @@ _NO_SEAM = {
     "message": "Not delivered: this process has no classic CLI session, so the legacy inbox cannot run.",
 }
 
+# Passive notes are held in the record and handed over by the gateway's hooks.
+_PASSIVE_NO_SEAM = dict(
+    _NO_SEAM,
+    message=("Not delivered: passive needs the gateway, and this Hermes build only has the "
+             "legacy inbox, which cannot hold a note. Nothing was sent."),
+)
+
+# The ``within`` parameter text, also one line of the tool text.
+_WITHIN_SENTENCE = (
+    "within: for a passive note, wake the target after this many minutes (at least 5) if it has not run"
+)
+
+# The ``profile`` parameter text, also one line of the tool text.
+_PROFILE_SENTENCE = 'profile: another Hermes profile on this machine; reach its bot with to: "Bot Chat"'
+
+# One line in the tool text for passive delivery and keys.
+_PASSIVE_SENTENCE = (
+    "passive: held until the target's next turn, never wakes it; "
+    "key: a newer message with the same key replaces a held one."
+)
+
 _runtime = {"ctx": None, "legacy": False, "inbox_up": False}
 
 
@@ -102,6 +123,9 @@ def _tool_description(projects: bool, user_name: str = "the user") -> str:
         "interrupt stops it and runs your message now. "
         + INTERRUPT_SENTENCE
         + " An idle session starts a turn.",
+        _PASSIVE_SENTENCE,
+        _WITHIN_SENTENCE + ".",
+        _PROFILE_SENTENCE + ".",
         'Write only something new: no thanks, "got it", "agreed", restating, or "I\'ll look later". '
         "When you receive a message and have nothing new, answer [SILENT] (for an ask, reply with "
         "[SILENT]); nothing is sent. Do not poll for answers.",
@@ -139,12 +163,28 @@ def _schema(projects: bool, user_name: str = "the user") -> dict:
                 },
                 "delivery": {
                     "type": "string",
-                    "enum": ["interrupt", "steer", "queue"],
+                    "enum": ["interrupt", "steer", "queue", "passive"],
                     "default": "steer",
                     "description": (
                         "steer (default) joins the other session's running turn; queue runs after it; "
                         "interrupt stops it and runs your message now. " + INTERRUPT_SENTENCE
+                        + " passive is held until the other session's next turn and never wakes it."
                     ),
+                },
+                "key": {
+                    "type": "string",
+                    "description": (
+                        "For passive or queue. A newer message with the same key replaces a held one."
+                    ),
+                },
+                "within": {
+                    "type": "integer",
+                    "minimum": 5,
+                    "description": _WITHIN_SENTENCE + ". For send.",
+                },
+                "profile": {
+                    "type": "string",
+                    "description": _PROFILE_SENTENCE + ". For send and list.",
                 },
                 "reply": {
                     "type": "string",
@@ -207,14 +247,14 @@ def _owner_dispatch(args: dict, **kw) -> dict:
     session_id = kw.get("session_id")
     ctx = _runtime["ctx"]
     if action == "list":
-        from . import address
+        from . import address, profiles
 
-        return address.list_sessions(
-            include_runs=bool(args.get("include_runs")),
-            query=args.get("query"),
-            limit=args["limit"] if "limit" in args else None,
-            sender=session_id,
-        )
+        listing = dict(include_runs=bool(args.get("include_runs")), query=args.get("query"),
+                       limit=args["limit"] if "limit" in args else None)
+        profile = profiles.other(args.get("profile"))
+        if profile is None:
+            return address.list_sessions(sender=session_id, **listing)
+        return _list_in_profile(profile, listing)
     if action == "send":
         from . import route
 
@@ -227,6 +267,9 @@ def _owner_dispatch(args: dict, **kw) -> dict:
                 ctx=ctx,
                 delivery=args.get("delivery") or "steer",
                 reply_mode=args["reply"] if "reply" in args else None,
+                key=args.get("key"),
+                profile=args.get("profile"),
+                within=args.get("within"),
             )
         except ValueError as exc:
             return {"ok": False, "error": "usage", "exit": 2, "message": str(exc)}
@@ -239,6 +282,24 @@ def _owner_dispatch(args: dict, **kw) -> dict:
 
         return replies.reply(args, session_id=session_id)
     return {"ok": False, "error": f"unknown action {action!r}"}
+
+
+def _list_in_profile(profile: str, listing: dict) -> dict:
+    """``list`` for another profile: its sessions, read with its discovery and ``state.db``."""
+    from . import address, profiles, route
+    from .frame import sanitize_title
+
+    if profiles.home_for(profile) is None:
+        return {"ok": False, "error": "unknown-profile",
+                "message": route.UNKNOWN_PROFILE.format(name=sanitize_title(profile))}
+    with profiles.in_profile(profile):
+        if not profiles.enabled():
+            return {"ok": False, "error": "profile-not-enabled",
+                    "message": route.PROFILE_NOT_ENABLED.format(name=profile)}
+        result = address.list_sessions(**listing)
+    if isinstance(result, dict):
+        result["profile"] = profile
+    return result
 
 
 def _legacy_allowed() -> bool:
@@ -331,6 +392,8 @@ def _handle(args: dict, **_kw) -> str:
 
 
 def _legacy_dispatch(args: dict, **_kw) -> dict:
+    if args.get("action") in ("send", "ask") and args.get("delivery") == "passive":
+        return dict(_PASSIVE_NO_SEAM)
     if not _ensure_legacy_inbox():
         return dict(_NO_SEAM)
     return _legacy_action(args)
@@ -369,6 +432,14 @@ def register(ctx) -> None:
     from . import echo
 
     echo.register(ctx)
+    # The held-note hooks (pre_llm_call, pre_api_request): passive notes at turn start.
+    from . import passive
+
+    passive.register(ctx)
+    # The dispatcher-tick hook (on_kanban_dispatch_tick): deadlines on held notes.
+    from . import deadline
+
+    deadline.register(ctx)
     from . import cli as cli_mod
 
     cli_mod.register(ctx)
