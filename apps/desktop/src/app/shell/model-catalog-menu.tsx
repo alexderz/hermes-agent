@@ -1006,7 +1006,7 @@ interface ModelFamilyRowProps {
 }
 
 /** One model family row: the favorite star, the trigger that commits the
- *  model, plus the hover-revealed options submenu. Shared by the Favorites
+ *  model, plus the tappable/hover-revealed options submenu. Shared by the Favorites
  *  section and the provider groups, so the two can never paint a model
  *  differently. */
 // health: allow CC -- usage-window plans: the Large/Free tag replaces the price on tagged rows; this row was over target on main
@@ -1093,8 +1093,8 @@ function ModelFamilyRow({
   ].filter((setting): setting is string => Boolean(setting))
 
   // Clicking the row commits the model and closes; the edit submenu
-  // (reasoning/fast) is reached by HOVER, so you can tweak those without
-  // the click dismissing everything. The trailing caret is what advertises
+  // (reasoning/fast) opens on hover or through its own caret button, so a
+  // touch can edit options without selecting/closing. The caret advertises
   // that submenu — without it the row's effort badge reads as a fixed
   // model+effort combo rather than an editable setting (#86966).
   const activate = () => {
