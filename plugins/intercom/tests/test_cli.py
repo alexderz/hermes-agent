@@ -246,10 +246,12 @@ class CliTestBase(unittest.TestCase):
 class PluginYamlTests(unittest.TestCase):
     def test_version_and_hooks(self):
         text = (PACKAGE_DIR / "plugin.yaml").read_text(encoding="utf-8-sig")
-        self.assertIn("\nversion: 0.3.0\n", text)
+        self.assertIn("\nversion: 0.4.0\n", text)
+        self.assertRegex(text, r"(?m)^description: .*passive.*keyed")
         self.assertIn("provides_tools:\n  - intercom\n", text)
         self.assertIn(
-            "provides_hooks:\n  - post_llm_call\n  - pre_llm_call\n  - pre_api_request\n",
+            "provides_hooks:\n  - post_llm_call\n  - pre_llm_call\n  - pre_api_request\n"
+            "  - on_kanban_dispatch_tick\n",
             text,
         )
 
@@ -274,7 +276,7 @@ class SchemaTests(CliTestBase):
         self.assertEqual(schema["parameters"]["required"], ["action"])
         self.assertNotIn("default", props["reply"])
         self.assertEqual(props["reply"]["enum"], ["none", "requested", "waiting"])
-        self.assertEqual(props["delivery"]["enum"], ["interrupt", "steer", "queue"])
+        self.assertEqual(props["delivery"]["enum"], ["interrupt", "steer", "queue", "passive"])
         self.assertEqual(props["delivery"]["default"], "steer")
         self.assertIn(INTERRUPT, props["delivery"]["description"])
         for name in ("include_runs", "query", "limit", "timeout", "request_id", "to", "message"):
@@ -287,7 +289,8 @@ class SchemaTests(CliTestBase):
         self.assertFalse(inspect.iscoroutinefunction(tool["handler"]))
         self.assertIs(tool["handler"], self.plugin.handle)
         self.assertEqual([hook[0] for hook in self.ctx.hooks],
-                         ["post_llm_call", "pre_llm_call", "pre_api_request"])
+                         ["post_llm_call", "pre_llm_call", "pre_api_request",
+                          "pre_llm_call", "pre_api_request", "on_kanban_dispatch_tick"])
         self.assertNotIn(self.plugin._on_pre_llm_call, [hook[1] for hook in self.ctx.hooks])
 
     def test_tool_text_names_the_configured_user(self):

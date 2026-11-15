@@ -17,3 +17,12 @@ One line per landed item.
 - 2026-11-12 G14 (DER-728): Owner E2E of the integrated plugin (split from G-2) — alexderz/hermes-agent@f37fb90e79
 - 2026-11-12 G12 (DER-729): Vendor into hermes-agent, then deploy (gateway restart) — alexderz/hermes-agent@6052059ea6
 - 2026-11-12 G15 (DER-745): Reboot warning and resume through intercom — alexderz/hermes-intercom@44e09f2976
+- 2026-11-14 G16a (DER-767): Passive send path and record (passive, key, to: all) — alexderz/hermes-intercom@cd4bacef16
+- 2026-11-14 G16b (DER-767): Turn-start handover of held notes (offer, confirm, answers, echo) — alexderz/hermes-intercom@86a66164f0
+- 2026-11-14 G16c (DER-767): Keyed queue: wake through Hermes's queue, newest version from the record — alexderz/hermes-intercom@02a290587e
+- 2026-11-14 G16d (DER-767): Other profiles, explicitly (profile on send and list) — alexderz/hermes-intercom@639cd6c1b1
+- 2026-11-14 G16g (DER-767): Deadline on a passive note (within, woken from the gateway's kanban dispatcher tick) — alexderz/hermes-intercom@72620b3769
+- 2026-11-14 G16e (DER-767): README and version for passive, keys and profiles — alexderz/hermes-intercom@5298d843bf
+- 2026-11-14 G16f (DER-767): End-to-end cells on a real gateway owner for passive, keyed queue, profiles and deadlines — hermes-agent@47adcd0fa3 (landed by manager: E2E 52/52 and reviewer approve; scripts/check adds no finding over the parent, per the Verify ruling)
+- 2026-11-14 G16h (DER-767): list shows the profile's Bot Chat (hidden session) — alexderz/hermes-intercom@911039cffa
+- 2026-11-14 G16i (DER-767): Webapp shows session-mail messages folded, like bot messages — alexderz/hermes-intercom@8a15373ea3
