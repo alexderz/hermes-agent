@@ -29,3 +29,4 @@ One line per landed item.
 - 2026-11-15 G17a (DER-792): Inbound: the intercom_peer platform delivers webhook posts into Bot Chat — alexderz/hermes-intercom@c8605a7211
 - 2026-11-15 G17b (DER-792): Outbound: Bot Chat sends to peer:<name>, and replies to peers are block only — alexderz/hermes-intercom@8d464bd4ce
 - 2026-11-15 G17c (DER-792): Peer proxy: Caddy JSON renderer, reload hook and unit (deploy assets) — alexderz/hermes-intercom@bf9c9cb5b9
+- 2026-11-15 G17d (DER-792): Remote agent instructions and README for peers — alexderz/hermes-intercom@2d2c2bdd0c
