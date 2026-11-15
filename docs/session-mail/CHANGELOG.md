@@ -26,3 +26,4 @@ One line per landed item.
 - 2026-11-14 G16f (DER-767): End-to-end cells on a real gateway owner for passive, keyed queue, profiles and deadlines — hermes-agent@47adcd0fa3 (landed by manager: E2E 52/52 and reviewer approve; scripts/check adds no finding over the parent, per the Verify ruling)
 - 2026-11-14 G16h (DER-767): list shows the profile's Bot Chat (hidden session) — alexderz/hermes-intercom@911039cffa
 - 2026-11-14 G16i (DER-767): Webapp shows session-mail messages folded, like bot messages — alexderz/hermes-intercom@8a15373ea3
+- 2026-11-15 G17a (DER-792): Inbound: the intercom_peer platform delivers webhook posts into Bot Chat — alexderz/hermes-intercom@c8605a7211
