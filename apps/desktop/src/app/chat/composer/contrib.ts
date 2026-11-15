@@ -212,7 +212,7 @@ export interface ComposerModelPillContext {
   model: string
   /** The session's live reasoning effort ('' when the model has none). */
   reasoningEffort: string
-  /** Floating-composer mode renders only the chevron; providers are not consulted. */
+  /** Compact mode skips label providers; touch keeps the core model name visible. */
   compact: boolean
 }
 

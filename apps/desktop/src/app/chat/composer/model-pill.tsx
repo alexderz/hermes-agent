@@ -14,6 +14,7 @@ import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
 import { ChevronDown } from '@/lib/icons'
 import { formatModelPillLabel, providerDisplayName } from '@/lib/model-status-label'
+import { $touchPointer } from '@/lib/touch-interaction'
 import { cn } from '@/lib/utils'
 import { $currentModelSource, setModelPickerOpen } from '@/store/session'
 
@@ -60,6 +61,10 @@ export function ModelPill({
   model: ChatBarState['model']
 }) {
   const copy = useI18n().t.shell.statusbar
+  const touchPointer = useStore($touchPointer)
+  // The phone footer may yield its model label to quota values. Keep the
+  // current choice readable on its picker instead of leaving only a chevron.
+  const iconOnly = compact && !touchPointer
   // Two return branches below, one handle: only ever one of them mounts.
   const tourMarker = useTourMarker('model-pill')
   const view = useSessionView()
@@ -146,7 +151,7 @@ export function ModelPill({
   // the text changes, and a provider that declines leaves the core label.
   const pillLabel = useComposerModelPillLabel({ compact, model: currentModel, reasoningEffort: reasoningEffort || '' })
 
-  const label = compact ? (
+  const label = iconOnly ? (
     <ChevronDown className="size-3.5 shrink-0 opacity-70" />
   ) : (
     <>
@@ -167,9 +172,9 @@ export function ModelPill({
     </>
   )
 
-  // Compact (floating composer): a snug square holding just the chevron — no pill
-  // padding, sized to match the other composer icon buttons.
-  const pillClass = compact
+  // Non-touch compact mode keeps its snug icon button. Touch uses the normal
+  // truncating/shrinking pill, so Send and the other controls keep their room.
+  const pillClass = iconOnly
     ? cn(
         'size-(--composer-control-size) shrink-0 justify-center gap-0 rounded-md p-0',
         'text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground'
