@@ -125,6 +125,8 @@ function isContributedPath(pathname: string): boolean {
 // Pair with a ROUTES_AREA page: the row navigates to `path` and lights up
 // while the app is there.
 
+export const SIDEBAR_SECTIONS_AREA = 'sidebar.sections'
+
 export const SIDEBAR_NAV_AREA = 'sidebar.nav'
 
 /** Payload of a `sidebar.nav` data contribution. */

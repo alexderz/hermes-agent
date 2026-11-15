@@ -20,7 +20,7 @@
  * only stops them arriving from a stored snapshot.
  */
 
-import { allPaneIds, type LayoutNode, normalize } from './model'
+import { allPaneIds, findGroupOfPane, type LayoutNode, normalize, removePane } from './model'
 
 /** Panes that must never ride along in a named layout preset. */
 export const PRESET_EXCLUDED_PANE_PREFIXES = ['session-tile:', 'preview-tile:', 'route-tile:'] as const
@@ -64,7 +64,12 @@ export function stripPresetLivePanes(tree: LayoutNode): LayoutNode | null {
     return { ...node, children }
   }
 
-  return normalize(walk(tree))
+  // Saved preset restore bypasses the live-tree codec. Retire exactly the
+  // former navigation pane here too, using the same neighbor/split repair.
+  // Other unregistered plugin slots remain intentional layout geometry.
+  const restored = findGroupOfPane(tree, 'hermes-bots:pane') ? removePane(tree, 'hermes-bots:pane') : tree
+
+  return restored ? normalize(walk(restored)) : null
 }
 
 /** The `resting` entries that still name a pane the stripped geometry places.

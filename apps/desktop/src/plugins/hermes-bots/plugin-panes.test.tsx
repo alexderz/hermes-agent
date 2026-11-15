@@ -1,21 +1,5 @@
-/**
- * Bot Mode's pane layout contract, asserted by running the real `register()`
- * against a recording plugin context:
- *
- *  - the Bots pane center-stacks into the sessions zone (a SESSIONS | BOTS tab
- *    strip), never splits below it, and carries the ENFORCED dock invariant so
- *    every boot re-homes a stacked install. No heal token, no user-placed
- *    exemption — the retired one-shot heal burned its token even when its
- *    guards skipped the move, so exactly the users who had dragged their panes
- *    stayed stacked forever;
- *  - the Scheduled jobs (internally `routines`) pane only exists while a BOT
- *    CHAT owns the main workspace and the Bots pane is on screen. It is
- *    registered and unregistered through the contribution disposer, driven by
- *    the feature-detected `host.paneVisibility` export, with the
- *    always-registered fallback kept for older desktops. Cron jobs are
- *    bot-scoped, so the tile must not sit beside a group chat.
- */
-
+/** Registration/disposal contracts. The adjacent sidebar-workspace integration
+ * test exercises real roster rendering, tile ownership and ordinary navigation. */
 import type * as HermesSdk from '@hermes/plugin-sdk'
 import type { PluginContext } from '@hermes/plugin-sdk'
 import { atom } from 'nanostores'
@@ -23,23 +7,20 @@ import type { ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// The app provider the plugin's tab label renders under; a plugin test may reach it.
 // eslint-disable-next-line no-restricted-imports
 import { I18nProvider } from '@/i18n'
 
-import type * as DataModule from './data'
-import type * as RoutingModule from './routing'
-
 const mocks = vi.hoisted(() => ({
-  botChatOwnsWorkspace: vi.fn(() => false),
+  owns: vi.fn(() => false),
+  unbindProfile: vi.fn(),
   paneVisibility: vi.fn(),
-  sessionOwnsWorkspace: vi.fn(() => false),
   setWorkspaceScope: vi.fn(),
   undismissPane: vi.fn()
 }))
 
 vi.mock('@hermes/plugin-sdk', async importOriginal => {
   const original = await importOriginal<typeof HermesSdk>()
+  const { atom } = await import('nanostores')
 
   return {
     ...original,
@@ -48,298 +29,200 @@ vi.mock('@hermes/plugin-sdk', async importOriginal => {
       onEvent: undefined,
       paneVisibility: mocks.paneVisibility,
       setWorkspaceScope: mocks.setWorkspaceScope,
-      undismissPane: mocks.undismissPane
+      undismissPane: mocks.undismissPane,
+      state: {
+        ...original.host.state,
+        focusedStoredSessionId: atom<null | string>(null),
+        focusedPaneId: atom<null | string>(null),
+        focusedSessionWorkspace: atom(null),
+        workspaceMode: atom('sessions')
+      }
     }
   }
 })
-
-// Everything below is a boundary this test does not exercise: clocks, sockets,
-// storage sweeps and the panes' own render trees.
 vi.mock('./avatar', () => ({ startFaceClock: vi.fn(), stopFaceClock: vi.fn() }))
 vi.mock('./relay', () => ({ startBotRelay: vi.fn(), stopBotRelay: vi.fn() }))
+vi.mock('./screen-autoraise', () => ({ startScreenAutoRaise: () => () => {} }))
 vi.mock('./session-sweep', () => ({ startHideSweepScheduler: vi.fn() }))
 vi.mock('./canonical-chat', () => ({ openBotCanonicalChat: vi.fn() }))
 vi.mock('./chat-empty', () => ({ BotChatEmpty: () => null }))
-vi.mock('./hygiene', () => ({ annotateOrphanedGroupChatMembers: () => ({ changed: false, rooms: {} }) }))
-vi.mock('./cron', () => ({ bindProfileSync: () => () => undefined, RoutinesPane: () => null }))
-vi.mock('./roster-pane', () => ({
-  botChatOwnsWorkspace: mocks.botChatOwnsWorkspace,
-  BotsPane: () => null,
-  releaseStaleOpenBotChat: vi.fn(),
-  selectedRosterBot: () => null,
-  sessionOwnsWorkspace: mocks.sessionOwnsWorkspace
-}))
-vi.mock('./group-chat', async () => {
-  const { atom: nanoAtom } = await import('nanostores')
+vi.mock('./cron', () => ({ bindProfileSync: () => mocks.unbindProfile, RoutinesPane: () => null }))
+vi.mock('./roster-pane', async () => {
+  const { useI18n } = await import('@hermes/plugin-sdk')
 
   return {
-    $groupChats: nanoAtom({}),
-    $groupChatWorkspace: nanoAtom(null),
-    assignLegacyThreads: (log: unknown[]) => log,
-    handleSessionsGatewayTransition: vi.fn(),
-    pullGroupChatServerState: async () => false,
-    scheduleGroupChatServerSync: vi.fn(),
-    setGroupChatSyncDisposed: vi.fn(),
-    stopGroupChatServerSync: vi.fn(),
-    sweepGroupChatMembersForRemovedConnection: vi.fn(),
-    updateGroupChat: vi.fn()
+    botChatOwnsWorkspace: mocks.owns,
+    BotsPane: ({ embedded }: { embedded: boolean }) => <span data-embedded={embedded}>{useI18n().t.common.bots}</span>,
+    releaseStaleOpenBotChat: vi.fn(),
+    selectedRosterBot: () => null
   }
 })
-vi.mock('./data', async importOriginal => {
-  const original = await importOriginal<typeof DataModule>()
+vi.mock('./data', async importOriginal => ({
+  ...(await importOriginal<object>()),
+  migrateBotMeta: async () => undefined
+}))
 
-  return { ...original, migrateBotMeta: async () => undefined }
-})
-vi.mock('./routing', async importOriginal => {
-  const original = await importOriginal<typeof RoutingModule>()
-
-  return { ...original, setBotsWorkspaceOwner: vi.fn() }
-})
-
+const { host, SIDEBAR_SECTIONS_AREA } = await import('@hermes/plugin-sdk')
+const { $groupChatWorkspace } = await import('./group-chat')
+const { recordGroupMainTab, dropGroupMainTab } = await import('./group-panes')
+const { $openBotChat } = await import('./bot-state')
 const plugin = (await import('./plugin')).default
 
 interface Registration {
   area: string
   data?: Record<string, unknown>
   id: string
+  render?: () => ReactNode
 }
+const harnesses: ReturnType<typeof recordingContext>[] = []
 
-/** A recording `PluginContext`: registrations, their disposers, teardown. */
 function recordingContext() {
   const disposers: (() => void)[] = []
   const registrations: Registration[] = []
-  const unregisters = new Map<string, () => void>()
 
   const ctx = {
-    i18n: { register: () => () => undefined, t: (key: string) => key },
+    i18n: { register: () => () => {}, t: (key: string) => key },
     onDispose: (fn: () => void) => disposers.push(fn),
     register: (registration: Registration) => {
       registrations.push(registration)
 
-      const unregister = vi.fn(() => {
-        registrations.splice(registrations.indexOf(registration), 1)
-      })
+      const dispose = () => {
+        const at = registrations.indexOf(registration)
 
-      unregisters.set(registration.id, unregister)
+        if (at >= 0) {
+          registrations.splice(at, 1)
+        }
+      }
 
-      return unregister
+      disposers.push(dispose)
+
+      return dispose
     },
-    storage: { get: async () => undefined, set: async () => undefined }
+    storage: { get: async () => undefined, set: async () => {} }
   }
 
   return {
     ctx: ctx as unknown as PluginContext,
-    dispose: () => disposers.forEach(fn => fn()),
-    find: (id: string) => registrations.find(registration => registration.id === id),
-    unregisters
+    dispose: () =>
+      disposers
+        .splice(0)
+        .reverse()
+        .forEach(fn => fn()),
+    find: (id: string) => registrations.find(item => item.id === id)
   }
 }
 
-/** Nanostore stand-ins for the SDK's per-pane visibility stores. */
-function paneStores() {
-  const stores = new Map<string, ReturnType<typeof atom<boolean>>>()
+function register() {
+  const harness = recordingContext()
+  harnesses.push(harness)
+  plugin.register(harness.ctx)
 
-  mocks.paneVisibility.mockImplementation((id: string) => {
-    if (!stores.has(id)) {
-      stores.set(id, atom(false))
-    }
-
-    return stores.get(id)
-  })
-
-  return (id: string) => {
-    mocks.paneVisibility(id)
-
-    return stores.get(id)!
-  }
+  return harness
 }
 
-/** The plugin defers one reconcile to a macrotask so it never re-enters the
- *  tree store mid-mutation. */
-const settle = () => new Promise(resolve => setTimeout(resolve, 0))
+const settle = () => new Promise(resolve => setTimeout(resolve, 10))
+
+function focus(id: string | null) {
+  // The production SDK is readonly; these stand-ins are test inputs.
+  ;(host.state.focusedStoredSessionId as ReturnType<typeof atom<null | string>>).set(id)
+}
+
+function pane(id: string | null) {
+  ;(host.state.focusedPaneId as ReturnType<typeof atom<null | string>>).set(id)
+}
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mocks.botChatOwnsWorkspace.mockReturnValue(false)
-  mocks.sessionOwnsWorkspace.mockReturnValue(false)
+  mocks.owns.mockReturnValue(false)
+  mocks.paneVisibility.mockImplementation(() => atom(false))
+  focus(null)
+  pane(null)
+  $groupChatWorkspace.set(null)
+  $openBotChat.set(null)
 })
-
 afterEach(() => {
-  vi.useRealTimers()
+  harnesses.splice(0).forEach(harness => harness.dispose())
+  dropGroupMainTab('crew')
 })
 
-describe('the Bots pane dock', () => {
-  it('renders its tab label from the live locale, not the register-time string', () => {
-    paneStores()
+describe('the embedded roster contribution', () => {
+  it('uses the shared section area, not a pane, and localizes its label live', () => {
+    const harness = register()
+    expect(harness.find('pane')).toBeUndefined()
+    expect(harness.find('roster')?.area).toBe(SIDEBAR_SECTIONS_AREA)
+    const render = harness.find('roster')!.render!
 
-    const harness = recordingContext()
-
-    // Registration runs at module import, before the app has loaded
-    // `display.language`: the string `title` is English here no matter what.
-    plugin.register(harness.ctx)
-
-    const tabTitle = harness.find('pane')!.data!.tabTitle as () => ReactNode
-
-    const inLocale = (locale: string) =>
+    const localized = (locale: string) =>
       renderToStaticMarkup(
         <I18nProvider configClient={null} initialLocale={locale}>
-          {tabTitle()}
+          {render()}
         </I18nProvider>
       )
 
-    expect(inLocale('en')).toBeTruthy()
-    expect(inLocale('ru')).not.toBe(inLocale('en'))
-
-    harness.dispose()
+    expect(localized('en')).toContain('data-embedded="true"')
+    expect(localized('ru')).not.toBe(localized('en'))
   })
 })
-
-describe('the Scheduled jobs pane', () => {
-  it('stays unregistered until a bot chat owns the workspace', async () => {
-    const store = paneStores()
-    const harness = recordingContext()
-
-    plugin.register(harness.ctx)
+describe('Routines registration', () => {
+  it('arrives collapsed on the enforced workspace-right dock only after bot ownership', async () => {
+    const harness = register()
     await settle()
-
     expect(harness.find('routines')).toBeUndefined()
-
-    mocks.botChatOwnsWorkspace.mockReturnValue(true)
-    store(`hermes-bots:pane`).set(true)
-
-    expect(harness.find('routines')).toBeTruthy()
-
-    harness.dispose()
-  })
-
-  it('unregisters when Bot Mode leaves the screen', async () => {
-    const store = paneStores()
-    const harness = recordingContext()
-
-    mocks.botChatOwnsWorkspace.mockReturnValue(true)
-    plugin.register(harness.ctx)
+    mocks.owns.mockReturnValue(true)
+    focus('bot')
     await settle()
-
-    expect(harness.find('routines')).toBeTruthy()
-
-    mocks.botChatOwnsWorkspace.mockReturnValue(false)
-    store(`hermes-bots:pane`).set(true)
-    store(`hermes-bots:pane`).set(false)
-
-    expect(harness.unregisters.get('routines')).toHaveBeenCalled()
-    expect(harness.find('routines')).toBeUndefined()
-
-    harness.dispose()
+    expect(harness.find('routines')?.data).toMatchObject({
+      defaultCollapsed: true,
+      dock: { pane: 'workspace', pos: 'right', enforce: true }
+    })
   })
-
-  it('keeps the tile alive while the tile itself holds focus', async () => {
-    const store = paneStores()
-    const harness = recordingContext()
-
-    mocks.botChatOwnsWorkspace.mockReturnValue(true)
-    plugin.register(harness.ctx)
+  it('honors Close through a group detour, then restores it on real ordinary-to-bot entry', async () => {
+    mocks.owns.mockReturnValue(true)
+    const harness = register()
     await settle()
-
-    // Clicking the tile drops bot-chat workspace ownership for a beat. A pane
-    // must never unregister itself out from under its own click.
-    store(`hermes-bots:routines`).set(true)
-    mocks.botChatOwnsWorkspace.mockReturnValue(false)
-    store(`hermes-bots:pane`).set(true)
-
-    expect(harness.unregisters.get('routines')).not.toHaveBeenCalled()
-    expect(harness.find('routines')).toBeTruthy()
-
-    harness.dispose()
-  })
-
-  it('drops a remembered Close only on entering Bot Mode, not on every ownership regain', async () => {
-    const store = paneStores()
-    const harness = recordingContext()
-
-    mocks.botChatOwnsWorkspace.mockReturnValue(true)
-    store(`hermes-bots:pane`).set(true)
-    plugin.register(harness.ctx)
-    await settle()
-
-    // Boot straight into a bot chat: the pane arrives and a Close from a past
-    // launch is dropped once (#102224).
     expect(mocks.undismissPane).toHaveBeenCalledTimes(1)
-    expect(mocks.undismissPane).toHaveBeenCalledWith('hermes-bots:routines')
-
-    // The user ✕-es the pane, opens a group room (the tile must not sit
-    // beside a group chat) and comes back to the bot chat — all inside one
-    // Bots session. Re-registration must not undo their Close.
-    const { $groupChatWorkspace } = await import('./group-chat')
-    mocks.botChatOwnsWorkspace.mockReturnValue(false)
-    $groupChatWorkspace.set({ id: 'room' } as never)
+    recordGroupMainTab('crew', () => {})
+    mocks.owns.mockReturnValue(false)
+    pane('plugin-workspace:hermes-bots:group:crew')
+    await settle()
     expect(harness.find('routines')).toBeUndefined()
-
-    mocks.botChatOwnsWorkspace.mockReturnValue(true)
-    $groupChatWorkspace.set(null)
+    mocks.owns.mockReturnValue(true)
+    pane('session-tile:bot')
+    await settle()
     expect(harness.find('routines')).toBeTruthy()
     expect(mocks.undismissPane).toHaveBeenCalledTimes(1)
-
-    // Leaving Bot Mode and coming back is the ask for the bot's chrome again.
-    mocks.botChatOwnsWorkspace.mockReturnValue(false)
-    store(`hermes-bots:pane`).set(false)
-    mocks.botChatOwnsWorkspace.mockReturnValue(true)
-    store(`hermes-bots:pane`).set(true)
+    mocks.owns.mockReturnValue(false)
+    focus('ordinary')
+    await settle()
+    mocks.owns.mockReturnValue(true)
+    focus('bot')
+    await settle()
     expect(mocks.undismissPane).toHaveBeenCalledTimes(2)
-
-    harness.dispose()
+    expect(mocks.undismissPane).toHaveBeenLastCalledWith('hermes-bots:routines')
   })
-
-  it('stops every lifecycle listener when the plugin is disabled', async () => {
-    const store = paneStores()
-    const harness = recordingContext()
-
-    plugin.register(harness.ctx)
-    await settle()
+  it('tears down pending reconciliation and every listener on disable/re-enable', async () => {
+    const harness = register()
     harness.dispose()
-
-    // A disable → re-enable cycle used to stack a duplicate listener per cycle.
-    mocks.botChatOwnsWorkspace.mockReturnValue(true)
-    store(`hermes-bots:pane`).set(true)
-
+    mocks.owns.mockReturnValue(true)
+    focus('bot')
+    $openBotChat.set({ key: 'local::bravo', openedRegistryId: 'bot' })
+    await settle()
     expect(harness.find('routines')).toBeUndefined()
-  })
-})
-
-describe('returning to Sessions', () => {
-  it('drops a cold bot open still pending (#120277)', async () => {
-    const store = paneStores()
-    const harness = recordingContext()
-    const { $pendingBotOpen } = await import('./shared')
-
-    plugin.register(harness.ctx)
+    expect(mocks.unbindProfile).toHaveBeenCalledTimes(1)
+    const next = register()
     await settle()
-    store(`hermes-bots:pane`).set(true)
-    $pendingBotOpen.set({ generation: 1, key: 'local::bravo' })
-
-    store(`hermes-bots:pane`).set(false)
-
-    expect($pendingBotOpen.get()).toBeNull()
-    expect(mocks.setWorkspaceScope).toHaveBeenCalledWith('sessions')
-
-    harness.dispose()
+    expect(next.find('routines')).toBeTruthy()
+    expect(mocks.undismissPane).toHaveBeenCalledTimes(1)
   })
-})
-
-describe('a desktop without host.paneVisibility', () => {
-  it('keeps the always-registered pane', async () => {
-    const { host } = await import('@hermes/plugin-sdk')
+  it('keeps the established always-registered fallback when paneVisibility is absent', () => {
     const restore = host.paneVisibility
-
-    // @ts-expect-error modelling an older SDK that lacks the export entirely
+    // @ts-expect-error modelling an older SDK
     host.paneVisibility = undefined
 
-    const harness = recordingContext()
-
-    plugin.register(harness.ctx)
-
-    expect(harness.find('routines')).toBeTruthy()
-
-    harness.dispose()
-    host.paneVisibility = restore
+    try {
+      expect(register().find('routines')).toBeTruthy()
+    } finally {
+      host.paneVisibility = restore
+    }
   })
 })

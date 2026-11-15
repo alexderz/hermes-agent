@@ -35,7 +35,6 @@ import {
   mirrorTreeHorizontal,
   movePane as movePaneOp,
   movePanes as movePanesOp,
-  normalize,
   removePane,
   reorderPanesInGroup as reorderPanesInGroupOp,
   setActivePane as setActivePaneOp,
@@ -72,8 +71,9 @@ function persist(tree: LayoutNode | null) {
 export const $layoutTree = modeLayout.atom<LayoutNode | null>(
   LAYOUT_KEYS.tree,
   () => defaultTrees[modeLayout.mode],
+  // Retire only old Bots navigation on every restore; repair its active neighbor and empty splits.
   Codecs.json(parsed =>
-    isLayoutNode(parsed) ? normalize(migratePersistedTree(parsed)) : defaultTrees[modeLayout.mode]
+    isLayoutNode(parsed) ? removePane(migratePersistedTree(parsed), 'hermes-bots:pane') : defaultTrees[modeLayout.mode]
   ),
   true
 )

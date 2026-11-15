@@ -50,6 +50,14 @@ import { VirtualSessionList } from './virtual-session-list'
 
 export const VIRTUALIZE_THRESHOLD = 25
 
+export interface MessagingSection {
+  sourceId: string
+  label: string
+  sessions: SessionInfo[]
+  total: number
+  hasMore: boolean
+}
+
 interface SidebarSectionHeaderProps {
   label: string
   open: boolean

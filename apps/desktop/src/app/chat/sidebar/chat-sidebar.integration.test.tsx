@@ -126,6 +126,21 @@ describe('ChatSidebar navigation activity', () => {
     noteActiveTreeGroup(null)
   })
 
+  it('shows contributed bot roster beside ordinary sessions and when sessions are empty', () => {
+    const dispose = registry.register({
+      area: 'sidebar.sections',
+      id: 'test-bots',
+      render: () => <div>Bot roster fixture</div>
+    })
+
+    renderSidebar('/chat', 'chat')
+    expect(screen.getByText('Bot roster fixture')).toBeTruthy()
+    expect(screen.getByText('Tile one')).toBeTruthy()
+    act(() => $sessions.set([]))
+    expect(screen.getByText('Bot roster fixture')).toBeTruthy()
+    dispose()
+  })
+
   it('keeps navigation and session activity coherent with the focused pane', () => {
     renderSidebar('/kanban', 'extension')
     expectOnlyCurrent('Kanban')

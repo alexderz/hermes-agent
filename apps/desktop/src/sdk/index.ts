@@ -110,6 +110,7 @@ import type { SessionMutationSnapshot } from '../../../shared/src/session-http-m
 import { logBotWake } from './bot-wake-log'
 import { pluginDecisions, profiles, skills, toolsets } from './bridge'
 import { composerHost } from './composer'
+import { $focusedPaneId, $focusedSessionWorkspace } from './focused-workspace'
 import { i18nHost } from './i18n'
 import { planPluginOpenSession } from './plugin-open-session-plan'
 import { dropLeftoverProfilePrefs, warmProfile } from './profile-local'
@@ -582,6 +583,12 @@ export const host = {
     /** Connection-qualified owner of the focused chat. Prefer this for any
      *  readout or mutation where separate sources can share a profile name. */
     focusedSessionOwner: readonlyAtom<PluginFocusedSessionOwner | null>($focusedSessionOwner),
+    /** Actual focused pane, plus the working chat's existing primary/tile ownership. */
+    focusedPaneId: readonlyAtom($focusedPaneId),
+    focusedSessionWorkspace: readonlyAtom($focusedSessionWorkspace),
+    /** Routing signal only, not evidence that a bot chat is focused. An explicit
+     * ordinary-session action yields this before its async resume completes. */
+    workspaceMode: readonlyAtom($workspaceMode),
     /** Owner profile of the focused chat (session-row stamp, falling back to
      *  the gateway profile for drafts/uncached ids). Compatibility projection
      *  of `focusedSessionOwner`; use the complete owner for source routing. */
@@ -1635,6 +1642,7 @@ export {
   ROUTES_AREA,
   SIDEBAR_NAV_AREA,
   SIDEBAR_PROFILE_GROUP_HEADER_AREA,
+  SIDEBAR_SECTIONS_AREA,
   type SidebarNavContribution,
   WORKSPACE_PAGE_HEADER_AREA
 } from '@/app/routes'

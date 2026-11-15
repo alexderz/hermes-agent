@@ -14,6 +14,7 @@
  *   - `window` (⇧⌘-click) — pop into its own window; falls back to `tab` when
  *     the bridge has no session-window support.
  */
+import { setWorkspaceScope } from '@/components/pane-shell/workspace-scope'
 import type { WorkspaceMode } from '@/contrib/types'
 import { $activeSessionId, $selectedStoredSessionId, markSessionRead, requestSessionResume } from '@/store/session'
 import { noteUserSessionOpen, noteUserSessionRouteOpen } from '@/store/session-open-intent'
@@ -141,6 +142,12 @@ export function openSession(
 
     // No pop-out support → treat like a new tab.
     resolved = 'tab'
+  }
+
+  // Ordinary selection supersedes pending alternate-workspace opens even if
+  // the selected session is already focused and no focus edge will follow.
+  if (workspaceScope.workspaceMode === 'sessions') {
+    setWorkspaceScope('sessions')
   }
 
   // A chat opened in this window: the launch restore must not close it.

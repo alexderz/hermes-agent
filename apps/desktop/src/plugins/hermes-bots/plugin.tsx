@@ -1,7 +1,7 @@
 /**
  * Hermes Bot Mode — a "one chat per agent" roster for the Hermes desktop.
  *
- * Left pane "Bots": one row per Hermes profile (a bot = an agent profile) with
+ * Sessions sidebar "Bots": one row per Hermes profile (a bot = an agent profile) with
  * a customizable avatar (shape + color + eyes, image, or pet). Click opens that
  * bot's chat; right-click → Edit Profile (avatar, title, description).
  * "New Bot" creates a profile — Name / Title / Description with an
@@ -22,6 +22,7 @@ import {
   LocalizedTabTitle,
   PALETTE_AREA,
   SIDEBAR_PROFILE_GROUP_HEADER_AREA,
+  SIDEBAR_SECTIONS_AREA,
   translateNow
 } from '@hermes/plugin-sdk'
 import type { ChatEmptyProps, PluginContext, ProfileGroupRoute } from '@hermes/plugin-sdk'
@@ -29,7 +30,6 @@ import type { ChatEmptyProps, PluginContext, ProfileGroupRoute } from '@hermes/p
 import { startFaceClock, stopFaceClock } from './avatar'
 import {
   $botChatFocused,
-  $botsPaneVisible,
   $focusedBotOwner,
   $openBotChat,
   $selectedBot,
@@ -68,23 +68,18 @@ import {
 } from './group-chat'
 import { stickyGroupEngine } from './group-engine'
 import { groupWorkspaceOwnerKey } from './group-membership'
+import { groupChatMainTabs } from './group-panes'
 import { annotateOrphanedGroupChatMembers } from './hygiene'
 import { BOTS_LOCALES, botsText } from './i18n'
-import { displayName } from './labels'
+import { displayName, slugifyProfileName } from './labels'
 import { startBotRelay, stopBotRelay } from './relay'
 import { $activityToasts } from './roster-actions'
-import {
-  botChatOwnsWorkspace,
-  BotsPane,
-  releaseStaleOpenBotChat,
-  selectedRosterBot,
-  sessionOwnsWorkspace
-} from './roster-pane'
+import { botChatOwnsWorkspace, BotsPane, releaseStaleOpenBotChat, selectedRosterBot } from './roster-pane'
 import { botRosterMeta, botWorkspaceOwnerKey, setBotsWorkspaceOwner } from './routing'
 import { startScreenAutoRaise } from './screen-autoraise'
 import { ProfileGroupScreenPortal } from './screen-portal'
 import { startHideSweepScheduler } from './session-sweep'
-import { bumpBotOpenGeneration, getBotOpenGeneration, ID, setPluginCtx } from './shared'
+import { $pendingBotOpen, bumpBotOpenGeneration, getBotOpenGeneration, ID, setPluginCtx } from './shared'
 import type { GroupChat, RosterRow } from './types'
 import { loadBotSections } from './user-sections'
 
@@ -107,6 +102,27 @@ interface MentionCompletionItem {
 interface ComposerDraftPayload {
   attachments?: unknown[]
   text: string
+}
+
+function syncFocusedBotWorkspaceRoute() {
+  const scope = host.state.focusedSessionWorkspace?.get?.()
+
+  if (scope?.workspaceMode === 'bots' && scope.workspaceOwnerKey) {
+    host.setWorkspaceScope?.(
+      'bots',
+      scope.workspaceOwnerKey,
+      scope.ownerRoute ? { kind: 'route', route: scope.ownerRoute } : null
+    )
+
+    return
+  }
+
+  const claim = $openBotChat.get()
+  const owner = claim && selectedRosterBot($lastRoster.get(), claim.key)
+
+  if (owner) {
+    setBotsWorkspaceOwner(botWorkspaceOwnerKey(owner), owner)
+  }
 }
 
 export default {
@@ -443,61 +459,18 @@ export default {
       data: { render: (route: ProfileGroupRoute) => <ProfileGroupScreenPortal route={route} /> }
     })
     ctx.register({
-      id: 'pane',
-      area: 'panes',
-      // `title` is sampled at register (module import, before the locale has
-      // loaded) — the tab renders `tabTitle` below so BOTS follows the locale.
-      title: translateNow('common.bots'),
-      // dock: explicit adoption gesture — CENTER-STACK into the sessions zone
-      // so the sidebar grows a SESSIONS | BOTS tab strip instead of splitting
-      // two cramped panes down the column. Center is safe now: insertAtGroup
-      // pins the zone's header explicitly shown on a center gain (and it
-      // stays shown once the zone has stacked), so the sessions pane can
-      // never vanish behind a stripless Bots tab — the lone-pane auto-hide
-      // trap this dock used to work around with a 'bottom' split.
-      // enforce: standing invariant, not a one-shot migration — the pane
-      // re-homes into the sessions strip at EVERY boot it isn't already
-      // there, whatever tokens or user placement an older install persisted.
-      // The one-time heal ('sessions-tab-v1') burned its token even when its
-      // guards skipped the move, so exactly the users who had fought the old
-      // stacked layout (dragged panes → $userPlacedPanes) stayed stacked
-      // forever. Owner's order: SESSIONS | BOTS is always a tab strip.
-      // An intra-session drag still sticks until the next launch (the
-      // invariant runs at adoption time only — see enforceDockedPanes in the
-      // tree store).
-      // collapsible: the pane lives in the sessions zone, so it must LEAVE
-      // the grid with that zone below the sidebar-collapse breakpoint. The
-      // sessions pane collapses alone without this flag. The zone then keeps
-      // a stranded BOTS tab on screen. The narrow edge overlay mirrors the
-      // zone's tab strip, so the pane stays reachable while collapsed.
-      data: {
-        placement: 'left',
-        width: '260px',
-        collapsible: true,
-        hideOnly: true,
-        tabTitle: () => <LocalizedTabTitle select={t => t.common.bots} />,
-        tabTitleText: () => translateNow('common.bots'),
-        dock: {
-          pane: 'sessions',
-          pos: 'center',
-          enforce: true
-        }
-      },
-      render: () => <BotsPane />
+      id: 'roster',
+      area: SIDEBAR_SECTIONS_AREA,
+      render: () => <BotsPane embedded />
     })
 
     // Routines — its OWN tiling pane splitting the workspace's right edge
     // (NOT the collapsible right sidebar; placement 'right' is that sidebar's
     // role and hides the pane until "Show Right Sidebar").
     //
-    // Registered ONLY while Bot Mode is on screen: the pane exists while the
-    // Bots pane is visible (its zone's active tab, or a lone pane in a
-    // stacked pre-heal layout) and unregisters when the user tabs back to
-    // Sessions — no Cronjobs tile squatting beside the chat outside Bot Mode.
-    // `ctx.register` returns the disposer that makes this cheap; the tree
-    // keeps the pane's spot, so re-registering re-adopts it where it was.
-    // host.paneVisibility is feature-detected: older desktops without the SDK
-    // export keep the always-registered behavior.
+    // Registered only while an actual bot-owned chat is the working surface.
+    // The shared navigation roster never owns this lifecycle; group rooms do
+    // not acquire bot-scoped tools. Older SDKs keep their established fallback.
     const registerRoutinesPane = (restoreDismissed: boolean) => {
       const dispose = ctx.register({
         id: 'routines',
@@ -541,103 +514,118 @@ export default {
     }
 
     if (typeof host.paneVisibility === 'function') {
-      // The contribution-scoped pane id (`register` prefixes `${ID}:`).
-      const $sidebarVisible = host.paneVisibility(`${ID}:pane`)
       let unregisterRoutines: null | (() => void) = null
-      // Armed by each Bots-tab entry, spent by the first registration after it.
-      let restoreDismissedOnRegister = true
+      let botVisit = false
+      // Ordinary selection can precede its async focus edge. Until a new
+      // content focus or bot-open intent, the old tile must not reclaim routing.
+      let yielded = false
+      let disposed = false
+      let syncTimer: ReturnType<typeof setTimeout> | undefined
 
       const syncRoutinesPane = () => {
-        if (botChatOwnsWorkspace()) {
+        if (disposed) {
+          return
+        }
+
+        releaseStaleOpenBotChat(host.state.focusedStoredSessionId?.get?.())
+        const owns = !yielded && botChatOwnsWorkspace()
+        $botChatFocused.set(owns)
+        const pane = host.state.focusedPaneId?.get?.()
+
+        const group = [...groupChatMainTabs.keys()].find(
+          name => pane === `plugin-workspace:${ID}:group:${slugifyProfileName(name)}`
+        )
+
+        if (group && !yielded) {
+          $groupChatWorkspace.set(group)
+          setBotsWorkspaceOwner(groupWorkspaceOwnerKey(group), null, botsText().group.startInComposer())
+        } else if (owns) {
+          $groupChatWorkspace.set(null)
+
+          if (!$pendingBotOpen.get()) {
+            syncFocusedBotWorkspaceRoute()
+          }
+
           if (!unregisterRoutines) {
-            unregisterRoutines = registerRoutinesPane(restoreDismissedOnRegister)
-            restoreDismissedOnRegister = false
-          }
-        } else if (unregisterRoutines) {
-          // Clicking the Cronjobs tile moves focus onto the tile itself, which
-          // drops bot-chat workspace ownership for a beat. While Bot Mode is
-          // still on screen and the tile is the one holding focus, keep it —
-          // a pane must never unregister itself out from under its own click.
-          // Leaving Bot Mode ($botsPaneVisible false) still unregisters.
-          const $self = host.paneVisibility(`${ID}:routines`)
-
-          if ($botsPaneVisible.get() && $self && typeof $self.get === 'function' && $self.get()) {
-            return
+            unregisterRoutines = registerRoutinesPane(!botVisit)
           }
 
+          botVisit = true
+        } else if (
+          !pane?.startsWith('plugin-workspace:') &&
+          !$pendingBotOpen.get() &&
+          (!$groupChatWorkspace.get() || pane === 'workspace' || pane?.startsWith('session-tile:'))
+        ) {
+          // A real ordinary chat/draft takes routing back; a pending roster tap
+          // still owns its async intent until explicit selection supersedes it.
+          botVisit = false
+          host.setWorkspaceScope?.('sessions')
+        }
+
+        if (!owns && unregisterRoutines) {
           unregisterRoutines()
           unregisterRoutines = null
         }
       }
 
-      const stopSidebarSync = $sidebarVisible.listen(visible => {
-        $botsPaneVisible.set(Boolean(visible))
-
-        if (visible) {
-          restoreDismissedOnRegister = true
-
-          const group = $groupChatWorkspace.get()
-          const selected = selectedRosterBot($lastRoster.get(), $selectedRosterKey.get())
-
-          // Owner routing only. With neither a group nor a selected bot there
-          // is no bot-owned surface to scope, so leave the workspace on
-          // whatever the user was already looking at — the roster-hydration
-          // effect in BotsPane scopes it the moment a real owner exists.
-          //
-          // This is where the Bots home used to claim the center and refuse a
-          // new chat with "Select a Bot or group first." Deleting the home
-          // deleted the dead end it was apologizing for: with nothing selected
-          // the center is an ordinary session and `+` works there. The refusal
-          // itself still stands for the cases that remain — a group room, and
-          // a selected row too orphaned to route (setBotsWorkspaceOwner's
-          // blocked target).
-          if (group) {
-            setBotsWorkspaceOwner(
-              groupWorkspaceOwnerKey(group),
-              null,
-              botsText().group.startInComposer()
-            )
-          } else if (selected) {
-            setBotsWorkspaceOwner(botWorkspaceOwnerKey(selected), selected)
-          }
-        } else {
-          // Strand any owner wake still dialing. Its SDK open will fail the
-          // workspace token too; this plugin generation prevents that expected
-          // cancellation from showing an error after the user deliberately
-          // returned to Sessions.
-          bumpBotOpenGeneration()
-          host.setWorkspaceScope?.('sessions')
-        }
-
-        syncRoutinesPane()
-      })
-
-      const stopGroupSync = $groupChatWorkspace.listen(syncRoutinesPane)
-
-      // React on the NEXT tick — a layout notification arrives mid-mutation,
-      // and registering/unregistering panes from inside it would re-enter the
-      // tree store.
+      // Focus notifications arrive inside tree mutations. Never re-enter the
+      // layout by registering a pane until that mutation has settled.
       const scheduleRoutinesSync = () => {
-        try {
-          setTimeout(syncRoutinesPane, 0)
-        } catch {
-          syncRoutinesPane()
+        if (!disposed && syncTimer === undefined) {
+          syncTimer = setTimeout(() => {
+            syncTimer = undefined
+            syncRoutinesPane()
+          }, 0)
         }
       }
 
-      // Tab focus moves without swapping the gateway socket, so the focused
-      // STORED session is the truth about session focus; older shells fall
-      // back to the active session id.
+      const stopGroupSync = $groupChatWorkspace.listen(scheduleRoutinesSync)
       const focusStore = host.state.focusedStoredSessionId || host.state.activeSessionId
 
-      const stopFocusSync =
-        typeof focusStore?.listen === 'function'
-          ? focusStore.listen(id => {
-              $botChatFocused.set(Boolean(id))
-              releaseStaleOpenBotChat(id)
-              syncRoutinesPane()
-            })
-          : null
+      const stopFocusSync = focusStore?.listen?.(() => {
+        yielded = false
+
+        // A tab click is also explicit selection. Bot opens publish their
+        // primary/tile scope before focusing, so focus-before-claim stays current.
+        // Feature-detect: legacy shells cannot prove that distinction.
+        if (
+          $pendingBotOpen.get() &&
+          host.state.focusedSessionWorkspace &&
+          host.state.focusedSessionWorkspace.get()?.workspaceMode !== 'bots'
+        ) {
+          host.setWorkspaceScope?.('sessions')
+        }
+
+        scheduleRoutinesSync()
+      })
+
+      const stopTileSync = host.state.focusedSessionWorkspace?.listen?.(scheduleRoutinesSync)
+
+      const stopPaneSync = host.state.focusedPaneId?.listen?.(pane => {
+        if (pane === 'workspace' || pane?.startsWith('session-tile:') || pane?.startsWith('plugin-workspace:')) {
+          yielded = false
+        }
+
+        scheduleRoutinesSync()
+      })
+
+      const stopClaimSync = $openBotChat.listen(scheduleRoutinesSync)
+      const stopPendingSync = $pendingBotOpen.listen(scheduleRoutinesSync)
+
+      // This is an intent boundary, NOT an ownership predicate. Core yields
+      // synchronously on ordinary selection, even reselecting the same chat.
+      // Hiding the mobile navigation does not change workspace routing.
+      const stopScopeSync = host.state.workspaceMode?.listen?.(mode => {
+        yielded = mode === 'sessions'
+
+        if (yielded) {
+          bumpBotOpenGeneration()
+          $openBotChat.set(null)
+          $groupChatWorkspace.set(null)
+          botVisit = false
+          scheduleRoutinesSync()
+        }
+      })
 
       // Proactive reclaim refresh: when the gateway reaps the runtime behind
       // the OPEN bot chat (idle TTL, LRU cap, WS-orphan reap — the mass-reap
@@ -704,21 +692,27 @@ export default {
             })
           : null
 
-      $botsPaneVisible.set(Boolean($sidebarVisible.get()))
-      $botChatFocused.set(sessionOwnsWorkspace())
-      // A persisted layout can boot directly into Bot Mode. Reconcile now,
-      // then once more after the layout mutation finishes.
-      syncRoutinesPane()
+      // A persisted bot tile can already own focus at registration.
       scheduleRoutinesSync()
 
       if (typeof ctx.onDispose === 'function') {
         // The registration disposer is already tracked by ctx.register; only
         // the listeners need explicit teardown or they survive plugin disable.
         ctx.onDispose(() => {
-          stopSidebarSync()
+          disposed = true
+          clearTimeout(syncTimer)
+          stopScopeSync?.()
+          stopTileSync?.()
+          stopPaneSync?.()
+          stopClaimSync()
+          stopPendingSync()
           stopGroupSync()
           stopFocusSync?.()
           stopReclaimSync?.()
+          bumpBotOpenGeneration()
+          $openBotChat.set(null)
+          $botChatFocused.set(false)
+          host.setWorkspaceScope?.('sessions')
         })
       }
     } else {

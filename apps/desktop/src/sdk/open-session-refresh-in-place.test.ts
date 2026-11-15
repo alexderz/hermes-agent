@@ -76,6 +76,7 @@ vi.mock('@/store/session-states', async () => {
 
   return {
     $attentionSessionIds: atom([]),
+    $botChatScopes: atom({}),
     $draftSessionIds: atom([]),
     $focusedRuntimeId: atom(null),
     $focusedSessionState: atom(null),

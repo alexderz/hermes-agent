@@ -10,6 +10,7 @@ import type { rosterGatewayOptions } from './roster-sections'
 import type { RosterRow } from './types'
 
 interface RosterContentProps {
+  embedded?: boolean
   b: ReturnType<typeof useBots>
   staleNotice: string | number | null
   isLoading: boolean
@@ -42,6 +43,7 @@ interface RosterContentProps {
 }
 
 export function renderRosterContent({
+  embedded = false,
   b,
   staleNotice,
   isLoading,
@@ -127,7 +129,14 @@ export function renderRosterContent({
           />
         </div>
       ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain" data-slot="bots-roster">
+        <div
+          className={
+            embedded
+              ? 'min-h-0 max-h-[min(20rem,40dvh)] shrink-0 overflow-y-auto overscroll-y-auto'
+              : 'min-h-0 flex-1 overflow-y-auto overscroll-contain'
+          }
+          data-slot="bots-roster"
+        >
           <div className="grid w-full min-w-0 gap-0.5 px-1.5 pb-2">
             {showGatewaySections
               ? [

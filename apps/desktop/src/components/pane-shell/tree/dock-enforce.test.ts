@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// Enforced dock invariants: a pane whose dock hint carries `enforce: true`
-// (Bot Mode's Bots pane) re-homes onto its center anchor at EVERY boot's
+// Enforced dock invariants: a plugin pane whose dock hint carries `enforce: true`
+// re-homes onto its center anchor at EVERY boot's
 // first adoption pass — persisted layouts otherwise pin the stale stacked
 // arrangement forever, because adoption only ever places panes MISSING from
 // the tree. Unlike the retired one-time heal, nothing exempts the pane: not
@@ -27,7 +27,7 @@ const stackedTree = {
       weights: [1, 1],
       children: [
         { type: 'group', id: 'g-sessions', panes: ['sessions'], active: 'sessions' },
-        { type: 'group', id: 'g-bots', panes: ['hermes-bots:pane'], active: 'hermes-bots:pane' }
+        { type: 'group', id: 'g-bots', panes: ['sample:pane'], active: 'sample:pane' }
       ]
     },
     { type: 'group', id: 'g-main', panes: ['workspace'], active: 'workspace' }
@@ -73,7 +73,7 @@ describe('enforced dock (stacked Bots pane → sessions-zone tab, every boot)', 
       render: () => null
     })
     registry.register({
-      id: 'hermes-bots:pane',
+      id: 'sample:pane',
       area: 'panes',
       title: 'Bots',
       data: {
@@ -100,44 +100,137 @@ describe('enforced dock (stacked Bots pane → sessions-zone tab, every boot)', 
     return setupTree(stackedTree)
   }
 
+  it('retires only the old Bots tab on restore, selecting its neighbor', async () => {
+    window.localStorage.setItem(
+      TREE_KEY,
+      JSON.stringify({
+        type: 'split',
+        id: 'root',
+        orientation: 'row',
+        weights: [1, 3],
+        children: [
+          {
+            type: 'group',
+            id: 'side',
+            panes: ['sessions', 'hermes-bots:pane', 'other:tile'],
+            active: 'hermes-bots:pane'
+          },
+          { type: 'group', id: 'main', panes: ['workspace'], active: 'workspace' }
+        ]
+      })
+    )
+    const tree = await import('@/components/pane-shell/tree/store')
+    const model = await import('@/components/pane-shell/tree/model')
+    const restored = tree.$layoutTree.get()!
+    expect(model.findGroupOfPane(restored, 'hermes-bots:pane')).toBeNull()
+    expect(model.findGroupOfPane(restored, 'sessions')).toMatchObject({
+      panes: ['sessions', 'other:tile'],
+      active: 'other:tile'
+    })
+    expect(restored).toMatchObject({ weights: [1, 3] })
+  })
+
+  it('cleans a retired split in each mode without pruning disabled plugins or changing unrelated preferences', async () => {
+    const saved = {
+      type: 'split',
+      id: 'root',
+      orientation: 'row',
+      weights: [2, 7, 3],
+      children: [
+        {
+          type: 'split',
+          id: 'sidebar',
+          orientation: 'column',
+          weights: [4, 1],
+          children: [
+            { type: 'group', id: 'sessions-zone', panes: ['sessions'], active: 'sessions', tabStrip: 'never' },
+            { type: 'group', id: 'retired-zone', panes: ['hermes-bots:pane'], active: 'hermes-bots:pane' }
+          ]
+        },
+        {
+          type: 'group',
+          id: 'content',
+          panes: ['workspace', 'session-tile:kept'],
+          active: 'session-tile:kept',
+          tabStrip: 'always'
+        },
+        { type: 'group', id: 'disabled-plugin', panes: ['disabled:tile'], active: 'disabled:tile' }
+      ]
+    }
+
+    window.localStorage.setItem(TREE_KEY, JSON.stringify(saved))
+    window.localStorage.setItem(`${TREE_KEY}.simple`, JSON.stringify(saved))
+    const tree = await import('@/components/pane-shell/tree/store')
+    const { setInterfaceMode } = await import('@/store/interface-mode')
+    const { allPaneIds } = await import('./model')
+    const expected = { ...saved, children: [saved.children[0].children![0], ...saved.children.slice(1)] }
+    expect(tree.$layoutTree.get()).toEqual(expected)
+    setInterfaceMode('simple')
+    expect(tree.$layoutTree.get()).toEqual(expected)
+    expect(allPaneIds(tree.$layoutTree.get()!)).toEqual(['sessions', 'workspace', 'session-tile:kept', 'disabled:tile'])
+    tree.persistTree()
+    setInterfaceMode('advanced')
+    expect(tree.$layoutTree.get()).toEqual(expected)
+    tree.persistTree()
+    expect(JSON.parse(window.localStorage.getItem(TREE_KEY)!)).toEqual(expected)
+    expect(JSON.parse(window.localStorage.getItem(`${TREE_KEY}.simple`)!)).toEqual(expected)
+  })
+
+  it('leaves layouts without the retired pane structurally unchanged', async () => {
+    const saved = {
+      type: 'split',
+      id: 'kept',
+      orientation: 'row',
+      weights: [2, 9],
+      children: [
+        { type: 'group', id: 'left', panes: ['sessions', 'disabled:tile'], active: 'disabled:tile', tabStrip: 'never' },
+        { type: 'group', id: 'main', panes: ['workspace'], active: 'workspace' }
+      ]
+    }
+
+    window.localStorage.setItem(TREE_KEY, JSON.stringify(saved))
+    const tree = await import('@/components/pane-shell/tree/store')
+    expect(tree.$layoutTree.get()).toEqual(saved)
+  })
+
   it('re-homes a stacked bots pane into the sessions tab strip, keeping sessions active', async () => {
     const { model, tree } = await setup()
 
     tree.watchContributedPanes()
 
-    const group = model.findGroupOfPane(tree.$layoutTree.get()!, 'hermes-bots:pane')!
+    const group = model.findGroupOfPane(tree.$layoutTree.get()!, 'sample:pane')!
 
-    expect(group.panes).toEqual(['sessions', 'hermes-bots:pane'])
+    expect(group.panes).toEqual(['sessions', 'sample:pane'])
     // Silent like adoption — the enforce must not steal the sessions tab.
     expect(group.active).toBe('sessions')
     // The persisted tree carries the tabbed shape (survives the next boot).
     const persisted = JSON.parse(window.localStorage.getItem(TREE_KEY)!) as { children?: unknown[] }
 
-    expect(JSON.stringify(persisted)).toContain('"panes":["sessions","hermes-bots:pane"]')
+    expect(JSON.stringify(persisted)).toContain('"panes":["sessions","sample:pane"]')
   })
 
   it('re-homes even a USER-PLACED pane — the owner invariant beats the drag record', async () => {
-    window.localStorage.setItem(USER_PLACED_KEY, JSON.stringify(['hermes-bots:pane']))
+    window.localStorage.setItem(USER_PLACED_KEY, JSON.stringify(['sample:pane']))
 
     const { model, tree } = await setup()
 
     tree.watchContributedPanes()
 
-    const group = model.findGroupOfPane(tree.$layoutTree.get()!, 'hermes-bots:pane')!
+    const group = model.findGroupOfPane(tree.$layoutTree.get()!, 'sample:pane')!
 
-    expect(group.panes).toEqual(['sessions', 'hermes-bots:pane'])
+    expect(group.panes).toEqual(['sessions', 'sample:pane'])
   })
 
   it('re-homes even when the retired heal token was already burned, and clears the stale ledger', async () => {
-    window.localStorage.setItem(LEGACY_HEAL_KEY, JSON.stringify(['hermes-bots:pane:sessions-tab-v1']))
+    window.localStorage.setItem(LEGACY_HEAL_KEY, JSON.stringify(['sample:pane:sessions-tab-v1']))
 
     const { model, tree } = await setup()
 
     tree.watchContributedPanes()
 
-    const group = model.findGroupOfPane(tree.$layoutTree.get()!, 'hermes-bots:pane')!
+    const group = model.findGroupOfPane(tree.$layoutTree.get()!, 'sample:pane')!
 
-    expect(group.panes).toEqual(['sessions', 'hermes-bots:pane'])
+    expect(group.panes).toEqual(['sessions', 'sample:pane'])
     // The one-time-heal ledger is dead state now — importing the store drops it.
     expect(window.localStorage.getItem(LEGACY_HEAL_KEY)).toBeNull()
   })
@@ -148,7 +241,7 @@ describe('enforced dock (stacked Bots pane → sessions-zone tab, every boot)', 
     tree.watchContributedPanes()
 
     // Sanity: enforced into the strip.
-    expect(model.findGroupOfPane(tree.$layoutTree.get()!, 'hermes-bots:pane')!.panes).toContain('sessions')
+    expect(model.findGroupOfPane(tree.$layoutTree.get()!, 'sample:pane')!.panes).toContain('sessions')
 
     // The user drags the pane back out into its own zone below sessions.
     tree.$layoutTree.set(JSON.parse(JSON.stringify(stackedTree)))
@@ -163,9 +256,9 @@ describe('enforced dock (stacked Bots pane → sessions-zone tab, every boot)', 
       render: () => null
     })
 
-    const group = model.findGroupOfPane(tree.$layoutTree.get()!, 'hermes-bots:pane')!
+    const group = model.findGroupOfPane(tree.$layoutTree.get()!, 'sample:pane')!
 
-    expect(group.panes).toEqual(['hermes-bots:pane'])
+    expect(group.panes).toEqual(['sample:pane'])
   })
 
   it('re-homes again on the NEXT boot after a drag persisted the stacked shape', async () => {
@@ -182,9 +275,9 @@ describe('enforced dock (stacked Bots pane → sessions-zone tab, every boot)', 
 
     second.tree.watchContributedPanes()
 
-    const group = second.model.findGroupOfPane(second.tree.$layoutTree.get()!, 'hermes-bots:pane')!
+    const group = second.model.findGroupOfPane(second.tree.$layoutTree.get()!, 'sample:pane')!
 
-    expect(group.panes).toEqual(['sessions', 'hermes-bots:pane'])
+    expect(group.panes).toEqual(['sessions', 'sample:pane'])
   })
 
   it('shows the tab strip when already co-located but hidden with bots active (community "only Bots shows" regression)', async () => {
@@ -202,8 +295,8 @@ describe('enforced dock (stacked Bots pane → sessions-zone tab, every boot)', 
         {
           type: 'group',
           id: 'g-left',
-          panes: ['sessions', 'hermes-bots:pane'],
-          active: 'hermes-bots:pane',
+          panes: ['sessions', 'sample:pane'],
+          active: 'sample:pane',
           headerHidden: true
         },
         { type: 'group', id: 'g-main', panes: ['workspace'], active: 'workspace' }
@@ -214,11 +307,11 @@ describe('enforced dock (stacked Bots pane → sessions-zone tab, every boot)', 
 
     tree.watchContributedPanes()
 
-    const group = model.findGroupOfPane(tree.$layoutTree.get()!, 'hermes-bots:pane')!
+    const group = model.findGroupOfPane(tree.$layoutTree.get()!, 'sample:pane')!
 
     // Both panes stay put — but the strip is visible so SESSIONS is reachable
     // again. The active tab is NOT stolen mid-boot.
-    expect(group.panes).toEqual(['sessions', 'hermes-bots:pane'])
+    expect(group.panes).toEqual(['sessions', 'sample:pane'])
     expect(tree.tabStripVisibleForGroup(group)).toBe(true)
   })
 
@@ -232,8 +325,8 @@ describe('enforced dock (stacked Bots pane → sessions-zone tab, every boot)', 
         {
           type: 'group',
           id: 'g-sessions',
-          panes: ['sessions', 'hermes-bots:pane', 'hermes-bots:routines'],
-          active: 'hermes-bots:pane'
+          panes: ['sessions', 'sample:pane', 'hermes-bots:routines'],
+          active: 'sample:pane'
         },
         { type: 'group', id: 'g-main', panes: ['workspace'], active: 'workspace' }
       ]
@@ -243,11 +336,11 @@ describe('enforced dock (stacked Bots pane → sessions-zone tab, every boot)', 
 
     tree.watchContributedPanes()
 
-    const botsGroup = model.findGroupOfPane(tree.$layoutTree.get()!, 'hermes-bots:pane')!
+    const botsGroup = model.findGroupOfPane(tree.$layoutTree.get()!, 'sample:pane')!
     const routinesGroup = model.findGroupOfPane(tree.$layoutTree.get()!, 'hermes-bots:routines')!
 
-    expect(botsGroup.panes).toEqual(['sessions', 'hermes-bots:pane'])
-    expect(botsGroup.active).toBe('hermes-bots:pane')
+    expect(botsGroup.panes).toEqual(['sessions', 'sample:pane'])
+    expect(botsGroup.active).toBe('sample:pane')
     expect(routinesGroup.panes).toEqual(['hermes-bots:routines'])
     expect(routinesGroup.id).not.toBe(botsGroup.id)
   })
@@ -262,8 +355,8 @@ describe('enforced dock (stacked Bots pane → sessions-zone tab, every boot)', 
         {
           type: 'group',
           id: 'g-sessions',
-          panes: ['sessions', 'hermes-bots:pane'],
-          active: 'hermes-bots:pane'
+          panes: ['sessions', 'sample:pane'],
+          active: 'sample:pane'
         },
         { type: 'group', id: 'g-main', panes: ['workspace'], active: 'workspace' },
         {

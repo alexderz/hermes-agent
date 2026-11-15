@@ -4,6 +4,26 @@ import { allPaneIds, group, split } from './model'
 import { isPresetExcludedPaneId, PRESET_EXCLUDED_PANE_PREFIXES, stripPresetLivePanes } from './preset-tree'
 
 describe('stripPresetLivePanes', () => {
+  it('retires the former Bots navigation pane from saved presets, repairing its active neighbor', () => {
+    const tree = split(
+      'row',
+      [
+        group(['sessions', 'hermes-bots:pane', 'disabled:tile'], { active: 'hermes-bots:pane', id: 'side' }),
+        group(['workspace'], { active: 'workspace', id: 'main' })
+      ],
+      [2, 7]
+    )
+
+    const restored = stripPresetLivePanes(tree)
+    expect(restored).toMatchObject({
+      weights: [2, 7],
+      children: [
+        { panes: ['sessions', 'disabled:tile'], active: 'disabled:tile' },
+        { panes: ['workspace'], active: 'workspace' }
+      ]
+    })
+  })
+
   it('drops session tiles and keeps the structural rails', () => {
     const tree = split(
       'row',
@@ -76,7 +96,7 @@ describe('stripPresetLivePanes', () => {
     expect(isPresetExcludedPaneId('preview-tile:undefined')).toBe(true)
     expect(isPresetExcludedPaneId('route-tile:page')).toBe(true)
     expect(isPresetExcludedPaneId('workspace')).toBe(false)
-    expect(isPresetExcludedPaneId('hermes-bots:pane')).toBe(false)
+    expect(isPresetExcludedPaneId('sample:pane')).toBe(false)
     expect(isPresetExcludedPaneId('terminal')).toBe(false)
   })
 })

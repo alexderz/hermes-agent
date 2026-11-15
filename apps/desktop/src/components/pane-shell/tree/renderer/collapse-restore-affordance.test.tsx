@@ -92,11 +92,11 @@ const zoneAt = (index: number) => {
 describe('Sessions/Bots strip — #91223', () => {
   beforeEach(() => {
     registerPane('sessions', { hideOnly: true, placement: 'left' }, 'Sessions')
-    registerPane('hermes-bots:pane', { hideOnly: true, placement: 'left' }, 'Bots')
+    registerPane('sample:pane', { hideOnly: true, placement: 'left' }, 'Bots')
     registerPane('workspace', { placement: 'main', uncloseable: true }, 'Chat')
     $layoutTree.set(
       split('row', [
-        group(['sessions', 'hermes-bots:pane'], { active: 'sessions', id: 'g-side' }),
+        group(['sessions', 'sample:pane'], { active: 'sessions', id: 'g-side' }),
         group(['workspace'], { active: 'workspace', id: 'g-main' })
       ])
     )
@@ -109,7 +109,7 @@ describe('Sessions/Bots strip — #91223', () => {
 
     expect(tablist()).toBeTruthy()
     expect(tabEl('sessions')).toBeTruthy()
-    expect(tabEl('hermes-bots:pane')).toBeTruthy()
+    expect(tabEl('sample:pane')).toBeTruthy()
     expect(zoneAt(0).minimized).toBeFalsy()
     expect(zoneAt(0).tabStrip).toBeUndefined()
   })
@@ -121,7 +121,7 @@ describe('Sessions/Bots strip — #91223', () => {
 
     expect(zoneAt(0).minimized).toBeFalsy()
     expect(tabEl('sessions')).toBeTruthy()
-    expect(tabEl('hermes-bots:pane')).toBeTruthy()
+    expect(tabEl('sample:pane')).toBeTruthy()
   })
 
   it('an explicit never hides the sessions/Bots strip', () => {
@@ -136,7 +136,7 @@ describe('Sessions/Bots strip — #91223', () => {
   it('lets keyboard focus move between tabs without activating until Enter or Space', () => {
     render(<LiveTreeGroup parentAxis="row" />)
     const sessions = tabEl('sessions') as HTMLElement
-    const bots = tabEl('hermes-bots:pane') as HTMLElement
+    const bots = tabEl('sample:pane') as HTMLElement
     act(() => sessions.focus())
 
     expect(sessions.tabIndex).toBe(0)
@@ -145,7 +145,7 @@ describe('Sessions/Bots strip — #91223', () => {
     expect(globalThis.document.activeElement).toBe(bots)
     expect(zoneAt(0).active).toBe('sessions')
     fireEvent.keyDown(bots, { key: 'Enter' })
-    expect(zoneAt(0).active).toBe('hermes-bots:pane')
+    expect(zoneAt(0).active).toBe('sample:pane')
     expect(globalThis.document.activeElement).toBe(bots)
     fireEvent.keyDown(bots, { key: 'Home' })
     fireEvent.keyDown(sessions, { key: ' ' })

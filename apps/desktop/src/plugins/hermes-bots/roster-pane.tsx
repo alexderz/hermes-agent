@@ -1,10 +1,8 @@
-import { host, useI18n, useValue } from '@hermes/plugin-sdk'
+import { DisclosureCaret, host, RowButton, useI18n, useValue } from '@hermes/plugin-sdk'
 import { useEffect, useRef, useState } from 'react'
 
 import { BotRow } from './bot-row'
 import {
-  $botChatFocused,
-  $botsPaneVisible,
   $focusedBotOwner,
   $openBotChat,
   $rosterHydrated,
@@ -44,14 +42,18 @@ import { $showHiddenBots, isBotHidden } from './hidden-bots'
 import { useBots } from './i18n'
 import { $activityToasts } from './roster-actions'
 import { renderRosterContent } from './roster-pane-content'
-import { deriveRosterPresentation, deriveRosterRows, type RosterGroupRow, sortRosterBots } from './roster-pane-derivation'
+import {
+  deriveRosterPresentation,
+  deriveRosterRows,
+  type RosterGroupRow,
+  sortRosterBots
+} from './roster-pane-derivation'
 import { renderRosterDialogs } from './roster-pane-dialogs'
 import { RosterGroupRowView } from './roster-pane-groups'
 import { $lastSources, usePublishRosterSnapshot } from './roster-pane-lifecycle'
 import { rosterSectionRenderers } from './roster-pane-sections'
 import { renderRosterToolbar } from './roster-pane-toolbar'
 import { botNeedsHandleLabel, rosterGatewayOptions } from './roster-sections'
-import { botWorkspaceOwnerKey, setBotsWorkspaceOwner } from './routing'
 import { activeBots, useTurnBusy } from './row-helpers'
 import type { BotMeta, GatewaySource, GroupMember, RosterActivityFilter, RosterKindFilter, RosterRow } from './types'
 import {
@@ -149,27 +151,32 @@ function reconcileRosterSelection(roster: RosterRow[], sources: GatewaySource[],
   }
 }
 
-/** True when a session owns the main workspace. Prefers the focused STORED
- *  session (tab focus moves without swapping the gateway socket); bare test
- *  harnesses with neither atom drive $botChatFocused directly. */
-export function sessionOwnsWorkspace(): boolean {
-  const focused = host.state?.focusedStoredSessionId?.get?.()
+/** Ownership comes from the working tile, never the navigation roster. The
+ * transient canonical-open claim also covers older SDKs and the focus-before-
+ * claim publication edge. Its ids are observations, not canonical identity. */
+export function botChatOwnsWorkspace(): boolean {
+  const pane = host.state.focusedPaneId?.get?.()
 
-  if (focused !== undefined) {
-    return Boolean(focused)
+  const chatPane = pane === 'workspace' || pane?.startsWith('session-tile:')
+
+  if (pane?.startsWith('plugin-workspace:') || ($groupChatWorkspace.get() && !chatPane)) {
+    return false
   }
 
-  const active = host.state?.activeSessionId?.get?.()
+  if (host.state.focusedSessionWorkspace?.get?.()?.workspaceMode === 'bots') {
+    return true
+  }
 
-  return active === undefined ? $botChatFocused.get() : Boolean(active)
-}
+  const open = $openBotChat.get()
 
-/** A real bot chat owns the center. Cronjobs are BOT-scoped, so this — not
- *  mere Bot Mode visibility — is what may seat the Cronjobs tile: beside a
- *  group chat it would describe whichever profile the socket happens to be
- *  homed on. */
-export function botChatOwnsWorkspace(): boolean {
-  return $botsPaneVisible.get() && !$groupChatWorkspace.get() && Boolean($openBotChat.get() || sessionOwnsWorkspace())
+  if (!open) {
+    return false
+  }
+
+  const focused = host.state.focusedStoredSessionId?.get?.()
+  const owned = [open.openedSessionId, open.openedRegistryId].filter(Boolean)
+
+  return owned.length ? owned.includes(String(focused || '')) : !focused
 }
 
 /** An opened bot chat stops owning the center once focus leaves it (closed,
@@ -222,16 +229,12 @@ function useReconcileRosterOwner(
 
     if (selectionHydrated) {
       reconcileRosterSelection(roster, sourceSnapshot, allMeta)
-      const selected = selectedRosterBot(roster, $selectedRosterKey.get())
-
-      if ($botsPaneVisible.get() && !$groupChatWorkspace.get() && selected) {
-        setBotsWorkspaceOwner(botWorkspaceOwnerKey(selected), selected)
-      }
     }
   }, [data, error, selectionHydrated, roster, sourceSnapshot, allMeta])
 }
 
-export function BotsPane() {
+export function BotsPane({ embedded = false }: { embedded?: boolean }) {
+  const [expanded, setExpanded] = useState(true)
   const { t } = useI18n()
   const b = useBots()
   const { data, error, isLoading, refetch } = useRoster()
@@ -427,7 +430,9 @@ export function BotsPane() {
   const groupChatMembers = groupChatName ? groupChatMemberBots(groupChatName, roster, allMeta) : []
 
   if (shouldRenderGroupChatInPane(groupChatName) && groupChatMembers.length) {
-    return <GroupChatWorkspace group={groupChatName} members={groupChatMembers} origin={groupOpenOrigin(groupChatName)} />
+    return (
+      <GroupChatWorkspace group={groupChatName} members={groupChatMembers} origin={groupOpenOrigin(groupChatName)} />
+    )
   }
 
   const renderBotRow = (bot: RosterRow, keyPrefix = '') => (
@@ -445,29 +450,30 @@ export function BotsPane() {
   // Move up / down reorders Desktop rooms; gateway rooms keep recency order.
   const desktopGroupRows = sortedGroupRows.filter(row => !row.gateway)
 
-  const renderGroupRow = ({ gateway, ...row }: RosterGroupRow) => gateway ? (
-    <CanonicalGroupRow
-      active={groupChatName === gateway.key}
-      key={gateway.key}
-      onOpen={() => openGroupChat(bindGatewayGroupRoom(gateway), 'key')}
-      room={gateway}
-    />
-  ) : (
-    <RosterGroupRowView
-      active={groupChatName === row.name}
-      b={b}
-      group={row.name}
-      groupClarify={groupClarify}
-      groupNeedsYou={groupNeedsYou}
-      groupRooms={groupRooms}
-      key={`group:${row.name}`}
-      members={row.members}
-      onDisband={setDeletingGroup}
-      onNewSection={target => setSectionDialog({ group: target, mode: 'create' })}
-      onOpen={group => openGroupChat(group, 'name')}
-      sortedGroupRows={desktopGroupRows}
-    />
-  )
+  const renderGroupRow = ({ gateway, ...row }: RosterGroupRow) =>
+    gateway ? (
+      <CanonicalGroupRow
+        active={groupChatName === gateway.key}
+        key={gateway.key}
+        onOpen={() => openGroupChat(bindGatewayGroupRoom(gateway), 'key')}
+        room={gateway}
+      />
+    ) : (
+      <RosterGroupRowView
+        active={groupChatName === row.name}
+        b={b}
+        group={row.name}
+        groupClarify={groupClarify}
+        groupNeedsYou={groupNeedsYou}
+        groupRooms={groupRooms}
+        key={`group:${row.name}`}
+        members={row.members}
+        onDisband={setDeletingGroup}
+        onNewSection={target => setSectionDialog({ group: target, mode: 'create' })}
+        onOpen={group => openGroupChat(group, 'name')}
+        sortedGroupRows={desktopGroupRows}
+      />
+    )
 
   const { renderUserSections, renderGatewaySection, renderGroupChatSection, renderHiddenGatewaySection } =
     rosterSectionRenderers({
@@ -486,59 +492,72 @@ export function BotsPane() {
     })
 
   return (
-    <div className="flex h-full flex-col">
-      {renderRosterToolbar({
-        b,
-        activityToasts,
-        activeSourceRoster,
-        roster,
-        setCreateOpen,
-        setGroupCreateOpen,
-        setSectionDialog,
-        showRosterTools,
-        showRosterSearch,
-        showRosterFilters,
-        query,
-        setQuery,
-        activeFilterCount,
-        gatewayOptions,
-        rowKindFilter,
-        setRowKindFilter,
-        activityFilter,
-        setActivityFilter,
-        gatewayFilter,
-        setGatewayFilter
-      })}
-      {renderRosterContent({
-        b,
-        staleNotice,
-        isLoading,
-        initialRosterLoading,
-        listedCount: roster.length + gatewayRooms.length,
-        error,
-        gatewayUp,
-        refetch,
-        allBotsHidden,
-        hiddenExpanded,
-        rosterRows,
-        matchingHiddenBots,
-        query,
-        selectedGateway,
-        showGatewaySections,
-        sortedGroupRows,
-        gatewaySections,
-        showHiddenSection,
-        hiddenSectionRef,
-        hasRosterConstraint,
-        hiddenBots,
-        showHiddenRows,
-        hiddenGatewaySections,
-        renderBotRow,
-        renderGroupChatSection,
-        renderGatewaySection,
-        renderUserSections,
-        renderHiddenGatewaySection
-      })}
+    <div className={embedded ? 'flex min-h-0 shrink-0 flex-col pb-2' : 'flex h-full flex-col'}>
+      {embedded && (
+        <RowButton
+          aria-expanded={expanded}
+          className="flex w-full items-center gap-1 px-3 py-1.5 text-xs font-medium text-(--ui-text-tertiary)"
+          onClick={() => setExpanded(!expanded)}
+        >
+          <DisclosureCaret open={expanded} />
+          {t.common.bots}
+        </RowButton>
+      )}
+      <div className={embedded ? (expanded ? 'flex min-h-0 flex-col' : 'hidden') : 'flex min-h-0 flex-1 flex-col'}>
+        {renderRosterToolbar({
+          b,
+          activityToasts,
+          activeSourceRoster,
+          roster,
+          setCreateOpen,
+          setGroupCreateOpen,
+          setSectionDialog,
+          showRosterTools,
+          showRosterSearch,
+          showRosterFilters,
+          query,
+          setQuery,
+          activeFilterCount,
+          gatewayOptions,
+          rowKindFilter,
+          setRowKindFilter,
+          activityFilter,
+          setActivityFilter,
+          gatewayFilter,
+          setGatewayFilter
+        })}
+        {renderRosterContent({
+          embedded,
+          b,
+          staleNotice,
+          isLoading,
+          initialRosterLoading,
+          listedCount: roster.length + gatewayRooms.length,
+          error,
+          gatewayUp,
+          refetch,
+          allBotsHidden,
+          hiddenExpanded,
+          rosterRows,
+          matchingHiddenBots,
+          query,
+          selectedGateway,
+          showGatewaySections,
+          sortedGroupRows,
+          gatewaySections,
+          showHiddenSection,
+          hiddenSectionRef,
+          hasRosterConstraint,
+          hiddenBots,
+          showHiddenRows,
+          hiddenGatewaySections,
+          renderBotRow,
+          renderGroupChatSection,
+          renderGatewaySection,
+          renderUserSections,
+          renderHiddenGatewaySection
+        })}
+      </div>
       {renderRosterDialogs({
         b,
         t,
