@@ -31,3 +31,4 @@ One line per landed item.
 - 2026-11-15 G17c (DER-792): Peer proxy: Caddy JSON renderer, reload hook and unit (deploy assets) — alexderz/hermes-intercom@bf9c9cb5b9
 - 2026-11-15 G17d (DER-792): Remote agent instructions and README for peers — alexderz/hermes-intercom@2d2c2bdd0c
 - 2026-11-15 G17e (DER-792): End-to-end trial: a remote peer through the proxy into Bot Chat and back — alexderz/hermes-agent@8087c3691e
+- 2026-11-15 G17f (DER-792): Proxy access log and peer security notes (spike review) — alexderz/hermes-intercom@d01aa54714
