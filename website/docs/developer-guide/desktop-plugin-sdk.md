@@ -288,11 +288,27 @@ data: {
 `'top' | 'bottom' | 'left' | 'right' | 'center'`. Declare a `width`/`height` so
 the pane doesn't claim half the zone.
 
-Closing the only pane contributed by a plugin disables that plugin, which can
-be re-enabled from **Capabilities → Plugins**. When a plugin contributes multiple
-panes, closing one dismisses only that pane and leaves the plugin's other panes,
-commands, and middleware active. **Reset layout** restores dismissed contributed
-panes.
+By default, closing the only pane contributed by a plugin disables that plugin,
+which can be re-enabled from **Capabilities → Plugins**. When a plugin contributes
+multiple panes, closing one dismisses only that pane. A plugin with other surfaces
+(such as an inline sidebar section or composer middleware) can set
+`data.closeBehavior: 'dismiss'` on its pane to opt into pane-only Close even when
+it contributes just one pane. The plugin and its other contributions stay active;
+`host.revealPane(fullPaneId)` or **Reset layout** restores the dismissed pane.
+
+`data.collapsible: true` moves a pane out of the grid on narrow viewports and
+reveals it as an overlay rather than reserving conversation width. This does not
+rewrite its saved desktop size or arrangement. A collapsible `placement: 'main'`
+auxiliary pane is offered by the narrow right-sidebar toggle before Files; an
+explicit Files reveal still opens Files.
+
+A pane whose hidden state is only a desktop display preference can opt into
+`data.narrowRevealWhenHidden: true` (Files does this so its project chooser also
+remains reachable). An explicit narrow Show then reveals only that pane
+transiently, without changing desktop visibility or geometry. Hidden neighbors
+remain hidden, and hover, resize or re-registration does not reveal it. Leave this
+unset for availability-gated surfaces such as Review; it never enables an
+unregistered or disabled contribution.
 
 ### Pages and sidebar nav
 

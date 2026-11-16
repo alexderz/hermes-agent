@@ -58,11 +58,18 @@ export interface PaneSizing {
 interface PaneChrome extends PaneSizing {
   /** Leaves the grid on narrow viewports; revealed as an edge overlay. */
   collapsible?: boolean
+  /** Explicit narrow Show may bypass desktop display hiding for this pane.
+   *  Passive hover/resize still honors hiding; availability-gated panes must
+   *  not opt in. The reveal never changes the desktop visibility store. */
+  narrowRevealWhenHidden?: boolean
   /** Arrive minimized — a rail tab rather than an open zone. For a pane that
    *  docks to an edge this is the vertical strip; the user's first expand is
    *  persisted on the zone and wins from then on. Applied when the pane ENTERS
    *  the tree, not on every boot, so it is a default and not an invariant. */
   defaultCollapsed?: boolean
+  /** Close only this pane, retaining the plugin's other contributions. Absent:
+   *  multi-pane plugins dismiss; single-pane plugins keep their disable action. */
+  closeBehavior?: 'dismiss'
   /** Extra ids accepted from PANE_TOGGLE_REVEAL_EVENT (the real app's pane
    *  ids, e.g. `chat-sidebar` for `sessions`). */
   revealAliases?: string[]
@@ -139,6 +146,10 @@ interface PaneChrome extends PaneSizing {
 }
 
 export const paneChrome = (c: Contribution | undefined) => (c?.data ?? {}) as PaneChrome
+
+/** A workspace's auxiliary pane takes the narrow right-toggle over Files. */
+export const narrowWorkspacePane = (panes: readonly Contribution[]) =>
+  panes.find(pane => paneChrome(pane).placement === 'main' && paneChrome(pane).collapsible)
 
 /** Resolve a computed style length ("237px" / "none" / "auto") to px. */
 export function computedPx(value: string, fallback: number): number {
@@ -333,7 +344,13 @@ export function subtreeGone(node: LayoutNode, ctx: TrackContext): boolean {
     return false
   }
 
-  return !ids.some(id => paneChrome(ctx.paneFor(id)).placement === 'main')
+  // A collapsible main-placed tool becomes an overlay, not an empty main
+  // floor. Keep the floor only for actual, non-collapsible workspace surfaces.
+  return !ids.some(id => {
+    const chrome = paneChrome(ctx.paneFor(id))
+
+    return chrome.placement === 'main' && !chrome.collapsible
+  })
 }
 
 /**

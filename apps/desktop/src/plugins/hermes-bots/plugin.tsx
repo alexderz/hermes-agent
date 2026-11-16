@@ -483,6 +483,8 @@ export default {
           tabTitle: () => <LocalizedTabTitle select={t => t.cron.title} />,
           tabTitleText: () => translateNow('cron.title'),
           placement: 'main',
+          closeBehavior: 'dismiss',
+          collapsible: true,
           // Repair persisted layouts that stranded Cronjobs in the Bots tab strip.
           dock: {
             pane: 'workspace',

@@ -27,6 +27,10 @@ vi.mock('./avatar', async importOriginal => ({
 vi.mock('./relay', () => ({ startBotRelay: vi.fn(), stopBotRelay: vi.fn() }))
 vi.mock('./screen-autoraise', () => ({ startScreenAutoRaise: () => () => {} }))
 vi.mock('./session-sweep', () => ({ startHideSweepScheduler: vi.fn() }))
+vi.mock('@/contrib/plugins-store', async importOriginal => ({
+  ...(await importOriginal<object>()),
+  setPluginEnabled: vi.fn()
+}))
 vi.mock('./profile-ops', async importOriginal => ({
   ...(await importOriginal<object>()),
   mergeServerMeta: vi.fn(),
@@ -35,21 +39,46 @@ vi.mock('./profile-ops', async importOriginal => ({
 
 /* eslint-disable no-restricted-imports -- Integration harness drives host inputs;
    production plugin modules still use only the SDK. */
+import { useStore } from '@nanostores/react'
+
 import { ChatSidebar } from '@/app/chat/sidebar'
 import { openSession } from '@/app/open-session'
-import { group, split } from '@/components/pane-shell/tree/model'
-import { $layoutTree, noteActiveTreeGroup, setTreeSideCollapsed } from '@/components/pane-shell/tree/store'
+import { TitlebarControls } from '@/app/shell/titlebar-controls'
+import { allPaneIds, findGroupOfPane, group, mirrorTreeHorizontal, split } from '@/components/pane-shell/tree/model'
+import { NarrowOverlays } from '@/components/pane-shell/tree/renderer/narrow-overlays'
+import { TreeNode } from '@/components/pane-shell/tree/renderer/tree-node'
+import {
+  $activePresetId,
+  $collapsedTreeSides,
+  $dismissedPanes,
+  $layoutTree,
+  $narrowViewport,
+  closeTreePane,
+  noteActiveTreeGroup,
+  setTreeSideCollapsed,
+  setTreeSplitWeights
+} from '@/components/pane-shell/tree/store'
 import { $workspaceMode, $workspaceNewSessionTarget, setWorkspaceScope } from '@/components/pane-shell/workspace-scope'
 import { SidebarProvider } from '@/components/ui/sidebar'
+import { setPluginEnabled } from '@/contrib/plugins-store'
 import { registry } from '@/contrib/registry'
 import type { Contribution } from '@/contrib/types'
-import { createPluginI18n } from '@/i18n'
+import { createPluginI18n, I18nProvider } from '@/i18n'
+import { LAYOUT_KEYS } from '@/lib/layout-persistence'
 import type { PluginContext } from '@/sdk'
-import { $sidebarProjectFilter, $sidebarShowArchived, setSidebarAgentsGrouped } from '@/store/layout'
+import {
+  $sidebarProjectFilter,
+  $sidebarShowArchived,
+  setFileBrowserOpen,
+  setSidebarAgentsGrouped,
+  toggleRightSide
+} from '@/store/layout'
+import { $paneStates, setPaneWidthOverride } from '@/store/panes'
 import { $projectScope, ALL_PROJECTS } from '@/store/project-scope'
 import { $projectTree } from '@/store/projects'
 import { $activeSessionId, $gatewayState, $selectedStoredSessionId, $sessions } from '@/store/session'
 import { $botChatScopes, $sessionTiles } from '@/store/session-states'
+import { stubMenuDomApis, stubResizeObserver } from '@/test/jsdom'
 import { makeSessionInfo } from '@/test/session-info'
 /* eslint-enable no-restricted-imports */
 
@@ -76,7 +105,7 @@ function registerPlugin() {
     }),
     onDispose: (fn: () => void) => owned.push(fn),
     register: (item: Contribution) => {
-      const dispose = registry.register({ ...item, id: `hermes-bots:${item.id}`, source: 'hermes-bots' })
+      const dispose = registry.register({ ...item, id: `hermes-bots:${item.id}`, source: 'plugin:hermes-bots' })
       owned.push(dispose)
 
       return dispose
@@ -161,6 +190,9 @@ async function canonicalPrimaryLanding(profile: string, storedId: string, hydrat
 
 beforeEach(() => {
   vi.clearAllMocks()
+  $dismissedPanes.set(new Set())
+  $collapsedTreeSides.set(new Set())
+  $narrowViewport.set(false)
   $botChatScopes.set({})
   $activeSessionId.set(null)
   $gatewayState.set('closed')
@@ -194,6 +226,9 @@ beforeEach(() => {
 })
 afterEach(() => {
   cleanup()
+  $narrowViewport.set(false)
+  vi.unstubAllGlobals()
+  delete window.document.documentElement.dataset.hermesDesktopHost
 
   for (const name of groupChatMainTabs.keys()) {
     closeGroupChatMainTab(name)
@@ -287,6 +322,197 @@ it('registers the real roster in Sessions, including empty, search, archive and 
   })
   expect(await screen.findByText('Bravo')).toBeTruthy()
 })
+
+it('DER-794 closes the real single Routines pane without disabling the inline roster or bot owner', async () => {
+  $sessionTiles.set([])
+  registerPlugin()
+  const { landed } = await canonicalPrimaryLanding('bravo', 'bot-chat')
+  const opening = openRosterBot(bot)
+  await landed
+  await expect(opening).resolves.toBe(true)
+  await settle()
+  const { host, SIDEBAR_SECTIONS_AREA } = await import('@hermes/plugin-sdk')
+  expect(
+    registry
+      .getArea('panes')
+      .filter(item => item.source === 'plugin:hermes-bots')
+      .map(item => item.id)
+  ).toEqual(['hermes-bots:routines'])
+  const roster = registry.getArea(SIDEBAR_SECTIONS_AREA).find(item => item.id === 'hermes-bots:roster')
+  expect(roster?.render).toBeTypeOf('function')
+  expect(host.state.focusedSessionOwner.get()).toMatchObject({ connectionId: 'local', profile: 'bravo' })
+
+  act(() => closeTreePane('hermes-bots:routines'))
+  await settle()
+
+  expect(setPluginEnabled).not.toHaveBeenCalled()
+  expect($dismissedPanes.get()).toContain('hermes-bots:routines')
+  expect(registry.getArea(SIDEBAR_SECTIONS_AREA)).toContain(roster)
+  expect(routines()).toBeTruthy()
+  expect($workspaceMode.get()).toBe('bots')
+  expect(host.state.focusedSessionOwner.get()).toMatchObject({ connectionId: 'local', profile: 'bravo' })
+  expect($sessionTiles.get()).toEqual([])
+})
+
+function LiveLayout() {
+  const tree = useStore($layoutTree)
+
+  return tree && <TreeNode node={tree} root rootRow />
+}
+
+it.each([
+  { cold: true, flipped: false },
+  { cold: true, flipped: true },
+  { cold: false, flipped: true }
+])(
+  'DER-794 projects expanded Jobs off the chat without resetting geometry (cold=$cold flipped=$flipped)',
+  async ({ cold, flipped }) => {
+    stubResizeObserver()
+    stubMenuDomApis()
+    vi.stubGlobal('CSS', { ...globalThis.CSS, escape: (value: string) => value })
+    window.document.documentElement.dataset.hermesDesktopHost = 'browser'
+    $sessionTiles.set([])
+    registerPlugin()
+    const { landed } = await canonicalPrimaryLanding('bravo', `layout-${cold}-${flipped}`)
+    const opening = openRosterBot(bot)
+    await landed
+    await expect(opening).resolves.toBe(true)
+    await settle()
+    disposers.push(
+      registry.registerMany([
+        {
+          area: 'panes',
+          id: 'workspace',
+          data: { placement: 'main', uncloseable: true },
+          render: () => <div>Conversation</div>
+        },
+        {
+          area: 'panes',
+          id: 'sessions',
+          data: { placement: 'left', collapsible: true, revealAliases: ['chat-sidebar'] },
+          render: () => <div>Navigation</div>
+        },
+        {
+          area: 'panes',
+          id: 'files',
+          data: { placement: 'right', collapsible: true, revealAliases: ['file-browser'] },
+          render: () => <div>Files</div>
+        }
+      ])
+    )
+
+    const saved = split(
+      'row',
+      [
+        group(['sessions'], { id: 'navigation', active: 'sessions' }),
+        group(['workspace'], { id: 'conversation', active: 'workspace' }),
+        group(['hermes-bots:routines'], { id: 'jobs', active: 'hermes-bots:routines', minimized: false })
+      ],
+      [1, 2, 7]
+    )
+
+    $layoutTree.set(flipped ? mirrorTreeHorizontal(saved) : saved)
+    const root = $layoutTree.get()!
+
+    if (root.type !== 'split') {
+      throw new Error('Expected split')
+    }
+
+    setTreeSplitWeights(root.id, root.weights)
+    $activePresetId.set('custom')
+    setPaneWidthOverride('hermes-bots:routines', 620)
+
+    const snapshot = () => ({
+      tree: $layoutTree.get(),
+      panes: $paneStates.get(),
+      preset: $activePresetId.get(),
+      raw: window.localStorage.getItem(LAYOUT_KEYS.tree)
+    })
+
+    const desktop = structuredClone(snapshot())
+    $narrowViewport.set(cold)
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <I18nProvider configClient={null} initialLocale="en">
+            <TitlebarControls onOpenSettings={() => {}} />
+            <LiveLayout />
+            <NarrowOverlays />
+          </I18nProvider>
+        </MemoryRouter>
+      </QueryClientProvider>
+    )
+
+    if (!cold) {
+      expect(globalThis.document.querySelector('[data-tree-group="jobs"]')).not.toBeNull()
+      act(() => $narrowViewport.set(true))
+    }
+
+    const splitElement = globalThis.document.querySelector(`[data-tree-split="${root.id}"]`)!
+    const jobsIndex = root.children.findIndex(child => child.id === 'jobs')
+    expect((splitElement.children[jobsIndex] as HTMLElement).style.display).toBe('none')
+    expect(globalThis.document.querySelector('[data-tree-group="jobs"]')).toBeNull()
+    expect(globalThis.document.querySelector('[data-tree-group="conversation"]')).not.toBeNull()
+    expect(globalThis.document.querySelector('[data-narrow-overlay]')).toBeNull()
+    expect(screen.queryByText('Navigation')).toBeNull()
+    expect(snapshot()).toEqual(desktop)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show right sidebar' }))
+    expect(globalThis.document.querySelector('[data-narrow-overlay="hermes-bots:routines"]')).not.toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Hide right sidebar' }))
+    expect(globalThis.document.querySelector('[data-narrow-overlay]')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Show right sidebar' }))
+    expect(globalThis.document.querySelector('[data-narrow-overlay="hermes-bots:routines"]')).not.toBeNull()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(globalThis.document.querySelector('[data-narrow-overlay]')).toBeNull()
+    expect(snapshot()).toEqual(desktop)
+    act(() => $narrowViewport.set(false))
+    expect(globalThis.document.querySelector('[data-tree-group="jobs"]')).not.toBeNull()
+    expect(snapshot()).toEqual(desktop)
+    act(() => $narrowViewport.set(true))
+    // The shared keybind/native toggle must reach the same workspace tool;
+    // explicit Files reveal must still reach Files, not be hijacked by Jobs.
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
+    )
+    act(() => toggleRightSide())
+    expect(globalThis.document.querySelector('[data-narrow-overlay="hermes-bots:routines"]')).not.toBeNull()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    act(() => setFileBrowserOpen(true))
+    expect(globalThis.document.querySelector('[data-narrow-overlay="files"]')).not.toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Hide right sidebar' }))
+    expect(globalThis.document.querySelector('[data-narrow-overlay]')).toBeNull()
+
+    // Close remains recoverable without switching profiles or resetting a layout.
+    act(() => {
+      closeTreePane('hermes-bots:routines')
+      $narrowViewport.set(true)
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Show right sidebar' }))
+    expect(globalThis.document.querySelector('[data-narrow-overlay="hermes-bots:routines"]')).not.toBeNull()
+    expect($dismissedPanes.get()).not.toContain('hermes-bots:routines')
+    expect(allPaneIds($layoutTree.get()!)).toContain('hermes-bots:routines')
+    expect($workspaceMode.get()).toBe('bots')
+    expect($sessionTiles.get()).toEqual([])
+    act(() => openSession('ordinary', () => $selectedStoredSessionId.set('ordinary')))
+    await settle()
+    expect($workspaceMode.get()).toBe('sessions')
+    expect(routines()).toBeUndefined()
+    expect(globalThis.document.querySelector('[data-narrow-overlay="hermes-bots:routines"]')).toBeNull()
+    expect($activePresetId.get()).toBe('custom')
+    expect(findGroupOfPane($layoutTree.get()!, 'workspace')?.id).toBe('conversation')
+    const returned = await canonicalPrimaryLanding('bravo', `return-${cold}-${flipped}`)
+    const returning = openRosterBot(bot)
+    await returned.landed
+    await expect(returning).resolves.toBe(true)
+    await settle()
+    expect(routines()).toBeTruthy()
+    expect(globalThis.document.querySelector('[data-narrow-overlay]')).toBeNull()
+    expect($activePresetId.get()).toBe('custom')
+  }
+)
 
 it('keeps group workspaces out of Routines, including sidebar focus, and ordinary focus releases group routing', async () => {
   registerPlugin()

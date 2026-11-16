@@ -1,15 +1,27 @@
-import { act, cleanup, fireEvent, render } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { MemoryRouter } from 'react-router'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { TitlebarControls } from '@/app/shell/titlebar-controls'
 import { PANE_TOGGLE_REVEAL_EVENT } from '@/components/pane-shell'
 import { $narrowOverlayPaneIds } from '@/components/pane-shell/narrow-overlay-state'
 import { registry } from '@/contrib/registry'
+import { I18nProvider } from '@/i18n'
+import { LAYOUT_KEYS } from '@/lib/layout-persistence'
 import { $paneStates, setPaneWidthOverride } from '@/store/panes'
 import { $connection } from '@/store/session'
 import { stubResizeObserver } from '@/test/jsdom'
 
-import { group, split } from '../model'
-import { $hiddenTreePanes, $layoutTree, $narrowViewport, declareDefaultTree } from '../store'
+import { group, removePane, split } from '../model'
+import {
+  $activePresetId,
+  $collapsedTreeSides,
+  $hiddenTreePanes,
+  $layoutTree,
+  $narrowViewport,
+  declareDefaultTree,
+  persistTree
+} from '../store'
 
 import { NarrowOverlays, narrowOverlayWidth } from './narrow-overlays'
 
@@ -72,7 +84,8 @@ const revealPane = (id: string) => {
   })
 }
 
-const overlayTab = (paneId: string) => document.querySelector<HTMLElement>(`[data-narrow-overlay-tab="${paneId}"]`)
+const overlayTab = (paneId: string) =>
+  globalThis.document.querySelector<HTMLElement>(`[data-narrow-overlay-tab="${paneId}"]`)
 
 // The page the browser-hosted Desktop serves (its bridge writes this marker).
 const asBrowserHost = () => {
@@ -109,12 +122,158 @@ describe('narrow overlay in native Desktop', () => {
     )
     expect(queryByTestId('bots-body')).toBeTruthy()
 
-    act(() => window.dispatchEvent(new CustomEvent(PANE_TOGGLE_REVEAL_EVENT, { detail: { id: 'bots', mode: 'close' } })))
+    act(() =>
+      window.dispatchEvent(new CustomEvent(PANE_TOGGLE_REVEAL_EVENT, { detail: { id: 'bots', mode: 'close' } }))
+    )
     expect(queryByTestId('bots-body')).toBeNull()
   })
 })
 
 describe('narrow overlay of a stacked zone', () => {
+  it('DER-794 explicitly shows toggle-hidden Files without changing desktop state or revealing unavailable neighbors', () => {
+    asBrowserHost()
+    registerPane(
+      'files',
+      'Files',
+      {
+        collapsible: true,
+        placement: 'right',
+        width: '237px',
+        revealAliases: ['file-browser'],
+        narrowRevealWhenHidden: true
+      },
+      'file tree'
+    )
+    registerPane('review', 'Review', { collapsible: true, placement: 'right' }, 'unavailable review')
+    disposers.push(
+      registry.register({
+        id: 'disabled:pane',
+        area: 'panes',
+        source: 'plugin:disabled',
+        enabled: false,
+        data: { collapsible: true, placement: 'right', narrowRevealWhenHidden: true },
+        render: () => <div>Disabled plugin</div>
+      })
+    )
+    $layoutTree.set(
+      split(
+        'row',
+        [
+          group(['sessions', 'bots'], { id: 'nav' }),
+          group(['workspace'], { id: 'main' }),
+          group(['files', 'review', 'disabled:pane'], { id: 'tools', active: 'review', minimized: true }),
+          group(['jobs'], { id: 'jobs' })
+        ],
+        [1, 5, 2, 1]
+      )
+    )
+    $hiddenTreePanes.set(new Set(['files', 'review']))
+    $collapsedTreeSides.set(new Set(['right']))
+    $activePresetId.set('focus')
+    setPaneWidthOverride('files', 321)
+    persistTree()
+
+    const snapshot = () => ({
+      tree: $layoutTree.get(),
+      hidden: $hiddenTreePanes.get(),
+      sides: $collapsedTreeSides.get(),
+      panes: $paneStates.get(),
+      preset: $activePresetId.get(),
+      raw: window.localStorage.getItem(LAYOUT_KEYS.tree)
+    })
+
+    const desktop = structuredClone(snapshot())
+
+    const view = render(
+      <MemoryRouter>
+        <I18nProvider configClient={null} initialLocale="en">
+          <TitlebarControls onOpenSettings={() => {}} />
+          <NarrowOverlays />
+        </I18nProvider>
+      </MemoryRouter>
+    )
+
+    const overlay = () => globalThis.document.querySelector('[data-narrow-overlay]')
+
+    const hoverEdges = () =>
+      [...view.container.querySelectorAll('div')]
+        .filter(element => element.classList.contains('w-1.5'))
+        .forEach(element => fireEvent.mouseEnter(element))
+
+    expect(overlay()).toBeNull()
+    hoverEdges()
+    expect(screen.queryByText('file tree')).toBeNull()
+    fireEvent.keyDown(window, { key: 'Escape' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show right sidebar' }))
+    expect(screen.getByText('file tree')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Hide right sidebar' }).getAttribute('aria-expanded')).toBe('true')
+    expect(screen.queryByText('unavailable review')).toBeNull()
+    expect(overlayTab('review')).toBeNull()
+    expect(snapshot()).toEqual(desktop)
+    const files = registry.getArea('panes').find(pane => pane.id === 'files')!
+    expect(
+      narrowOverlayWidth(
+        {
+          paneFor: id => registry.getArea('panes').find(pane => pane.id === id),
+          paneGone: () => false,
+          overrides: $paneStates.get()
+        },
+        $layoutTree.get(),
+        files
+      )
+    ).toBe('321px')
+    fireEvent.click(screen.getByRole('button', { name: 'Hide right sidebar' }))
+    expect(overlay()).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Show right sidebar' }))
+    expect(screen.getByText('file tree')).toBeTruthy()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    revealPane('review')
+    expect(overlay()).toBeNull()
+    revealPane('disabled:pane')
+    expect(overlay()).toBeNull()
+
+    act(() => registerPane('jobs', 'Jobs', { placement: 'main', collapsible: true }, 'scheduled jobs'))
+    fireEvent.click(screen.getByRole('button', { name: 'Show right sidebar' }))
+    expect(screen.getByText('scheduled jobs')).toBeTruthy()
+    revealPane('file-browser')
+    expect(screen.getByText('file tree')).toBeTruthy()
+    expect(screen.queryByText('scheduled jobs')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Hide right sidebar' }))
+    expect(overlay()).toBeNull()
+    expect(snapshot()).toEqual(desktop)
+
+    act(() => {
+      $narrowViewport.set(false)
+    })
+    act(() => {
+      $narrowViewport.set(true)
+    })
+    act(() =>
+      registerPane(
+        'files',
+        'Files',
+        { collapsible: true, placement: 'right', narrowRevealWhenHidden: true, revealAliases: ['file-browser'] },
+        'file tree'
+      )
+    )
+    expect(overlay()).toBeNull()
+    hoverEdges()
+    expect(screen.queryByText('file tree')).toBeNull()
+    expect(screen.queryByText('unavailable review')).toBeNull()
+    expect(snapshot()).toEqual(desktop)
+    fireEvent.keyDown(window, { key: 'Escape' })
+    // A dismissed Files slot is not an excuse to rewrite the desktop tree.
+    act(() => $layoutTree.set(removePane($layoutTree.get()!, 'files')))
+    persistTree()
+    const withoutSlot = structuredClone(snapshot())
+    revealPane('file-browser')
+    expect(screen.getByText('file tree')).toBeTruthy()
+    expect(snapshot()).toEqual(withoutSlot)
+    fireEvent.click(screen.getByRole('button', { name: 'Hide right sidebar' }))
+    expect(overlay()).toBeNull()
+  })
+
   it('dismisses an outside tap while preserving inside controls and cancelled gestures', () => {
     asBrowserHost()
     render(<NarrowOverlays />)
@@ -251,7 +410,7 @@ describe('narrow overlay of a stacked zone', () => {
 
     // Controls rect = { x: 0, y: 0, width: 24 + 58, height: 34 }; the
     // reservation is the overlap's bottom edge, so the strip starts below it.
-    const overlay = document.querySelector<HTMLElement>('[data-narrow-overlay="sessions"]')
+    const overlay = globalThis.document.querySelector<HTMLElement>('[data-narrow-overlay="sessions"]')
     expect(overlay?.style.paddingTop).toBe('34px')
     // The reserved band stays a window-drag target, as in a docked TreeGroup.
     const dragSpacer = overlay?.querySelector<HTMLElement>('[aria-hidden="true"]')

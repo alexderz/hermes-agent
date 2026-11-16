@@ -7,6 +7,7 @@ import { hudTargetSessionId } from '@/app/hud/handoff'
 import { PANE_TOGGLE_REVEAL_EVENT } from '@/components/pane-shell'
 import { toggleLayoutEditMode } from '@/components/pane-shell/edit-mode'
 import { $narrowOverlayPaneIds } from '@/components/pane-shell/narrow-overlay-state'
+import { narrowWorkspacePane, paneChrome } from '@/components/pane-shell/tree/renderer/track-model'
 import { $narrowViewport } from '@/components/pane-shell/tree/store'
 import { resetLayoutTree } from '@/components/pane-shell/tree/store'
 import { Badge } from '@/components/ui/badge'
@@ -160,9 +161,18 @@ function useSidebarEdges(): { left: SidebarEdge; right: SidebarEdge } {
   const leftSideOpen = useStore($leftSideOpen)
   const narrow = useStore($narrowViewport)
   const overlayPanes = useStore($narrowOverlayPaneIds)
+  const panes = useContributions('panes')
   const browserHost = hostHas('narrowOverlayChrome')
   const overlayChrome = narrow && browserHost
-  const rightOverlayId = overlayPanes.has(REVIEW_PANE_ID) ? REVIEW_PANE_ID : FILE_BROWSER_PANE_ID
+
+  // Hide what is actually showing; otherwise offer the workspace's own tool
+  // pane before Files. Registration follows ownership, including primary chats.
+  const rightOverlayId =
+    panes.find(
+      pane => overlayPanes.has(pane.id) && paneChrome(pane).collapsible && paneChrome(pane).placement !== 'left'
+    )?.id ??
+    narrowWorkspacePane(panes)?.id ??
+    (overlayPanes.has(REVIEW_PANE_ID) ? REVIEW_PANE_ID : FILE_BROWSER_PANE_ID)
 
   const edge = (id: string, dockedOpen: boolean, toggleDocked: () => void): SidebarEdge => {
     const open = overlayChrome ? overlayPanes.has(id) : dockedOpen

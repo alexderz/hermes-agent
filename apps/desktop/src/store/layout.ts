@@ -3,6 +3,7 @@ import { atom, computed, type ReadableAtom, type WritableAtom } from 'nanostores
 import { SIDEBAR_COLLAPSE_MEDIA_QUERY } from '@/app/layout-constants'
 import { PANE_TOGGLE_REVEAL_EVENT } from '@/components/pane-shell'
 import { allPaneIds, type GroupNode } from '@/components/pane-shell/tree/model'
+import { narrowWorkspacePane } from '@/components/pane-shell/tree/renderer/track-model'
 import {
   $collapsedTreeSides,
   $hiddenTreePanes,
@@ -18,6 +19,7 @@ import {
   shownPanesInGroup,
   type TreeSide
 } from '@/components/pane-shell/tree/store'
+import { registry } from '@/contrib/registry'
 import { matchesQuery } from '@/hooks/use-media-query'
 import { connectionScopedAtom } from '@/lib/connection-scoped'
 import { LAYOUT_KEYS } from '@/lib/layout-persistence'
@@ -685,7 +687,7 @@ export function setFileBrowserOpen(open: boolean) {
 // minimize, which keeps its tab on a persistent rail so the toggle round-trips
 // exactly like the zone chevron.
 export function toggleRightSide() {
-  if (revealNarrowPane(FILE_BROWSER_PANE_ID, 'toggle')) {
+  if (revealNarrowPane(narrowWorkspacePane(registry.getArea('panes'))?.id ?? FILE_BROWSER_PANE_ID, 'toggle')) {
     return
   }
 

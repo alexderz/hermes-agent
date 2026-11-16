@@ -79,6 +79,7 @@ export function TreeEditBar() {
       <header
         className="flex shrink-0 cursor-grab select-none items-start justify-between gap-3 px-4 pb-2 pt-3 active:cursor-grabbing"
         onPointerDown={startMove}
+        style={{ touchAction: 'none' }}
       >
         <div className="min-w-0">
           <h2 className="text-sm font-semibold text-foreground">{t.zones.editTitle}</h2>

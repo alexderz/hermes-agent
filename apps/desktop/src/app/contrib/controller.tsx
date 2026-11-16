@@ -262,6 +262,9 @@ registry.registerMany([
     data: {
       placement: 'right',
       collapsible: true,
+      // Explicit phone Show may offer Files (or its project chooser) without
+      // changing desktop visibility. Review's workspace gate remains binding.
+      narrowRevealWhenHidden: true,
       dock: { pane: 'workspace', pos: 'right' },
       revealAliases: ['file-browser'],
       width: FILE_BROWSER_DEFAULT_WIDTH,

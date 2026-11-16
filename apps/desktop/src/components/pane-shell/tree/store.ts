@@ -47,6 +47,7 @@ import {
 import { isTreePaneParked } from './parked-panes'
 import { FLOATING_PLACEMENT } from './renderer/floating-rect'
 import { tabStripVisibleForZone } from './renderer/strip-visibility'
+import { paneChrome } from './renderer/track-model'
 
 // v2: v1 trees were saved against placeholder panes with index-order zone
 // assignment (chat could land in a corner cell). Retire them wholesale.
@@ -1022,15 +1023,13 @@ export function closeTreePane(paneId: string) {
   }
 
   const panes = registry.getArea('panes')
-  const source = panes.find(c => c.id === paneId)?.source
+  const pane = panes.find(c => c.id === paneId)
+  const source = pane?.source
 
   if (source?.startsWith('plugin:')) {
-    // A plugin may own several independent panes. Closing one of them must not
-    // unload every contribution from that plugin (for example, closing Bot
-    // Mode's Cronjobs pane must leave its Bots roster and composer middleware
-    // alive). Dismiss just that pane; Layout reset remains the explicit way to
-    // restore dismissed contributed panes.
-    if (panes.filter(c => c.source === source).length > 1) {
+    // Pane count alone cannot describe plugin lifetime: a single tool pane
+    // can accompany an inline roster, ownership and composer middleware.
+    if (paneChrome(pane).closeBehavior === 'dismiss' || panes.filter(c => c.source === source).length > 1) {
       dismissTreePane(paneId)
 
       return

@@ -105,6 +105,39 @@ afterEach(() => {
 })
 
 describe('zone editor split preview', () => {
+  it('reserves touch on the canvas and its direct resizer handles', () => {
+    const canvas = mount()
+    const resizer = canvas.querySelector('[data-resizer]')
+    expect(canvas.style.touchAction).toBe('none')
+    expect(resizer).not.toBeNull()
+    expect(canvas.contains(resizer)).toBe(true)
+  })
+
+  it('clears a cancelled preview without splitting or later resurrecting it', () => {
+    const canvas = mount()
+    fireEvent.pointerMove(canvas, { clientX: 500, clientY: 500 })
+    flushFrames()
+    expect(previewLine(canvas)).not.toBeNull()
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 500, clientY: 500 })
+    fireEvent.pointerMove(canvas, { clientX: 501, clientY: 500 })
+    fireEvent.pointerCancel(window, { clientX: 501, clientY: 500 })
+    flushFrames()
+    fireEvent.pointerUp(window, { clientX: 501, clientY: 500 })
+    expect(previewLine(canvas)).toBeNull()
+    expect(zoneLabels(canvas)).toHaveLength(3)
+  })
+
+  it('clears a cancelled selection without offering a merge', () => {
+    const canvas = mount()
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 100, clientY: 100 })
+    fireEvent.pointerMove(window, { clientX: 800, clientY: 800 })
+    fireEvent.pointerCancel(window, { clientX: 800, clientY: 800 })
+    fireEvent.pointerUp(window, { clientX: 800, clientY: 800 })
+    expect(canvas.querySelector('.pointer-events-none.absolute.border')).toBeNull()
+    expect(canvas.querySelector('button')).toBeNull()
+    expect(zoneLabels(canvas)).toHaveLength(3)
+  })
+
   it('coalesces pointer moves to one preview update per frame', () => {
     const canvas = mount()
     const layout = $layoutTree.get()

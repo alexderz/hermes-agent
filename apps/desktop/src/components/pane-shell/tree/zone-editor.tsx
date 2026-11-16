@@ -303,28 +303,41 @@ export function ZoneEditor() {
       setSelection(mergeClosureIndices(model, picked))
     }
 
-    startPointerDrag(onMove, ev => {
-      coalesceRef.current?.finish()
-      setSelectBox(null)
+    startPointerDrag(
+      onMove,
+      ev => {
+        coalesceRef.current?.finish()
+        setSelectBox(null)
 
-      if (!dragged) {
-        // Plain click: split at the previewed line. Read the ref — Shift may
-        // have flipped it while the button was down, after this closure was made.
-        const preview = previewRef.current
+        if (!dragged) {
+          // Plain click: split at the previewed line. Read the ref — Shift may
+          // have flipped it while the button was down, after this closure was made.
+          const preview = previewRef.current
 
-        if (preview) {
-          setModel(m => splitZone(m, preview.zoneIndex, preview.position, preview.orientation))
-          publishPreview(null)
+          if (preview) {
+            setModel(m => splitZone(m, preview.zoneIndex, preview.position, preview.orientation))
+            publishPreview(null)
+          }
+
+          setSelection([])
+
+          return
         }
 
+        const rect = canvasRef.current!.getBoundingClientRect()
+        setMergeAt({ x: ev.clientX - rect.x, y: ev.clientY - rect.y })
+      },
+      () => {
+        generationRef.current += 1
+        insideRef.current = false
+        lastPointRef.current = null
+        coalesceRef.current?.finish()
+        publishPreview(null)
+        setSelectBox(null)
         setSelection([])
-
-        return
+        setMergeAt(null)
       }
-
-      const rect = canvasRef.current!.getBoundingClientRect()
-      setMergeAt({ x: ev.clientX - rect.x, y: ev.clientY - rect.y })
-    })
+    )
   }
 
   const startResizerDrag = (index: number, e: ReactPointerEvent<HTMLDivElement>) => {
@@ -448,6 +461,7 @@ export function ZoneEditor() {
         onPointerLeave={onCanvasPointerLeave}
         onPointerMove={onCanvasPointerMove}
         ref={canvasRef}
+        style={{ touchAction: 'none' }}
       >
         {zones.map(zone => {
           const selected = selection.includes(zone.index)

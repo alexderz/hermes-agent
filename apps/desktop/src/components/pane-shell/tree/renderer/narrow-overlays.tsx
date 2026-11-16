@@ -26,7 +26,7 @@ import { useWindowControlsOverlap } from '../../geometry'
 import { $narrowOverlayPaneIds } from '../../narrow-overlay-state'
 import { NO_PANE_GROUP } from '../../pane-visibility'
 import { allPaneIds, findGroupOfPane, type LayoutNode } from '../model'
-import { $hiddenTreePanes, $layoutTree, $narrowViewport } from '../store'
+import { $hiddenTreePanes, $layoutTree, $narrowViewport, revealTreePane } from '../store'
 
 import { KeepAlivePaneSlot, useStablePaneHosts } from './keep-alive-panes'
 import { fixedTrackSize, paneChrome, type TrackContext } from './track-model'
@@ -44,7 +44,8 @@ export function narrowOverlayWidth(ctx: TrackContext, tree: LayoutNode | null, r
   }
 
   const zone = findGroupOfPane(tree, revealed.id)
-  const track = zone ? fixedTrackSize(zone, 'row', ctx) : null
+  // A phone reveal expands only the overlay, not the saved desktop zone.
+  const track = zone ? fixedTrackSize({ ...zone, minimized: false }, 'row', ctx) : null
 
   return track ?? paneChrome(revealed).width ?? '18rem'
 }
@@ -88,15 +89,36 @@ export function NarrowOverlays() {
 
   const inTree = useMemo(() => new Set(tree ? allPaneIds(tree) : []), [tree])
 
-  const collapsibles = useMemo(
-    // Solo adopts sidebar panes without their surrounding sidebar chrome.
-    // Suppress every reveal path while those panes are intentionally hidden.
-    () => (solo ? [] : panes.filter(p => paneChrome(p).collapsible && inTree.has(p.id) && !hiddenPanes.has(p.id))),
-    [solo, panes, inTree, hiddenPanes]
+  const revealable = useMemo(
+    // A dismissed pane still answers an explicit Show; it must not return
+    // merely because the viewport narrowed or a contribution re-registered.
+    () =>
+      solo
+        ? []
+        : panes.filter(
+            p => paneChrome(p).collapsible && (!hiddenPanes.has(p.id) || paneChrome(p).narrowRevealWhenHidden)
+          ),
+    [solo, panes, hiddenPanes]
   )
 
-  const collapsiblesRef = useRef(collapsibles)
-  collapsiblesRef.current = collapsibles
+  const collapsibles = useMemo(
+    () =>
+      revealable.filter(
+        p =>
+          (inTree.has(p.id) && !hiddenPanes.has(p.id)) ||
+          (reveal?.pinned && reveal.id === p.id && paneChrome(p).narrowRevealWhenHidden)
+      ),
+    [revealable, inTree, hiddenPanes, reveal]
+  )
+
+  const collapsiblesRef = useRef(revealable)
+  collapsiblesRef.current = revealable
+
+  useEffect(() => {
+    if (reveal && !collapsibles.some(p => p.id === reveal.id)) {
+      setReveal(null)
+    }
+  }, [collapsibles, reveal])
 
   useEffect(() => {
     const active = narrow && !solo && reveal ? collapsibles.find(p => p.id === reveal.id) : undefined
@@ -133,6 +155,17 @@ export function NarrowOverlays() {
       // `open`/`close` are explicit intents (programmatic reveal, titlebar show);
       // `toggle` (default) is the ⌘B/⌘G flip.
       const mode = detail?.mode ?? 'toggle'
+
+      if (mode !== 'close') {
+        const currentTree = $layoutTree.get()
+
+        // Recover Close only on explicit intent. Display-only overlays can
+        // also render without a saved slot, so they need no desktop adoption.
+        if (currentTree && !findGroupOfPane(currentTree, match.id) && !paneChrome(match).narrowRevealWhenHidden) {
+          revealTreePane(match.id)
+        }
+      }
+
       setReveal(current => {
         if (mode === 'open') {
           return { id: match.id, pinned: true }
@@ -142,7 +175,9 @@ export function NarrowOverlays() {
           // The browser host's titlebar Hide names the zone (its alias) while a
           // zone mate may be showing; native close names one pane, as on main.
           const currentTree = $layoutTree.get()
-          const targetZone = currentTree && hostHas('narrowOverlayChrome') ? findGroupOfPane(currentTree, match.id) : null
+
+          const targetZone =
+            currentTree && hostHas('narrowOverlayChrome') ? findGroupOfPane(currentTree, match.id) : null
 
           return current && (current.id === match.id || targetZone?.panes.includes(current.id)) ? null : current
         }
@@ -201,7 +236,11 @@ export function NarrowOverlays() {
     return shown.length > 0 ? shown : [revealed]
   })()
 
-  const tabKeyboardProps = usePaneTabKeyboard(zonePanes.map(pane => pane.id), revealed?.id ?? '', overlayRef)
+  const tabKeyboardProps = usePaneTabKeyboard(
+    zonePanes.map(pane => pane.id),
+    revealed?.id ?? '',
+    overlayRef
+  )
 
   if (!narrow || solo || collapsibles.length === 0) {
     return null
