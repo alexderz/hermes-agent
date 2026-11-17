@@ -3,9 +3,8 @@ import type { ReactNode } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { SearchField } from '@/components/ui/search-field'
 
-/** The one search field every Capabilities tab uses: the boxed SearchField
- *  with the tab's name as a scope badge and the tab's own actions (add, view
- *  toggle, …) at the end. Callers own the column it sits in and the query. */
+/** Shared scoped search and actions. Actions get their own row in narrow
+ *  containers so a wrapping toolbar cannot consume the input's touch target. */
 export function CapabilitySearch({
   actions,
   hints,
@@ -22,21 +21,30 @@ export function CapabilitySearch({
   value: string
 }) {
   return (
-    <SearchField
-      containerClassName="h-10 w-full min-w-0 rounded-2xl bg-(--dt-card) py-0"
-      hints={hints}
-      leadingContent={<Badge size="xs" variant="muted">{scope}</Badge>}
-      onChange={onChange}
-      placeholder={placeholder}
-      trailingAction={
-        actions ? (
-          <div className="flex min-w-0 flex-wrap items-center justify-end gap-3 justify-self-end" data-catalog-actions>
+    <div className="@container/capability-search w-full min-w-0">
+      <div className="flex min-w-0 flex-col gap-3 @3xl/capability-search:flex-row @3xl/capability-search:items-center">
+        <SearchField
+          containerClassName="h-10 w-full min-w-0 rounded-2xl bg-(--dt-card) py-0 @3xl/capability-search:flex-1"
+          hints={hints}
+          leadingContent={
+            <Badge size="xs" variant="muted">
+              {scope}
+            </Badge>
+          }
+          onChange={onChange}
+          placeholder={placeholder}
+          value={value}
+          variant="box"
+        />
+        {actions ? (
+          <div
+            className="flex min-w-0 max-w-full shrink-0 flex-wrap items-center justify-end gap-3"
+            data-catalog-actions
+          >
             {actions}
           </div>
-        ) : undefined
-      }
-      value={value}
-      variant="box"
-    />
+        ) : null}
+      </div>
+    </div>
   )
 }
