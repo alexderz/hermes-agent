@@ -123,3 +123,71 @@ it('preserves a genuinely newer repeat with the same caption and its own durable
   expect(messages.filter(message => message.role === 'user')).toHaveLength(3)
   expect(messages.at(-1)?.rowId).toBe(200)
 })
+
+it('does not append plain-text cached messages when the refreshed page starts before the retained window', async () => {
+  const page = storedPage('flattened')
+  page.messages[2] = { id: 153, role: 'user', timestamp: 103, content: caption }
+
+  const plainPrompt: ChatMessage = { ...localPrompt, attachmentRefs: undefined }
+  const retained = [...toChatMessages(prefix).slice(1), plainPrompt, localReply]
+  const messages = await heldReentry(page, retained)
+
+  expect(messages.filter(message => message.role === 'user')).toHaveLength(2)
+  expect(messages.at(-1)?.rowId).toBe(154)
+})
+
+it('preserves a newer rowId-less plain repeat after its acknowledged earlier turn', async () => {
+  const page = storedPage('flattened')
+  page.messages[2] = { id: 153, role: 'user', timestamp: 103, content: caption }
+
+  const repeat: ChatMessage = { ...localPrompt, id: 'user-new-plain-repeat', attachmentRefs: undefined }
+  const retained = [...toChatMessages(page.messages).slice(1), repeat]
+  const messages = await heldReentry(page, retained)
+
+  expect(messages.filter(message => message.role === 'user')).toHaveLength(3)
+  expect(messages.at(-1)?.id).toBe(repeat.id)
+})
+
+it('keeps a plain live reply when the stored page still ends at its prompt', async () => {
+  const page = storedPage('flattened')
+  page.messages[2] = { id: 153, role: 'user', timestamp: 103, content: caption }
+  page.messages.pop()
+
+  const prompt: ChatMessage = { ...localPrompt, attachmentRefs: undefined }
+  const reply: ChatMessage = { ...localReply, pending: true }
+  const messages = await heldReentry(page, [...toChatMessages(prefix).slice(1), prompt, reply])
+
+  expect(messages.filter(message => message.role === 'user')).toHaveLength(2)
+  expect(messages.at(-1)).toMatchObject(reply)
+})
+
+it.each(['prompt', 'earlier'] as const)(
+  'keeps an uncommitted turn behind a carried local notice when history ends at %s',
+  async boundary => {
+    const page = storedPage('flattened')
+    page.messages[2] = { id: 153, role: 'user', timestamp: 103, content: caption }
+    page.messages.pop()
+
+    if (boundary === 'earlier') {
+      page.messages.pop()
+    }
+
+    const prompt: ChatMessage = { ...localPrompt, attachmentRefs: undefined }
+    const notice: ChatMessage = {
+      id: 'fallback-switch-synthetic',
+      role: 'system',
+      parts: [textPart('Synthetic fallback notice.')]
+    }
+    const messages = await heldReentry(page, [...toChatMessages(prefix).slice(1), prompt, localReply, notice])
+
+    expect(
+      messages.some(
+        message =>
+          message.id === localReply.id &&
+          message.parts.some(part => part.type === 'text' && part.text === 'Synthetic last reply.')
+      )
+    ).toBe(true)
+    expect(messages.some(message => message.id === notice.id)).toBe(true)
+    expect(messages.filter(message => message.role === 'user')).toHaveLength(2)
+  }
+)
