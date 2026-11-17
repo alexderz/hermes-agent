@@ -33,3 +33,4 @@ One line per landed item.
 - 2026-11-15 G17e (DER-792): End-to-end trial: a remote peer through the proxy into Bot Chat and back — alexderz/hermes-agent@8087c3691e
 - 2026-11-15 G17f (DER-792): Proxy access log and peer security notes (spike review) — alexderz/hermes-intercom@d01aa54714
 - 2026-11-16 G17g (DER-792): Tunable per-peer body limit in the proxy (64 KB default) — alexderz/hermes-intercom@64d9c5e025
+- 2026-11-16 G17h (DER-792): Outbound bearer auth for routine webhooks — alexderz/hermes-intercom@99ed8dbe18
