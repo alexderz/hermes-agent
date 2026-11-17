@@ -173,11 +173,13 @@ it.each(['prompt', 'earlier'] as const)(
     }
 
     const prompt: ChatMessage = { ...localPrompt, attachmentRefs: undefined }
+
     const notice: ChatMessage = {
       id: 'fallback-switch-synthetic',
       role: 'system',
       parts: [textPart('Synthetic fallback notice.')]
     }
+
     const messages = await heldReentry(page, [...toChatMessages(prefix).slice(1), prompt, localReply, notice])
 
     expect(
