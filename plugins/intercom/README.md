@@ -383,8 +383,104 @@ It waits up to five minutes for the owner, then queues one message to each recor
 
 - Sessions open in the admin dashboard are not addressable; the receipt says so (`not-addressable`).
 - `@project` addressing needs a projects plugin that keeps `projects.db` with an `owner_session_id` column, named in `project_plugin` and enabled. Without it `@…` is refused and the tool does not offer it.
-- Same machine only. A session in another profile on this machine is reached with `profile` (see [Other profiles](#other-profiles)). Cross-machine messaging is out of scope.
+- Same machine only, for sessions. A session in another profile on this machine is reached with `profile` (see [Other profiles](#other-profiles)). A bot on another machine is a remote agent peer (see [Remote agent peers](#remote-agent-peers)).
 - The plugin depends on Hermes internals listed under Requirements.
+
+## Remote agent peers
+
+A remote agent peer is Bot Chat to a remote bot. Webhooks go each way: the remote bot posts to Hermes, and Hermes posts to the remote bot's webhook. The remote bot's post comes through an mTLS proxy, which checks the client certificate and forwards it to the webhook receiver on loopback. The post is delivered into the default profile's Bot Chat. Bot Chat addresses the peer as `peer:<name>`.
+
+The text to paste into the remote agent is [`docs/peer-instructions.md`](docs/peer-instructions.md).
+
+In the default profile's `config.yaml`:
+
+- `platforms.webhook` is enabled and bound to loopback, `extra.host: 127.0.0.1`. Without that host the receiver binds every interface and the proxy's mTLS is skipped. See [Remote agent peers: security notes](#remote-agent-peers-security-notes).
+- `platforms.intercom_peer` is enabled.
+- One static route per peer, named `peer-<name>`, with the settings below.
+- `plugin-data/intercom/peers.json` lists the peers. The plugin reads it and does not write it.
+
+```yaml
+platforms:
+  webhook:
+    enabled: true
+    extra:
+      host: 127.0.0.1
+      routes:
+        peer-<name>:
+          secret: "<secret>"
+          deliver: intercom_peer
+          deliver_only: true
+          prompt: "reply_to={reply_to}\nwants_reply={wants_reply}\n{text}"
+          deliver_extra:
+            chat_id: "<name>"
+  intercom_peer:
+    enabled: true
+```
+
+In the double-quoted `prompt`, each `\n` is a newline. The rendered message is three lines: `reply_to=…`, `wants_reply=…`, then the text. `deliver_extra.chat_id` is the peer's name as a literal. Do not put braces in it: a `{template}` is filled from the post. Leave `events`, `profile`, `mirror_to_session`, `skills` and `script` unset. The route `secret` is the `<secret>` in the remote agent's send function.
+
+`peers.json` is a JSON list, one object per peer:
+
+| field | what it holds |
+|---|---|
+| `name` | `^[a-z0-9-]{1,63}$`. The same string is the certificate subject `CN`, the route `peer-<name>` and the address `peer:<name>`. |
+| `url` | The peer's webhook. Only an `https://` URL is loaded. |
+| `auth` | `hmac-v2`, `url`, or `bearer`. |
+| `secret_file` | Path to a file that holds: for `hmac-v2`, the HMAC secret Hermes signs its post with; for `url`, the full secret `https://` URL; for `bearer`, the key alone, with no `Bearer ` prefix. For `url`, the `url` field is that URL with the secret part replaced by `…`, which is what list and receipts show. For `bearer`, `url` is the plain webhook, and list and receipts show it as it is. Surrounding whitespace on a bearer key is ignored. A key that contains whitespace or a control character, or an empty or unreadable file, is not sent. |
+
+TLS is always verified. A redirect is an error.
+
+```json
+[
+  {
+    "name": "<name>",
+    "url": "https://<peer-webhook>",
+    "auth": "hmac-v2",
+    "secret_file": "<secret-file>"
+  },
+  {
+    "name": "<routine-name>",
+    "url": "https://<routine-webhook>",
+    "auth": "bearer",
+    "secret_file": "<key-file>"
+  }
+]
+```
+
+Adding a peer needs a gateway restart. Static routes are read when the gateway starts. The hot-reloaded `webhook_subscriptions.json` is not used, because agents can write it.
+
+Pins are named `<name>.pem`. Each one is that peer's client certificate, a top-level file in the proxy's active pin folder.
+
+`deploy/peer-proxy/` is vendored with the plugin but never imported. The host operator installs [`render.py`](deploy/peer-proxy/render.py), [`proxy-reload`](deploy/peer-proxy/proxy-reload) and [`caddy-agent-peers.service`](deploy/peer-proxy/caddy-agent-peers.service); [`trial.sh`](deploy/peer-proxy/trial.sh) checks them on loopback. What each file does is in [Remote agent peers: the proxy](#remote-agent-peers-the-proxy).
+
+## Remote agent peers: the proxy
+
+Remote agents post to Bot Chat through a separate Caddy proxy. The host operator installs the assets in [`deploy/peer-proxy/`](deploy/peer-proxy/). The plugin does not import them.
+
+- [`render.py`](deploy/peer-proxy/render.py) writes the proxy's Caddy JSON from the active pin folder. `--access-log <path>` is required. `--max-body <bytes>` sets the request body limit on every peer route. When that flag is absent the limit is 65536. `--max-body-peer <name>=<bytes>` sets a different limit for one peer. Repeat it for each peer that needs its own limit. A name with no active pin is ignored, with a warning.
+- [`proxy-reload`](deploy/peer-proxy/proxy-reload) renders to a temporary file, validates it, reloads Caddy with `--force`, and only then replaces the config file. It takes the same arguments as `render.py`, including `--max-body` and `--max-body-peer`, plus `--config-out`. If the reload fails it exits non-zero, prints the reason, and leaves the running proxy and the config file unchanged.
+- [`caddy-agent-peers.service`](deploy/peer-proxy/caddy-agent-peers.service) is the systemd unit template. It runs `caddy run --config <config-json>` as an unprivileged user. The admin socket is the one rendered into the JSON. Replace each placeholder before installing.
+- [`trial.sh`](deploy/peer-proxy/trial.sh) proves the TLS and routing rules on loopback with the installed `caddy`.
+
+`<name>` matches `^[a-z0-9-]{1,63}$` and is the certificate subject `CN`. Pin file names are in [Remote agent peers](#remote-agent-peers). The proxy requires that client certificate and forwards only `/webhooks/peer-<name>` to the upstream. Any other request is 403.
+
+`--access-log <path>` is the JSON access log. The file rolls. Each line has the remote address, the TLS client subject, the client certificate serial, the path and the status. A handshake that fails never becomes a request, so it is not in that file. Caddy's TLS logger (`http.stdlib` and `tls.handshake`) writes it to the sibling `<path>.tls`, also JSON and also rolled. A 403 and a refused handshake are both kept. A body over the limit is a 413 in this same access log.
+
+Each peer route applies its body limit before it forwards the request. A body over the limit is refused with 413, and Hermes does not accept the post.
+
+To tune a limit, edit the arguments of the host's reload hook, then run the hook. `--max-body` is the limit for every peer. `--max-body-peer <name>=<bytes>` is one peer's limit. Repeat that argument for each peer. To revoke a peer that has its own limit, remove the pin and run the hook. A leftover `--max-body-peer` for a name with no active pin is ignored, with a warning. Removing that argument from the hook afterwards is tidy but not required.
+
+The rate limit is the Hermes webhook receiver's `rate_limit` (per minute, per route, default 30) in `platforms.webhook.extra`. That value is adapter-wide. The receiver's own `max_body_bytes` stays at its generic default. The proxy is the peer-specific gate.
+
+## Remote agent peers: security notes
+
+mTLS ends at the proxy. The proxy checks the client certificate and forwards the request in plaintext to 127.0.0.1:8644. Anything that can open that port and knows the route's secret can post straight to `/webhooks/peer-<name>` with no client certificate. A process running as the hermes user can. Root on the host is inside this trust boundary.
+
+Keep the receiver on loopback. In the config above, `platforms.webhook.extra.host` is `127.0.0.1`. Do not remove that key. With it unset, the receiver binds every interface and a post can skip the proxy. Do not set the key to any other address.
+
+Give each peer route its own secret. The file that holds the secret is mode 0600.
+
+To revoke a peer, remove its pin and run the hook. A leftover `--max-body-peer <name>=…` for that peer is ignored, with a warning. Removing it from the hook afterwards is tidy but not required. A certificate revocation list does not stop a client. The pin is what the proxy trusts. If the reload fails, `proxy-reload` exits non-zero and prints the reason, and the proxy keeps trusting the pins it already loaded until a reload succeeds.
 
 ## Development
 

@@ -26,3 +26,12 @@ One line per landed item.
 - 2026-11-14 G16f (DER-767): End-to-end cells on a real gateway owner for passive, keyed queue, profiles and deadlines — hermes-agent@47adcd0fa3 (landed by manager: E2E 52/52 and reviewer approve; scripts/check adds no finding over the parent, per the Verify ruling)
 - 2026-11-14 G16h (DER-767): list shows the profile's Bot Chat (hidden session) — alexderz/hermes-intercom@911039cffa
 - 2026-11-14 G16i (DER-767): Webapp shows session-mail messages folded, like bot messages — alexderz/hermes-intercom@8a15373ea3
+- 2026-11-15 G17a (DER-792): Inbound: the intercom_peer platform delivers webhook posts into Bot Chat — alexderz/hermes-intercom@c8605a7211
+- 2026-11-15 G17b (DER-792): Outbound: Bot Chat sends to peer:<name>, and replies to peers are block only — alexderz/hermes-intercom@8d464bd4ce
+- 2026-11-15 G17c (DER-792): Peer proxy: Caddy JSON renderer, reload hook and unit (deploy assets) — alexderz/hermes-intercom@bf9c9cb5b9
+- 2026-11-15 G17d (DER-792): Remote agent instructions and README for peers — alexderz/hermes-intercom@2d2c2bdd0c
+- 2026-11-15 G17e (DER-792): End-to-end trial: a remote peer through the proxy into Bot Chat and back — alexderz/hermes-agent@8087c3691e
+- 2026-11-15 G17f (DER-792): Proxy access log and peer security notes (spike review) — alexderz/hermes-intercom@d01aa54714
+- 2026-11-16 G17g (DER-792): Tunable per-peer body limit in the proxy (64 KB default) — alexderz/hermes-intercom@64d9c5e025
+- 2026-11-16 G17h (DER-792): Outbound bearer auth for routine webhooks — alexderz/hermes-intercom@99ed8dbe18
+- 2026-11-16 G17i (DER-792): Proxy: an override for a revoked peer never blocks the reload — alexderz/hermes-intercom@66497e1332
