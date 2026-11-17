@@ -417,7 +417,8 @@ def rig(tmp_path_factory: pytest.TempPathFactory, intercom_src: Path):
              "--listen", f"{ADDRESS}:{proxy_port}", "--server-name", SERVER_NAME,
              "--ca", str(certs["ca"]), "--active", str(certs["active"]),
              "--upstream", f"{ADDRESS}:{webhook_port}", "--admin-socket", str(admin),
-             "--cert", str(certs["proxy_cert"]), "--key", str(certs["proxy_key"])],
+             "--cert", str(certs["proxy_cert"]), "--key", str(certs["proxy_key"]),
+             "--access-log", str(world.logs / "caddy-access.log")],
             check=True, capture_output=True, text=True)
         config_path = root / "caddy.json"
         config_path.write_text(rendered.stdout, encoding="utf-8")
