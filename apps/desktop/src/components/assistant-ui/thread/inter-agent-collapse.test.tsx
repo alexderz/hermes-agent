@@ -66,6 +66,29 @@ function assistant(id: string, text: string, running: boolean): ThreadMessage {
   } as ThreadMessage
 }
 
+function assistantContent(id: string, content: ThreadMessage['content'], running = false): ThreadMessage {
+  return {
+    id,
+    role: 'assistant',
+    content,
+    status: running ? { type: 'running' } : { type: 'complete', reason: 'stop' },
+    createdAt,
+    metadata: assistantMetadata
+  } as ThreadMessage
+}
+
+const MESSAGE_ID = 'abcd1234'
+
+function frame(label: string, gist?: string): string {
+  const notice = gist ? `Message from 📡 bob (@bob): “${gist}”` : 'Message from 📡 bob (@bob):'
+
+  return `${notice}\n📡 Not Sam · ${label} · hermes@bob says (session local-1 · message ${MESSAGE_ID}):\nPlease check the build.`
+}
+
+function summaryText(container: HTMLElement): string[] {
+  return [...container.querySelectorAll('summary')].map(node => node.textContent ?? '')
+}
+
 function Harness({ messages }: { messages: ThreadMessage[] }) {
   const runtime = useExternalStoreRuntime<ThreadMessage>({
     messages,
@@ -177,5 +200,148 @@ describe('inter-agent collapse gate', () => {
 
     await screen.findByText('ordinary answer')
     expect(screen.queryByText(/Replied to/)).toBeNull()
+  })
+
+  it("shows the matching block's Gist on the reply row", async () => {
+    const { container } = render(
+      <Harness
+        messages={[
+          user('u1', frame('reply requested', 'Third review round passed.')),
+          assistant(
+            'a1',
+            `[REPLY 11111111]\nGist: Wrong block.\nNo.\n[/REPLY]\n[REPLY ${MESSAGE_ID}]\nGist: Third review passed.\nAll green.\n[/REPLY]`,
+            false
+          )
+        ]}
+      />
+    )
+
+    expect(await screen.findByText('Third review passed.')).toBeTruthy()
+    expect(screen.getByText('Replied')).toBeTruthy()
+    expect(screen.queryByText('show reply')).toBeNull()
+    expect(screen.queryByText(/Replied to/)).toBeNull()
+    const summaries = summaryText(container)
+
+    expect(summaries.some(text => text.includes('Third review passed.'))).toBe(true)
+    expect(summaries.some(text => text.includes('Wrong block.'))).toBe(false)
+  })
+
+  it("shows the block's first sentence when the block has no Gist line", async () => {
+    const { container } = render(
+      <Harness
+        messages={[
+          user('u1', frame('reply requested')),
+          assistant('a1', `[REPLY ${MESSAGE_ID}]All green. More detail later.[/REPLY]`, false)
+        ]}
+      />
+    )
+
+    expect(await screen.findByText('All green.')).toBeTruthy()
+    expect(screen.getByText('show message')).toBeTruthy()
+    expect(screen.queryByText('show reply')).toBeNull()
+    expect(summaryText(container).some(text => text.includes('All green.'))).toBe(true)
+  })
+
+  it("shows the last text part's first sentence when there is no matching block", async () => {
+    const { container } = render(
+      <Harness
+        messages={[
+          user('u1', frame('reply requested')),
+          assistantContent('a1', [
+            { type: 'reasoning', text: 'Thinking about the old plan entirely.' },
+            { type: 'text', text: 'I will look first. Not this.' },
+            { type: 'text', text: 'The build is green. Extra follows.' }
+          ])
+        ]}
+      />
+    )
+
+    expect(await screen.findByText('The build is green.')).toBeTruthy()
+    const summaries = summaryText(container)
+
+    expect(summaries.some(text => text.includes('The build is green.'))).toBe(true)
+    expect(summaries.some(text => text.includes('I will look first'))).toBe(false)
+    expect(summaries.some(text => text.includes('Thinking about the old plan'))).toBe(false)
+  })
+
+  it('shows No reply for a silent block and for an empty reply', async () => {
+    const { unmount } = render(
+      <Harness
+        messages={[
+          user('u1', frame('reply requested')),
+          assistant('a1', `[REPLY ${MESSAGE_ID}][SILENT][/REPLY]`, false)
+        ]}
+      />
+    )
+
+    expect(await screen.findByText('No reply')).toBeTruthy()
+    expect(screen.queryByText('show reply')).toBeNull()
+    unmount()
+
+    render(<Harness messages={[user('u1', frame('reply requested')), assistant('a1', '', false)]} />)
+
+    expect(await screen.findByText('No reply')).toBeTruthy()
+    expect(screen.queryByText('show reply')).toBeNull()
+  })
+
+  it('leaves the row after a no reply needed frame unchanged', async () => {
+    const { container } = render(
+      <Harness
+        messages={[
+          user('u1', frame('no reply needed')),
+          assistant('a1', 'The build is green. I wrote this anyway.', false)
+        ]}
+      />
+    )
+
+    expect(await screen.findByText(/Replied to/)).toBeTruthy()
+    expect(screen.getByText('show reply')).toBeTruthy()
+    expect(screen.getByText('show message')).toBeTruthy()
+    expect(summaryText(container).some(text => text.includes('The build is green'))).toBe(false)
+  })
+
+  it('leaves the row after an ask frame unchanged', async () => {
+    const { container } = render(
+      <Harness
+        messages={[
+          user(
+            'u1',
+            'Message from 📡 bob (@bob):\n📡 Not Sam · sender paused: use intercom reply · hermes@bob says (session local-1 · message abcd1234):\nIs the window still 22:00?'
+          ),
+          assistant('a1', 'Yes, 22:00 still holds. I checked the calendar.', false)
+        ]}
+      />
+    )
+
+    expect(await screen.findByText(/Replied to/)).toBeTruthy()
+    expect(screen.getByText('show reply')).toBeTruthy()
+    expect(summaryText(container).some(text => text.includes('Yes, 22:00 still holds'))).toBe(false)
+  })
+
+  it("keeps today's reply row for a bot message whose body starts with a curly quote", async () => {
+    render(
+      <Harness
+        messages={[
+          user('u1', 'Message from 🤖 Hermes (@hermes): “Hi” she said the build failed'),
+          assistant('a1', 'The build is green. I checked.', false)
+        ]}
+      />
+    )
+
+    expect(await screen.findByText(/Replied to/)).toBeTruthy()
+    expect(screen.getByText('show reply')).toBeTruthy()
+    expect(screen.queryByText('▸')).toBeNull()
+  })
+
+  it('does not collapse a streaming reply to an intercom frame', async () => {
+    render(
+      <Harness
+        messages={[user('u1', frame('reply requested', 'Check the build')), assistant('a1', 'working on it', true)]}
+      />
+    )
+
+    await screen.findByText('working on it')
+    expect(screen.queryByText('show reply')).toBeNull()
+    expect(screen.queryByText('Replied')).toBeNull()
   })
 })

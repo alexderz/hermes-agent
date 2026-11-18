@@ -24,6 +24,7 @@ import { useSessionView } from '@/app/chat/session-view'
 import { SETTINGS_ROUTE } from '@/app/routes'
 import { useBillingApi } from '@/app/settings/billing/api'
 import { dispatchedTo } from '@/components/assistant-ui/thread/agent-delivery'
+import { inboundMessageId, replyGist, showReplyGist } from '@/components/assistant-ui/thread/agent-gist'
 import { ChangedFilesCard } from '@/components/assistant-ui/thread/changed-files-card'
 import {
   contentHasVisibleText,
@@ -181,18 +182,44 @@ export const AssistantMessage: FC<AssistantMessageProps> = props => {
   )
 }
 
-/** The compact stand-in a settled inter-agent reply collapses to (Grok-bots
- *  parity — the transcript shows the event; the text is one click away). */
-const InterAgentCollapsedNotice: FC<{ sender: string }> = ({ sender }) => (
+function precedingAgentBody(messages: readonly { id: string; role: string }[], messageId: string): string {
+  for (let j = threadMessageIndex(messages, messageId) - 1; j >= 0; j--) {
+    const prev = messages[j] as { content?: unknown; role?: string }
+
+    if (prev.role === 'assistant') {
+      return ''
+    }
+
+    if (prev.role === 'user') {
+      return (AGENT_MESSAGE_RE.exec(messageContentText(prev.content).trim())?.[4] ?? '').trim()
+    }
+  }
+
+  return ''
+}
+
+/** The compact stand-in a settled inter-agent reply collapses to. An intercom
+ *  frame that can carry a reply shows that reply's gist (or "No reply");
+ *  every other delivery keeps today's "Replied to <sender>" row. */
+const InterAgentCollapsedNotice: FC<{ gist: string; sender: string }> = ({ gist, sender }) => (
   <div className="flex max-w-[min(86%,44rem)] flex-col gap-0.5 self-center px-2 py-0.5 text-[0.6875rem] leading-5 text-muted-foreground/60">
     <span className="flex items-center justify-center gap-1.5">
       <Codicon className="shrink-0 text-muted-foreground/55" name="arrow-small-right" size="0.8125rem" />
-      <span className="wrap-anywhere">Replied to {sender}</span>
+      <span className="wrap-anywhere">{gist ? 'Replied' : `Replied to ${sender}`}</span>
     </span>
     <details className="self-center">
-      <summary className="cursor-pointer select-none text-center text-muted-foreground/45 hover:text-muted-foreground/70">
-        show reply
-      </summary>
+      {gist ? (
+        <summary className="mx-auto flex w-full max-w-[36rem] cursor-pointer list-none items-start justify-center gap-1 text-center select-none [&::-webkit-details-marker]:hidden">
+          <span className="line-clamp-2 min-w-0 wrap-anywhere text-muted-foreground/80">{gist}</span>
+          <span aria-hidden className="shrink-0 text-muted-foreground/45">
+            ▸
+          </span>
+        </summary>
+      ) : (
+        <summary className="cursor-pointer select-none text-center text-muted-foreground/45 hover:text-muted-foreground/70">
+          show reply
+        </summary>
+      )}
       <div className="mt-1 max-w-[36rem] rounded-lg border border-(--ui-stroke-tertiary) px-3 py-2 text-left text-[0.75rem] leading-5 text-foreground/85">
         {MESSAGE_PARTS}
       </div>
@@ -201,11 +228,11 @@ const InterAgentCollapsedNotice: FC<{ sender: string }> = ({ sender }) => (
 )
 
 /**
- * An assistant reply that answers an inter-agent delivery. Owns the only
- * root-level `isRunning` subscription left in this file, and it is confined to
- * the rare inter-agent case: the reply renders collapsed once it settles, so
- * the gate genuinely needs live status. Never collapse while streaming — the
- * user should see progress.
+ * An assistant reply that answers an inter-agent delivery. The collapse gate
+ * and the gist selector both read status, and both stay quiet while the reply
+ * streams: the gist selector returns '' so a chunk does not scan the block or
+ * re-render this row. Never collapse while streaming — the user should see
+ * progress.
  *
  * The collapse is expressed as a CHILD of the normal body, not as a competing
  * root. Returning a bare MessagePrimitive.Root here for the settled case put a
@@ -217,11 +244,29 @@ const InterAgentCollapsedNotice: FC<{ sender: string }> = ({ sender }) => (
  */
 const InterAgentAssistantMessage: FC<AssistantMessageProps & { sender: string }> = ({ sender, ...props }) => {
   const isRunning = useAuiState(s => s.message.status?.type === 'running')
+  // A turn can answer several messages, so the block has to be this frame's id.
+  const replyMessageId = useAuiState(s => inboundMessageId(precedingAgentBody(s.thread.messages, s.message.id)) ?? '')
+
+  // String-only, and '' while streaming: the block scan must not run on every
+  // chunk. '' also keeps today's row (no reply needed, an ask, a bot message).
+  const gist = useAuiState(s => {
+    if (s.message.status?.type === 'running') {
+      return ''
+    }
+
+    const body = precedingAgentBody(s.thread.messages, s.message.id)
+
+    if (!showReplyGist(body)) {
+      return ''
+    }
+
+    return replyGist(s.message.content, replyMessageId || null)
+  })
 
   return (
     <AssistantMessageBody
       {...props}
-      collapsedNotice={isRunning ? null : <InterAgentCollapsedNotice sender={sender} />}
+      collapsedNotice={isRunning ? null : <InterAgentCollapsedNotice gist={gist} sender={sender} />}
     />
   )
 }
