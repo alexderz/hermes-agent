@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
 import { firstSentence, inboundGist, inboundMessageId, replyGist, showReplyGist } from './agent-gist'
+import captured from './gist-frames.json'
+import { AGENT_MESSAGE_RE } from './user-message'
 
 const ID = 'abcd1234'
 const HEADER = `📡 Not Sam · reply requested · hermes@bob says (session local-1 · message ${ID}):`
@@ -137,4 +139,34 @@ describe('replyGist', () => {
   it('does not treat a lowercase gist line as a gist', () => {
     expect(replyGist([`[REPLY ${ID}]gist: not a label. The build passed.[/REPLY]`], ID)).toBe('gist: not a label.')
   })
+})
+
+// Frames and reply blocks captured by the owner trial (tests/plugins/intercom/test_e2e_gist.py).
+// A notice-line or block-shape change in the plugin fails that trial until this file is updated,
+// and then fails here until the parser agrees.
+describe('captured owner frames', () => {
+  for (const frame of captured.frames) {
+    it(`reads the gist and message id of ${frame.name}`, () => {
+      // The folded row parses the text after `Message from …:`, the same split as AgentMessageNote.
+      const match = AGENT_MESSAGE_RE.exec(frame.text)
+      const body = (match?.[4] ?? '').trim()
+      const parsed = inboundGist(body)
+
+      expect(match).not.toBeNull()
+      expect(parsed?.gist).toBe(frame.gist)
+      expect(parsed?.body.split('\n')[0]).toMatch(/^📡 Not /u)
+      expect(inboundMessageId(body)).toBe(frame.id)
+
+      if (frame.name === 'markdown') {
+        expect(parsed?.gist.includes('*')).toBe(false)
+        expect(parsed?.body.includes('**')).toBe(true)
+      }
+    })
+  }
+
+  for (const reply of captured.replies) {
+    it(`reads the reply block ${reply.name}`, () => {
+      expect(replyGist([reply.text], reply.id)).toBe(reply.gist)
+    })
+  }
 })

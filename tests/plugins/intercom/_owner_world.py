@@ -20,14 +20,17 @@ The model reads directives from the turn's prompt (the newest user row that is n
 - ``TAG=<word>`` names the turn; ``STEPS=<n>`` makes it read a file ``n`` times before answering;
 - ``CALL=<to>|<delivery>|<reply>|<message to end of line>`` makes it call the intercom tool once
   (``ACTION=<word>`` selects the action, default ``send``), with ``OPTS=<arg>=<value>,...`` (``key``,
-  ``within``, ``profile``) added to its arguments;
+  ``within``, ``profile``) added to its arguments, and ``GIST="<sentence>"`` passed as the tool's
+  ``gist`` (a sentence may contain spaces, which ``OPTS`` cannot);
 - ``ECHOWAIT`` anywhere in the turn's rows makes its final answer wait (bounded) until the fake ntfy
   server has a post naming every intercom message in those rows: the latency a real model has.
 
 The final answer is ``DONE <tag>``, plus ``[REPLY <id>] answer from <tag> [/REPLY]`` for each intercom
 message in the turn's rows whose label asks for an answer, and for each held note that asks for one
-unless the prompt has ``NOBLOCK``. ``NOFRAME`` suppresses only those framed ``[REPLY]`` blocks. A test
-can hold any request of a turn (``Model.hold``) to keep that turn running while it delivers.
+unless the prompt has ``NOBLOCK``. ``NOFRAME`` suppresses only those framed ``[REPLY]`` blocks.
+``BLOCKGIST="<sentence>"`` in the prompt starts that block with ``Gist: <sentence>``.
+``BLOCKONLY="<sentence>"`` makes the block that line alone, so the plugin treats it as silent.
+A test can hold any request of a turn (``Model.hold``) to keep that turn running while it delivers.
 """
 
 from __future__ import annotations
@@ -65,6 +68,10 @@ ANSWER_LABELS = ("· reply requested ·", "· waiting on your reply ·")
 _CALL_RE = re.compile(r"CALL=([^|\n]+?)\|(\w+)\|(\w+)\|([^\n]*)")
 _ACTION_RE = re.compile(r"ACTION=(\w+)")
 _OPTS_RE = re.compile(r"OPTS=(\S+)")
+# Not BLOCKGIST or any other *GIST= directive: only the tool argument the sender wrote.
+_GIST_ARG_RE = re.compile(r'(?<![A-Za-z])GIST="([^"]*)"')
+_BLOCK_GIST_RE = re.compile(r'BLOCKGIST="([^"]*)"')
+_BLOCK_ONLY_RE = re.compile(r'BLOCKONLY="([^"]*)"')
 # A held note (the full block) that asks for an answer: "[n] <sender> · HH:MM · reply requested (message <id>)".
 HELD_ASK_RE = re.compile(r"^\[\d+\] [^\n]* · reply requested \(message ([0-9a-f]+)\)$", re.MULTILINE)
 NO_BLOCK = "NOBLOCK"      # in the typed text: answer the turn, but no [REPLY] block for a held note
@@ -268,6 +275,8 @@ class Model:
                     "reply": call.group(3), "message": call.group(4)}
             if opts := _OPTS_RE.search(prompt):
                 args.update(pair.split("=", 1) for pair in opts.group(1).split(","))
+            if gist := _GIST_ARG_RE.search(prompt):
+                args["gist"] = gist.group(1)
             return _tool(tools, "intercom", args)
         if steps - (1 if called else 0) < _num(r"STEPS=(\d+)", prompt, 0):
             return _tool(tools, "read_file", {"path": self.readable})
@@ -347,16 +356,36 @@ def find_receipt(value: Any) -> dict | None:
     return None
 
 
+def _reply_body(tag: str, prompt: str) -> str:
+    """The text inside one ``[REPLY]`` block. Absent directives keep the one-line answer."""
+    only = _BLOCK_ONLY_RE.search(prompt)
+    if only:
+        return f"Gist: {only.group(1)}"
+    gist = _BLOCK_GIST_RE.search(prompt)
+    if gist:
+        return f"Gist: {gist.group(1)}\nanswer from {tag}"
+    return f"answer from {tag}"
+
+
+def _reply_block(message_id: str, body: str) -> str:
+    """A one-line block, or a multi-line one when the body has a ``Gist:`` line."""
+    if "\n" in body or body.startswith("Gist:"):
+        return f"[REPLY {message_id}]\n{body}\n[/REPLY]"
+    return f"[REPLY {message_id}] {body} [/REPLY]"
+
+
 def final_answer(tag: str, rows: list[str]) -> str:
     lines = [f"DONE {tag}"]
+    prompt = rows[0] if rows else ""
+    body = _reply_body(tag, prompt)
     if not rows or NO_FRAME not in rows[0]:
         for row in rows:
             for header in HEADER_RE.finditer(row):
                 if any(label in header.group(0) for label in ANSWER_LABELS):
-                    lines.append(f"[REPLY {header.group(1)}] answer from {tag} [/REPLY]")
+                    lines.append(_reply_block(header.group(1), body))
     if rows and NO_BLOCK not in rows[0]:
         for row in rows:
-            lines += [f"[REPLY {mid}] answer from {tag} [/REPLY]" for mid in HELD_ASK_RE.findall(row)]
+            lines += [_reply_block(mid, body) for mid in HELD_ASK_RE.findall(row)]
     return "\n".join(lines)
 
 
@@ -759,13 +788,16 @@ class World:
                   sender_profile: str | None = None, action: str = "send", **opts: Any) -> dict:
         """The sender session's model calls the intercom tool once; returns the tool's receipt.
 
-        *opts* are the tool's other ``send`` arguments (``key``, ``within``, ``profile``). *action*
-        selects the tool action; ``send`` stays the default and is not written into the prompt."""
+        *opts* are the tool's other ``send`` arguments (``key``, ``within``, ``profile``, ``gist``).
+        ``gist`` is sent as ``GIST="..."`` because a sentence has spaces. *action* selects the tool
+        action; ``send`` stays the default and is not written into the prompt."""
         tag = f"s{secrets.token_hex(4)}"
+        gist = opts.pop("gist", None)
+        gist_bit = f' GIST="{gist}"' if gist else ""
         extra = f" OPTS={','.join(f'{k}={v}' for k, v in opts.items())}" if opts else ""
         chosen = f" ACTION={action}" if action != "send" else ""
         self.attached_submit(sender or self.sender,
-                             f"TAG={tag}{extra}{chosen} CALL={to}|{delivery}|{reply}|{body}",
+                             f"TAG={tag}{gist_bit}{extra}{chosen} CALL={to}|{delivery}|{reply}|{body}",
                              profile=sender_profile)
         req = self.poll(lambda: next((r for r in self.model.tagged(tag) if r.results), None), TURN_S,
                         f"the intercom tool result of {tag}")
