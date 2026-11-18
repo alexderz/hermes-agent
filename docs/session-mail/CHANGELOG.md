@@ -35,3 +35,4 @@ One line per landed item.
 - 2026-11-16 G17g (DER-792): Tunable per-peer body limit in the proxy (64 KB default) — alexderz/hermes-intercom@64d9c5e025
 - 2026-11-16 G17h (DER-792): Outbound bearer auth for routine webhooks — alexderz/hermes-intercom@99ed8dbe18
 - 2026-11-16 G17i (DER-792): Proxy: an override for a revoked peer never blocks the reload — alexderz/hermes-intercom@66497e1332
+- 2026-11-18 G18b (DER-701): Gists: Webapp folded rows show the gist — alexderz/hermes-agent@620154f52e
