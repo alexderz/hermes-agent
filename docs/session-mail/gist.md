@@ -1,6 +1,6 @@
 # Session mail: message gists (G18)
 
-Status: plan r1, 2026-11-18. Ticket: DER-701 (session mail).
+Status: plan r2, 2026-11-18. All ten findings of the architect review (`reviews/gist-architect-r1.md`) are accepted; where it differs from the text below, the review wins. Ticket: DER-701 (session mail).
 
 ## Why
 
@@ -64,3 +64,34 @@ Owner's words (2026-11-18): "have the agent when it ... sends a message ... get 
 - **Sender text before the frame header.** The gist sits on the notice line, ahead of the `Not <owner>` header. Mitigations: the notice line names the sender first; the gist is quoted, cleaned, single-line and capped; frame openers are relabelled. Reviewers should check that no gist can forge a header, close a frame, or read as the owner's words.
 - **Vague gists.** The tool text pushes for plain words; nothing more.
 - **Old messages** keep today's rows; nothing is migrated.
+
+## r2: changes from the architect review (all accepted)
+
+1. **Clean-up, exactly, in this order:**
+   - (a) `sanitize_title` (removes line breaks, Cf characters, `📡`, `[` and `]`);
+   - (b) every curly or guillemet quote becomes `"`;
+   - (c) strip one surrounding pair;
+   - (d) clip at 160 characters with `_short_desc`'s logic;
+   - (e) empty means no gist.
+
+   The relabel step is dropped.
+2. **`split_gist`** takes a leading `Gist:` line off the chosen reply text, block or whole answer, **before** `is_silent`; a body left empty is silent. The gist travels with the delivered reply.
+3. **The `Gist:` instruction goes in all four reply-instruction sites:** the requested/waiting block, the optional bullet, the peer bullets and the held-notes line. `ask` answers carry no gist.
+4. **Call sites:**
+   - `build`, `_notice`, `route.send`, `_framed` and `frame_stored` (stored gist only for the newest keyed version) carry the gist;
+   - the keyed wake and the deadline wake pass none and use the fallback;
+   - held notes and `to: all` turn context are unchanged.
+5. **No peer gist field.** Peers rely on the fallback; `peers.send` accepts and stores the gist but posts nothing extra.
+6. **The fallback is computed in `frame.build`** from the echo-stripped body: the first line that is not a frame or notice line, with Markdown markers removed, cut at the first sentence by the existing `_SENTENCE_END_RE`/`_short_desc`, then cleaned as in 1.
+7. **Webapp inbound:** a gist is recognised only when line 1 of the body is `“…”` and line 2 starts `📡 Not `. It is parsed in a pure helper, `thread/agent-gist.ts`, and "show message" opens the body without the gist line.
+8. **Webapp reply row:**
+   - the block is found by the inbound row's message id;
+   - text parts are joined with newlines;
+   - the "last text part" is the final rung;
+   - "No reply" is shown for silence;
+   - the gist is computed in a string selector that returns `''` while running;
+   - after a `no reply needed` frame, today's row is unchanged.
+9. **Schema:** `gist` is added for send and ask (the prompt prefix changes once, at the deploy restart), plus `--gist` on the CLI send. Reboot notices are unchanged.
+10. **The gist is stored on the row** (NULL for a fallback), with no `log`/`status` display.
+
+Items: as in the review's "Proposed items" (G18a plugin, G18b Webapp, G18c E2E with a frame fixture that `agent-gist.test.ts` parses).
