@@ -36,3 +36,4 @@ One line per landed item.
 - 2026-11-16 G17h (DER-792): Outbound bearer auth for routine webhooks — alexderz/hermes-intercom@99ed8dbe18
 - 2026-11-16 G17i (DER-792): Proxy: an override for a revoked peer never blocks the reload — alexderz/hermes-intercom@66497e1332
 - 2026-11-18 G18b (DER-701): Gists: Webapp folded rows show the gist — alexderz/hermes-agent@620154f52e
+- 2026-11-18 G18a (DER-701): Gists: plugin (gist field, Gist: line, fallback, notice line) — alexderz/hermes-intercom@a95b9c7a3e
