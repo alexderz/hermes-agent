@@ -216,6 +216,7 @@ class Request:
     steers: list[str]      # steer rows anywhere in the request
     host: str | None       # which known process sent it
     results: list[str]     # tool results after the prompt
+    answer: str = ""       # text this request returned; empty on a tool call
 
 
 class Model:
@@ -284,7 +285,10 @@ class Model:
             ids = [i for row in rows for i in frame_ids(row)]
             self.ntfy.wait_for(lambda bodies: all(any(f"message {i})" in b for b in bodies) for i in ids),
                                ECHO_WAIT_S)
-        return Text(final_answer(tag, rows))
+        text = final_answer(tag, rows)
+        with self._lock:
+            req.answer = text
+        return Text(text)
 
     def _host(self) -> str | None:
         addr = getattr(self.peer, "addr", None)

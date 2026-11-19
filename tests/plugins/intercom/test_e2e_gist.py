@@ -12,6 +12,8 @@ Run (the explicit ``--`` lets the conftest option through). The file completed i
 
     HERMES_HOME="$(mktemp -d)" scripts/run_tests.sh --fail-on-skip --file-retries 0 --file-timeout 120 \
         tests/plugins/intercom/test_e2e_gist.py -- --intercom-src=<intercom checkout>
+
+A stale check writes ``gist-frames.actual.json`` under the test home; review it and copy it over the checked-in fixture.
 """
 
 from __future__ import annotations
@@ -25,7 +27,7 @@ import pytest
 
 from tests.e2e.core.chaos._helpers import kill_tagged, new_tag
 
-from ._owner_world import TURN_S, USER_NAME, World, final_answer
+from ._owner_world import TURN_S, USER_NAME, Request, World
 
 pytestmark = [pytest.mark.platforms("linux"), pytest.mark.spawns_gateway_lookalike]
 
@@ -122,6 +124,13 @@ def _canonical(payload: dict) -> str:
     return json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
 
 
+def _model_text(world: World, request: Request) -> str:
+    """The text ``Model`` returned for this request, once that reply is stored on it."""
+    return world.poll(
+        lambda: request.answer or None, TURN_S, f"the model text for {request.tag}"
+    )
+
+
 @pytest.fixture(scope="module")
 def world(tmp_path_factory: pytest.TempPathFactory, intercom_src: Path):
     tag = new_tag()
@@ -154,7 +163,7 @@ def test_gist_records_notices_and_captured_frames(world: World) -> None:
     """The five sends, then the checked-in frames the Webapp parser reads."""
     builder = world.builder
     ids: dict[str, str] = {}
-    frames: list[dict[str, str]] = []
+    frames: list[dict] = []
 
     receipt = world.tool_send(
         builder,
@@ -176,7 +185,13 @@ def test_gist_records_notices_and_captured_frames(world: World) -> None:
     ids[mid] = WITH_GIST
     _note_sessions(frame, ids)
     frames.append(
-        {"name": "with-gist", "gist": EXPLICIT, "id": WITH_GIST, "text": frame}
+        {
+            "name": "with-gist",
+            "gist": EXPLICIT,
+            "id": WITH_GIST,
+            "showsReplyGist": False,
+            "text": frame,
+        }
     )
     world.quiet()
 
@@ -198,7 +213,13 @@ def test_gist_records_notices_and_captured_frames(world: World) -> None:
     ids[mid] = FALLBACK
     _note_sessions(frame, ids)
     frames.append(
-        {"name": "fallback", "gist": FALLBACK_GIST, "id": FALLBACK, "text": frame}
+        {
+            "name": "fallback",
+            "gist": FALLBACK_GIST,
+            "id": FALLBACK,
+            "showsReplyGist": False,
+            "text": frame,
+        }
     )
     world.quiet()
 
@@ -227,7 +248,13 @@ def test_gist_records_notices_and_captured_frames(world: World) -> None:
     )
     ids[mid] = MARKDOWN
     frames.append(
-        {"name": "markdown", "gist": MARKDOWN_GIST, "id": MARKDOWN, "text": frame}
+        {
+            "name": "markdown",
+            "gist": MARKDOWN_GIST,
+            "id": MARKDOWN,
+            "showsReplyGist": False,
+            "text": frame,
+        }
     )
     world.quiet()
 
@@ -240,7 +267,11 @@ def test_gist_records_notices_and_captured_frames(world: World) -> None:
     assert receipt.get("ok") is True and receipt.get("applied") == "start", receipt
     inbound = receipt["message_id"]
     request = world.answered("rep1")
-    reply_answer = final_answer("rep1", request.rows)
+    reply_answer = _model_text(world, request)
+    inbound_frame = _frame(world, inbound)
+    assert "· reply requested ·" in inbound_frame.splitlines()[1], (
+        inbound_frame.splitlines()[1]
+    )
     origin = world.poll(
         lambda: (
             (found := world.record(inbound)) and found.get("reply_message_id") and found
@@ -263,10 +294,20 @@ def test_gist_records_notices_and_captured_frames(world: World) -> None:
         0
     ]
     assert "reply to your message" in frame.splitlines()[1]
+    assert "· reply optional ·" in frame.splitlines()[1]
     ids[inbound] = REPLY_TO
     ids[reply_id] = REPLY
     _note_sessions(frame, ids)
-    frames.append({"name": "reply", "gist": REPLY_GIST, "id": REPLY, "text": frame})
+    _note_sessions(inbound_frame, ids)
+    frames.append(
+        {
+            "name": "reply",
+            "gist": REPLY_GIST,
+            "id": REPLY,
+            "showsReplyGist": True,
+            "text": frame,
+        }
+    )
     world.quiet()
 
     before = _message_ids(world)
@@ -279,7 +320,11 @@ def test_gist_records_notices_and_captured_frames(world: World) -> None:
     assert receipt.get("ok") is True and receipt.get("applied") == "start", receipt
     silent_id = receipt["message_id"]
     silent_request = world.answered("sil1")
-    silent_answer = final_answer("sil1", silent_request.rows)
+    silent_answer = _model_text(world, silent_request)
+    silent_frame = _frame(world, silent_id)
+    assert "· reply requested ·" in silent_frame.splitlines()[1], (
+        silent_frame.splitlines()[1]
+    )
     silent_row = world.poll(
         lambda: (
             (found := world.record(silent_id)) and found.get("reply_state") and found
@@ -293,7 +338,7 @@ def test_gist_records_notices_and_captured_frames(world: World) -> None:
         "reply_message_id"
     ), silent_row
     assert _message_ids(world) == before | {silent_id}
-    assert _find_frame(world, silent_id)  # the inbound frame was delivered
+    _note_sessions(silent_frame, ids)
     assert not any(
         f"reply to your message {silent_id}" in text
         for req in world.model.find(lambda _r: True)
@@ -307,6 +352,7 @@ def test_gist_records_notices_and_captured_frames(world: World) -> None:
                 "name": item["name"],
                 "gist": item["gist"],
                 "id": item["id"],
+                "showsReplyGist": item["showsReplyGist"],
                 "text": _replace(item["text"], ids),
             }
             for item in frames
@@ -316,17 +362,22 @@ def test_gist_records_notices_and_captured_frames(world: World) -> None:
                 "name": "gist-block",
                 "id": REPLY_TO,
                 "gist": REPLY_GIST,
+                "request": _replace(inbound_frame, ids),
                 "text": _replace(reply_answer, ids),
             },
             {
                 "name": "gist-only",
                 "id": SILENT,
                 "gist": "No reply",
+                "request": _replace(silent_frame, ids),
                 "text": _replace(silent_answer, ids),
             },
         ],
     }
     rendered = _canonical(payload)
-    (world.root / "gist-frames.actual.json").write_text(rendered, encoding="utf-8")
+    actual = world.root / "gist-frames.actual.json"
+    actual.write_text(rendered, encoding="utf-8")
     assert FIXTURE.is_file(), "the captured frame fixture is not checked in"
-    assert json.loads(FIXTURE.read_text(encoding="utf-8")) == payload
+    assert json.loads(FIXTURE.read_text(encoding="utf-8")) == payload, (
+        f"fixture is stale; review and copy {actual} to {FIXTURE}"
+    )

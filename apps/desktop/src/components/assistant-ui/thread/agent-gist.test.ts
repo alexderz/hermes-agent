@@ -156,6 +156,7 @@ describe('captured owner frames', () => {
       expect(parsed?.gist).toBe(frame.gist)
       expect(parsed?.body.split('\n')[0]).toMatch(/^📡 Not /u)
       expect(inboundMessageId(body)).toBe(frame.id)
+      expect(showReplyGist(body)).toBe(frame.showsReplyGist)
 
       if (frame.name === 'markdown') {
         expect(parsed?.gist.includes('*')).toBe(false)
@@ -166,7 +167,14 @@ describe('captured owner frames', () => {
 
   for (const reply of captured.replies) {
     it(`reads the reply block ${reply.name}`, () => {
-      expect(replyGist([reply.text], reply.id)).toBe(reply.gist)
+      // The reply row takes the id from the preceding inbound frame, then reads the assistant text.
+      const match = AGENT_MESSAGE_RE.exec(reply.request)
+      const body = (match?.[4] ?? '').trim()
+
+      expect(match).not.toBeNull()
+      expect(showReplyGist(body)).toBe(true)
+      expect(inboundMessageId(body)).toBe(reply.id)
+      expect(replyGist([reply.text], inboundMessageId(body))).toBe(reply.gist)
     })
   }
 })
