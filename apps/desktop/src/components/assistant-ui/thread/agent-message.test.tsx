@@ -1,6 +1,25 @@
-import { describe, expect, it } from 'vitest'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it } from 'vitest'
+
+import { stubThreadEnvironment, ThreadRuntime, userMessage } from '../test-utils'
 
 import { AGENT_MESSAGE_RE } from './user-message'
+
+import { Thread } from '.'
+
+stubThreadEnvironment()
+afterEach(cleanup)
+
+const ID = 'abcd1234'
+const HEADER = `📡 Not Sam · reply requested · hermes@bob says (session local-1 · message ${ID}):`
+
+function renderNote(text: string) {
+  return render(
+    <ThreadRuntime messages={[userMessage('u1', text)]}>
+      <Thread />
+    </ThreadRuntime>
+  )
+}
 
 // Agent-to-agent deliveries render as a compact attributed timeline notice,
 // not a user bubble. This pins the detection contract: the Bot Mode prefix
@@ -56,5 +75,71 @@ describe('agent message detection', () => {
   it('does not match prose that merely contains the phrase', () => {
     expect(AGENT_MESSAGE_RE.test('I got a Message from 🤖 Hermes: earlier')).toBe(false)
     expect(AGENT_MESSAGE_RE.test('can you explain what Message from means?')).toBe(false)
+  })
+
+  it('keeps the sender groups when a quoted gist sits ahead of the frame header', () => {
+    const m = AGENT_MESSAGE_RE.exec(`Message from 📡 bob (@bob): “Third review round passed.”\n${HEADER}\nbody`)
+
+    expect(m?.[1]?.trim()).toBe('📡 bob')
+    expect(m?.[2]).toBe('bob')
+    expect(m?.[4]?.startsWith('“Third review round passed.”')).toBe(true)
+  })
+})
+
+describe('agent message gist row', () => {
+  it('shows the sender, the gist and an opener, and opens the frame without the gist line', async () => {
+    const { container } = renderNote(
+      `Message from 📡 bob (@bob): “Third review round passed.”\n${HEADER}\nWhich month did the format change?`
+    )
+
+    const note = (await screen.findByText('bob')).closest('[data-slot="aui_agent-message-note"]')
+
+    expect(note?.textContent).toContain('🤖')
+    expect(screen.getByText('“Third review round passed.”')).toBeTruthy()
+    expect(screen.getByText('▸')).toBeTruthy()
+    expect(screen.queryByText('show message')).toBeNull()
+    expect(screen.queryByText(/Message from/)).toBeNull()
+
+    const details = note?.querySelector('details') as HTMLDetailsElement
+    const panel = details.querySelector('div')
+
+    expect(panel?.textContent).toContain('Which month did the format change?')
+    expect(panel?.textContent).toContain('📡 Not Sam')
+    expect(panel?.textContent).not.toContain('Third review round passed')
+
+    fireEvent.click(details.querySelector('summary')!)
+    expect(details.open).toBe(true)
+    expect(container.querySelector('[data-slot="aui_agent-message-note"] summary')?.textContent).toContain('▸')
+  })
+
+  it("keeps an old intercom frame on today's row", async () => {
+    renderNote(`Message from 📡 bob (@bob):\n${HEADER}\nWhich month did the format change?`)
+
+    expect(await screen.findByText(/Message from/)).toBeTruthy()
+    expect(screen.getByText('show message')).toBeTruthy()
+    expect(screen.queryByText('▸')).toBeNull()
+  })
+
+  it("keeps a frame without a gist on today's row", async () => {
+    renderNote(`Message from 📡 bob (@bob): Hello there\n${HEADER}\nWhich month?`)
+
+    expect(await screen.findByText(/Message from/)).toBeTruthy()
+    expect(screen.getByText('show message')).toBeTruthy()
+    expect(screen.queryByText('▸')).toBeNull()
+  })
+
+  it("keeps a bot message on today's row, including one whose body starts with a curly quote", async () => {
+    const { unmount } = renderNote('Message from 🤖 Hermes (@hermes): “Hi” she said the build failed')
+
+    expect(await screen.findByText(/Message from Hermes/)).toBeTruthy()
+    expect(screen.getByText('show message')).toBeTruthy()
+    expect(screen.queryByText('▸')).toBeNull()
+    unmount()
+
+    renderNote('Message from 🤖 Hermes (@hermes): “Hi”')
+
+    expect(await screen.findByText(/Message from Hermes/)).toBeTruthy()
+    expect(screen.getByText('show message')).toBeTruthy()
+    expect(screen.queryByText('▸')).toBeNull()
   })
 })
