@@ -36,6 +36,11 @@ function tap(editor: HTMLElement, from: [number, number], to: [number, number] =
 }
 
 describe('composer text entry on a touch host (#145166)', () => {
+  it('asks the mobile keyboard for Return rather than Send', () => {
+    const editor = render(<Editor touch />).getByTestId('editor')
+    expect(editor.getAttribute('enterkeyhint')).toBe('enter')
+  })
+
   it('one still tap focuses the editor with spellcheck off and keyboard assistance preserved', () => {
     const editor = render(<Editor touch />).getByTestId('editor')
 

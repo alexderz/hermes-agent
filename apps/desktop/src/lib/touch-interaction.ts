@@ -16,6 +16,11 @@ export const $touchPointer = atom(isBrowserHostedDesktop() && Boolean(touchPoint
 
 touchPointerQuery?.addEventListener('change', event => $touchPointer.set(isBrowserHostedDesktop() && event.matches))
 
+/** A soft-keyboard Return edits a multiline message; explicit modified shortcuts stay available. */
+export function isTouchNewline(event: Pick<KeyboardEvent, 'key' | 'altKey' | 'ctrlKey' | 'metaKey'>): boolean {
+  return $touchPointer.get() && event.key === 'Enter' && !event.altKey && !event.ctrlKey && !event.metaKey
+}
+
 const BROWSER_OWNED_TOUCH_TARGET =
   '[data-slot="aui_user-message-root"], [data-slot="aui_assistant-message-content"], [data-slot="aui_system-message-root"], [data-selectable-text="true"], input, textarea, [contenteditable]:not([contenteditable="false"]), a[href], img, video, audio'
 

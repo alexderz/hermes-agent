@@ -12,6 +12,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { useIncrementalExternalStoreRuntime } from '@/lib/incremental-external-store-runtime'
+import { $touchPointer } from '@/lib/touch-interaction'
 
 import { assistantMessage, stubThreadEnvironment, stubThreadViewportSize, userMessage } from '../test-utils'
 
@@ -20,6 +21,8 @@ stubThreadEnvironment()
 
 afterEach(() => {
   cleanup()
+  $touchPointer.set(false)
+  Reflect.deleteProperty(window.document, 'execCommand')
 })
 
 stubThreadViewportSize()
@@ -59,6 +62,24 @@ function IncrementalHarness({ onEdit }: { onEdit: (message: AppendMessage) => Pr
 }
 
 describe('click-to-edit user message', () => {
+  it('does not submit an inline edit on mobile Return', async () => {
+    $touchPointer.set(true)
+    const onEdit = vi.fn(async (_message: AppendMessage) => {})
+    render(<IncrementalHarness onEdit={onEdit} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit message' }))
+    const editor = await screen.findByRole('textbox', { name: 'Edit message' })
+    const insertLineBreak = vi.fn(() => true)
+    editor.ownerDocument.execCommand = insertLineBreak
+    await act(async () => {
+      editor.textContent = 'first line of the edit'
+      fireEvent.input(editor)
+      fireEvent.keyDown(editor, { key: 'Enter' })
+    })
+    expect(onEdit).not.toHaveBeenCalled()
+    expect(insertLineBreak).toHaveBeenCalledWith('insertLineBreak')
+    expect(screen.getByRole('textbox', { name: 'Edit message' })).toBe(editor)
+  })
+
   it('opens the edit composer with the incremental runtime', async () => {
     const { container } = render(<IncrementalHarness onEdit={async () => {}} />)
 

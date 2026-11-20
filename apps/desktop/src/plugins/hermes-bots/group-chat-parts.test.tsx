@@ -10,11 +10,18 @@ import type { GroupMember } from './types'
 // input with a member-scoped popover of their own. Everything it inserts has
 // to be a string parseGroupChatMentions resolves.
 
-const { host } = vi.hoisted(() => ({ host: {} as Record<string, unknown> }))
+const { host, touchPointer } = vi.hoisted(() => ({
+  host: {} as Record<string, unknown>,
+  touchPointer: { set: (_value: boolean) => {} }
+}))
 
 vi.mock('@hermes/plugin-sdk', async () => {
   const { pluginSdkMock } = await import('./group-test-utils')
   const base = await pluginSdkMock(host)
+  // resetModules can leave the SDK mock cached. Drive the exact atom its
+  // real policy closure reads, not a later import's fresh module generation.
+  const touch = await import('@/lib/touch-interaction')
+  touchPointer.set = value => touch.$touchPointer.set(value)
   const { en } = await import('@/i18n/en')
 
   return {
@@ -175,6 +182,18 @@ describe('insertion', () => {
 })
 
 describe('keyboard (#89884)', () => {
+  it('leaves mobile Return as a newline, not a group send', async () => {
+    const { input, onSubmitDraft } = await mount('first line')
+    touchPointer.set(true)
+
+    try {
+      expect(fireEvent.keyDown(input, { key: 'Enter' })).toBe(true)
+      expect(onSubmitDraft).not.toHaveBeenCalled()
+    } finally {
+      touchPointer.set(false)
+    }
+  })
+
   it('submits on Enter and leaves Shift+Enter to the textarea', async () => {
     const { input, onSubmitDraft } = await mount('a room prompt')
 

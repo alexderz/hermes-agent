@@ -13,7 +13,7 @@ const TAP_MAX_MS = 500
  *  replacement through the autocorrect gate without enabling spellcheck. */
 export function composerTextEntryProps(touch: boolean) {
   return touch
-    ? ({ autoCapitalize: 'sentences', autoCorrect: 'on', spellCheck: false } as const)
+    ? ({ autoCapitalize: 'sentences', autoCorrect: 'on', enterKeyHint: 'enter', spellCheck: false } as const)
     : ({ autoCapitalize: 'off', autoCorrect: isMacPlatform() ? 'on' : 'off', spellCheck: false } as const)
 }
 

@@ -23,7 +23,7 @@ import { chatMessageText } from '@/lib/chat-messages'
 import { sanitizeComposerInput } from '@/lib/composer-input-sanitize'
 import { DATA_IMAGE_URL_RE } from '@/lib/embedded-images'
 import { triggerHaptic } from '@/lib/haptics'
-import { $touchPointer } from '@/lib/touch-interaction'
+import { $touchPointer, isTouchNewline } from '@/lib/touch-interaction'
 import { useStoreSelector, useStoresSelector } from '@/lib/use-session-slice'
 import { cn } from '@/lib/utils'
 import { sessionCompacting } from '@/store/compaction'
@@ -726,6 +726,17 @@ export function ChatBar({
     // "this Enter is an IME commit, not a user send".  If we let it through,
     // the message fires before the committed text is fully in the DOM.
     if (event.key === 'Enter' && event.keyCode === 229) {
+      return
+    }
+
+    if (isTouchNewline(event)) {
+      event.preventDefault()
+      recordUndoPoint()
+      // A bare trailing <br> cannot hold Chromium's caret on the new line.
+      // Use its native line-break edit, as desktop Shift+Enter does.
+      event.currentTarget.ownerDocument.execCommand('insertLineBreak')
+      flushEditorToDraft(event.currentTarget)
+
       return
     }
 

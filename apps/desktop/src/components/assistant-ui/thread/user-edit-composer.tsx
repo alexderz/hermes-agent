@@ -79,7 +79,7 @@ import { sanitizeComposerInput } from '@/lib/composer-input-sanitize'
 import { DATA_IMAGE_URL_RE } from '@/lib/embedded-images'
 import { triggerHaptic } from '@/lib/haptics'
 import { Loader2Icon } from '@/lib/icons'
-import { $touchPointer } from '@/lib/touch-interaction'
+import { $touchPointer, isTouchNewline } from '@/lib/touch-interaction'
 import { cn } from '@/lib/utils'
 import type { ComposerAttachment } from '@/store/composer'
 import { notify, notifyError, readableError } from '@/store/notifications'
@@ -779,6 +779,17 @@ export const UserEditComposer: FC<UserEditComposerProps> = ({ cwd, gateway, sess
     // IME commit Enter still carrying keyCode 229 (VK_PROCESSKEY) after
     // compositionend — same guard as the main composer.
     if (event.key === 'Enter' && event.keyCode === 229) {
+      return
+    }
+
+    if (isTouchNewline(event)) {
+      event.preventDefault()
+      rememberInitialDraft()
+      recordUndoPoint()
+      // Keep Chromium's caret on the new line, not before a trailing <br>.
+      event.currentTarget.ownerDocument.execCommand('insertLineBreak')
+      syncDraftFromEditor(event.currentTarget)
+
       return
     }
 

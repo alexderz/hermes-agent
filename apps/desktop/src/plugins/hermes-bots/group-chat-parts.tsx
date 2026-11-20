@@ -8,7 +8,18 @@
  * controls without either surface importing the other.
  */
 
-import { Button, cn, Codicon, host, Input, RowButton, Textarea, useI18n, useValue } from '@hermes/plugin-sdk'
+import {
+  Button,
+  cn,
+  Codicon,
+  host,
+  Input,
+  isTouchNewline,
+  RowButton,
+  Textarea,
+  useI18n,
+  useValue
+} from '@hermes/plugin-sdk'
 import type { ClipboardEvent, Ref, RefObject } from 'react'
 import { useImperativeHandle, useRef, useState } from 'react'
 
@@ -300,7 +311,7 @@ export function GroupMentionInput({ handleFor, members, onChange, onSubmitDraft,
       <Textarea
         {...inputProps}
         // Input whose form submitted on every Enter — newlines were
-        // impossible. Enter (no Shift) still submits via onSubmitDraft;
+        // impossible. Desktop Enter (no Shift) submits via onSubmitDraft;
         // Shift+Enter falls through to the textarea's native newline.
         // Grow with wrapped text/newlines so long briefs stay reviewable
         // (#95300), then scroll internally before the composer takes over
@@ -322,6 +333,10 @@ export function GroupMentionInput({ handleFor, members, onChange, onSubmitDraft,
           // covers Chromium; keyCode 229 covers macOS Chinese IMEs that fire
           // Enter after compositionend with isComposing already false.
           if (event.nativeEvent?.isComposing || event.keyCode === 229) {
+            return
+          }
+
+          if (isTouchNewline(event)) {
             return
           }
 
