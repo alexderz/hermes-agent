@@ -27,7 +27,8 @@ import { INLINE_TABLE_CSS, inlineTableScript } from './inline-preview-tables'
  * tracks live within the clamp band; width adopts ONCE from the first
  * report, so a fixed-size widget shrink-wraps and sits left in the message
  * flow like an image, while a fluid page measures the full viewport and
- * stays column-wide. A `height="480"` attribute only sets the starting
+ * stays column-wide. The frame can collapse without unmounting, so the
+ * widget keeps its state. A `height="480"` attribute only sets the starting
  * height — measurement always wins.
  *
  * NATIVE BY DEFAULT. A theme prelude injects first: the app's resolved
@@ -270,7 +271,8 @@ export function themePrelude(vars: Record<string, string>, font: string, colorSc
  *  it can say "I am N pixels" and nothing else. Height is the document
  *  scrollHeight; width is the union of the body children's boxes (intrinsic
  *  content width — the document itself always fills the viewport, so
- *  scrollWidth would just echo the frame back). */
+ *  scrollWidth would just echo the frame back). Viewport width rides along
+ *  so a page that already fills the frame is treated as fluid. */
 export function measurementScript(token: string): string {
   return (
     '<script>(function(){var t=' +
@@ -542,26 +544,26 @@ function InlineHtmlFrame({
       </button>
       {/* Hidden, not unmounted: the widget keeps its state across a collapse. */}
       <span className="block" hidden={collapsed}>
-      {framedDoc === null ? (
-        <span
-          className="block w-full animate-pulse rounded-md bg-[color-mix(in_srgb,currentColor_4%,transparent)]"
-          style={{ height }}
-        />
-      ) : (
-        <span
-          className="relative block max-w-full transition-[height] duration-200"
-          style={{ height, width: width ?? '100%' }}
-        >
-          <PreviewDocumentFrame
-            className="absolute inset-0 size-full border-0 bg-transparent"
-            loading="lazy"
-            sandbox="allow-scripts"
-            srcDoc={framedDoc}
-            style={{ colorScheme }}
-            title={file}
+        {framedDoc === null ? (
+          <span
+            className="block w-full animate-pulse rounded-md bg-[color-mix(in_srgb,currentColor_4%,transparent)]"
+            style={{ height }}
           />
-        </span>
-      )}
+        ) : (
+          <span
+            className="relative block max-w-full transition-[height] duration-200"
+            style={{ height, width: width ?? '100%' }}
+          >
+            <PreviewDocumentFrame
+              className="absolute inset-0 size-full border-0 bg-transparent"
+              loading="lazy"
+              sandbox="allow-scripts"
+              srcDoc={framedDoc}
+              style={{ colorScheme }}
+              title={file}
+            />
+          </span>
+        )}
       </span>
     </span>
   )

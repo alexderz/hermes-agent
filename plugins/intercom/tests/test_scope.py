@@ -213,9 +213,9 @@ class FailClosedTests(ScopeTestBase):
 
     def test_read_error_is_shared_even_for_a_local_session(self):
         self.add("s1", "cli")
-        import hermes_state
+        from state import SessionReader
 
-        with mock.patch.object(hermes_state.SessionDB, "get_session",
+        with mock.patch.object(SessionReader, "get_session",
                                side_effect=sqlite3.OperationalError("database is locked")), \
                 self.assertLogs(self.scope.logger, "WARNING"):
             self.assertEqual(self.scope_of("s1"), "shared")
@@ -237,21 +237,20 @@ class FailClosedTests(ScopeTestBase):
 
     def test_opens_read_only_and_closes(self):
         self.add("s1", "telegram", origin_json=origin())
-        import hermes_state
+        from contextlib import contextmanager
+        import state
 
         opened = []
-        real = hermes_state.SessionDB
+        real = state.open_persistence_reader
 
-        class Spy(real):
-            def __init__(self, *args, **kwargs):
-                opened.append(kwargs.get("read_only"))
-                super().__init__(*args, **kwargs)
-
-            def close(self):
+        @contextmanager
+        def reader(home):
+            with real(home) as store:
+                opened.append(True)
+                yield store
                 opened.append("closed")
-                super().close()
 
-        with mock.patch.object(hermes_state, "SessionDB", Spy):
+        with mock.patch.object(state, "open_persistence_reader", reader):
             self.assertEqual(self.scope_of("s1"), "private")
         self.assertEqual(opened, [True, "closed"])
 

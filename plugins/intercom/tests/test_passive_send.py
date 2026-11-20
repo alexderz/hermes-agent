@@ -109,7 +109,8 @@ class PassiveTestBase(unittest.TestCase):
     def add(self, session_id, title, source, *, parent=None):
         kwargs = {"parent_session_id": parent} if parent else {}
         self.db.create_session(session_id, source=source, **kwargs)
-        self.db._write_sql("UPDATE sessions SET started_at = ? WHERE id = ?", (self.started, session_id))
+        with sqlite3.connect(self.home / "state.db") as conn:
+            conn.execute("UPDATE sessions SET started_at = ? WHERE id = ?", (self.started, session_id))
         self.started += 1
         if title:
             self.db.set_session_title(session_id, title)

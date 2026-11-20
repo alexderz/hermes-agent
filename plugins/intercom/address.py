@@ -748,9 +748,12 @@ def _open_projects():
 def _open_state():
     """Published read-only SessionDB. A missing ``state.db`` is no sessions, not an error."""
     try:
-        from hermes_state import SessionDB
+        try:
+            from .state import SessionReader
+        except ImportError:  # loaded as a top-level module by the vendored unittest suite
+            from state import SessionReader
 
-        return SessionDB(read_only=True)
+        return SessionReader()
     except Exception:  # health: allow BLE001 -- state unreadable means no sessions, not an error
         return None
 

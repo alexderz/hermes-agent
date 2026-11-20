@@ -6,6 +6,7 @@ import contextvars
 import json
 import os
 import shutil
+import sqlite3
 import tempfile
 import threading
 import time
@@ -91,14 +92,13 @@ class RepliesTestBase(unittest.TestCase):
 
     def add(self, session_id, title, source, *, origin=None, parent=None):
         kwargs = {"parent_session_id": parent} if parent else {}
-        self.db.create_session(session_id, source=source, **kwargs)
-        self.db._write_sql("UPDATE sessions SET started_at = ? WHERE id = ?", (self.started, session_id))
+        self.db.create_session(session_id, source=source,
+                               origin_json=json.dumps(origin) if origin is not None else None, **kwargs)
+        with sqlite3.connect(self.home / "state.db") as conn:
+            conn.execute("UPDATE sessions SET started_at = ? WHERE id = ?", (self.started, session_id))
         self.started += 1
         if title:
             self.db.set_session_title(session_id, title)
-        if origin is not None:
-            self.db._write_sql("UPDATE sessions SET origin_json = ? WHERE id = ?",
-                               (json.dumps(origin), session_id))
 
     def send(self, reply_mode, *, sender="local-sender", to="local-target", message="Is 22:00 still ok?",
              **kwargs):

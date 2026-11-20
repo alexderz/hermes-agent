@@ -233,9 +233,12 @@ def _is_bot_chat(sender) -> bool:
 def _bot_chat_tip() -> str | None:
     """The tip of ``get_session_by_title(CANONICAL_BOT_CHAT_TITLE)``, as ``address.py`` reads it."""
     try:
-        from hermes_state import SessionDB
+        try:
+            from .state import SessionReader
+        except ImportError:  # loaded as a top-level module by the vendored unittest suite
+            from state import SessionReader
 
-        db = SessionDB(read_only=True)
+        db = SessionReader()
     except Exception:  # health: allow BLE001 -- state unreadable means this sender is not Bot Chat
         return None
     try:

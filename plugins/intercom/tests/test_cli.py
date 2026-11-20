@@ -198,6 +198,11 @@ class CliTestBase(unittest.TestCase):
             self.db.close()
             self.db = None
 
+    def write_state(self, sql, args=()):
+        """Seed transcript edge cases without depending on legacy SessionDB internals."""
+        with sqlite3.connect(self.home / "state.db") as conn:
+            conn.execute(sql, args)
+
     def patch_owner(self):
         def list_sessions(scope="live", picker=False):
             self.list_calls.append((scope, picker))
@@ -771,23 +776,23 @@ class StatusTests(CliTestBase):
         self.plugin.record.update(row["id"], result=None, detail="delivery-unknown", admission_id=None)
         self.open_db()
         stamp = time.time() - 5
-        self.db._write_sql(
+        self.write_state(
             "INSERT INTO messages (session_id, role, content, timestamp, active, compacted) "
             "VALUES (?, 'user', ?, ?, 1, 0)",
             ("local-target", text, stamp),
         )
         # Lookalikes and rows the check must ignore.
-        self.db._write_sql(
+        self.write_state(
             "INSERT INTO messages (session_id, role, content, timestamp, active, compacted) "
             "VALUES (?, 'assistant', ?, ?, 1, 0)",
             ("local-target", text, stamp),
         )
-        self.db._write_sql(
+        self.write_state(
             "INSERT INTO messages (session_id, role, content, timestamp, active, compacted) "
             "VALUES (?, 'user', ?, ?, 0, 0)",
             ("local-target", text, stamp),
         )
-        self.db._write_sql(
+        self.write_state(
             "INSERT INTO messages (session_id, role, content, timestamp, active, compacted) "
             "VALUES (?, 'user', ?, ?, 1, 0)",
             ("local-target", f"see message {row['id']} quoted", stamp),
@@ -814,10 +819,10 @@ class StatusTests(CliTestBase):
 
         # An inactive uncompacted row and a lookalike do not count once the real row is gone.
         self.open_db()
-        self.db._write_sql(
+        self.write_state(
             "DELETE FROM messages WHERE role = 'user' AND active = 1 AND compacted = 0",
         )
-        self.db._write_sql(
+        self.write_state(
             "INSERT INTO messages (session_id, role, content, timestamp, active, compacted) "
             "VALUES (?, 'user', ?, ?, 0, 1)",
             ("local-target", text, stamp),
@@ -827,7 +832,7 @@ class StatusTests(CliTestBase):
         self.assertIn("found in the target's transcript", out)
 
         self.open_db()
-        self.db._write_sql("DELETE FROM messages")
+        self.write_state("DELETE FROM messages")
         self.close_db()
         code, out, err = self.invoke(["status", row["id"]])
         self.assertIn("not found in the target's transcript (yet)", out)

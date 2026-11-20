@@ -6,6 +6,7 @@ import contextvars
 import json
 import os
 import shutil
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -98,14 +99,14 @@ class EchoTestBase(unittest.TestCase):
         return {"ok": True, "sessions": []}
 
     def add(self, session_id, title, source, *, origin=None):
-        self.db.create_session(session_id, source=source)
-        self.db._write_sql("UPDATE sessions SET started_at = ? WHERE id = ?", (self.started, session_id))
+        self.db.create_session(session_id, source=source,
+                               origin_json=json.dumps(origin) if origin is not None else None)
+        with sqlite3.connect(self.home / "state.db") as conn:
+            conn.execute("UPDATE sessions SET started_at = ? WHERE id = ?", (self.started, session_id))
         self.started += 1
         if title:
             self.db.set_session_title(session_id, title)
-        if origin is not None:
-            self.db._write_sql("UPDATE sessions SET origin_json = ? WHERE id = ?",
-                               (json.dumps(origin), session_id))
+
 
     def send(self, to="tg-private", message="Is 22:00 still ok?", **kwargs):
         """A real framed message through route.send. Returns ``(message_id, submitted text)``.

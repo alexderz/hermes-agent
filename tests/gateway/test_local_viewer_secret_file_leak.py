@@ -121,7 +121,9 @@ async def test_a_secret_file_value_lands_only_in_the_file(tmp_path, monkeypatch,
 
         assert await desktop.connection.dispatch(answer) is None
         raw = await asyncio.wait_for(result, 10)
-        desktop.authority.db.append_message(stored, "tool", content=raw, tool_name="clarify", tool_call_id="call-1")
+        from persistence.conversation.messages import NewMessage
+        desktop.authority.persistence.messages.append(
+            stored, NewMessage(role="tool", content=raw, tool_name="clarify", tool_call_id="call-1"))
     finally:
         await desktop.connection.close()
     hermes_logging._reset_queued_handlers()  # flush every queued record to the log files

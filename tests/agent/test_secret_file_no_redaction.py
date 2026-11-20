@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-import agent.redact as redact
+import agent.redact_vault_values as redact
 from agent.secret_file_writer import plan_secret_file, secret_file_answer
 
 pytestmark = pytest.mark.platforms("posix")

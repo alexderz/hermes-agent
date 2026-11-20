@@ -297,11 +297,10 @@ def _enabled_bundled_packages(hermes_root: Path) -> list[Path]:
     ``<home>/plugins``, so without this its desktop half (e.g. a status-bar meter) never reaches
     the Webapp. Disabled or unlisted bundled plugins are not published."""
     try:
-        import yaml
-
+        from gateway.config_loader import read_yaml_layers
         from hermes_cli.plugins import get_bundled_plugins_dir
 
-        raw = yaml.safe_load((hermes_root / "config.yaml").read_text(encoding="utf-8")) or {}
+        raw = read_yaml_layers(hermes_root)
         section = raw.get("plugins") if isinstance(raw, dict) else None
         enabled = section.get("enabled") if isinstance(section, dict) else None
         disabled = section.get("disabled") if isinstance(section, dict) else None

@@ -648,9 +648,12 @@ class _Who:
 
 def _open_state():
     try:
-        from hermes_state import SessionDB
+        try:
+            from .state import SessionReader
+        except ImportError:  # loaded as a top-level module by the vendored unittest suite
+            from state import SessionReader
 
-        return SessionDB(read_only=True)
+        return SessionReader()
     except Exception:  # health: allow BLE001 -- state unreadable means the sender stays unknown
         return None
 

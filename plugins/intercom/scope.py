@@ -74,9 +74,12 @@ def rule(platform: str, chat_id: str, chat_type: str | None, user_id: str | None
 
 
 def _read_row(session_id: str) -> dict | None:
-    from hermes_state import SessionDB
+    try:
+        from .state import SessionReader
+    except ImportError:  # loaded as a top-level module by the vendored unittest suite
+        from state import SessionReader
 
-    db = SessionDB(read_only=True)
+    db = SessionReader()
     try:
         return db.get_session(session_id)
     finally:

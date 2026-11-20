@@ -83,12 +83,10 @@ class RouteTestBase(unittest.TestCase):
         (self.home / "config.yaml").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     def add(self, session_id, title, source, *, origin=None):
-        self.db.create_session(session_id, source=source)
+        self.db.create_session(session_id, source=source,
+                               origin_json=json.dumps(origin) if origin is not None else None)
         if title:
             self.db.set_session_title(session_id, title)
-        if origin is not None:
-            self.db._write_sql("UPDATE sessions SET origin_json = ? WHERE id = ?",
-                               (json.dumps(origin), session_id))
 
     def lister(self, scope="live", picker=False):
         self.lister_calls.append(scope)

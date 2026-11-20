@@ -132,13 +132,18 @@ class AddressTests(unittest.TestCase):
         if title:
             self.db.set_session_title(sid, title)
         if started_at is not None:
-            self.db._write_sql(
-                "UPDATE sessions SET started_at = ? WHERE id = ?", (started_at, sid),
-            )
+            with sqlite3.connect(self.home / "state.db") as conn:
+                conn.execute("UPDATE sessions SET started_at = ? WHERE id = ?", (started_at, sid))
 
     def close_writer(self):
         self.db.close()
         self.db = None
+
+    def hide(self, session_id, *, home=None):
+        from persistence_assembly import open_persistence, profile_scope
+
+        with open_persistence(profile_scope(home=home or self.home)) as store:
+            store.sessions.set_hidden(session_id, True)
 
     def test_home_and_exact_title_are_case_sensitive(self):
         self.open_writer()
@@ -294,9 +299,10 @@ class AddressTests(unittest.TestCase):
             self.add_session(f"local-fill-{index}", title=f"xxxx {index}", started_at=1000 + index)
         self.add_session("local-old", title="Reviewer notes", started_at=1)
         self.add_session("local-hidden", title="Reviewer hidden", started_at=2)
-        self.db.set_session_hidden("local-hidden", True)
+        self.hide("local-hidden")
         self.add_session("local-archived", title="Reviewer archived", started_at=3)
-        self.db.set_session_archived("local-archived", True, notify=False)
+        with sqlite3.connect(self.home / "state.db") as conn:
+            conn.execute("UPDATE sessions SET archived = 1 WHERE id = ?", ("local-archived",))
         self.add_session("local-cron", title="Reviewer cron", source="cron", started_at=4)
         self.close_writer()
         result = address.resolve("Reviewer", lister=_quiet_lister())
@@ -846,11 +852,11 @@ class AddressTests(unittest.TestCase):
         self.open_writer()
         self.add_session("local-notes", title="Notes", source="cli", started_at=10)
         self.add_session("local-secret", title="Secret", source="cli", started_at=9, cwd=str(work))
-        self.db.set_session_hidden("local-secret", True)
+        self.hide("local-secret")
         self.add_session("local-numbered", title="Bot Chat #2", source="cli", started_at=8)
-        self.db.set_session_hidden("local-numbered", True)
+        self.hide("local-numbered")
         self.add_session("local-lower", title="bot chat", source="cli", started_at=7)
-        self.db.set_session_hidden("local-lower", True)
+        self.hide("local-lower")
         self.close_writer()
         stored = [{
             "id": "local-notes", "title": "Notes", "source": "cli", "running": False,
@@ -865,7 +871,7 @@ class AddressTests(unittest.TestCase):
             "local-bot", title="Bot Chat", source="tui", started_at=4,
             cwd=str(self.home / "scratch"), git_repo_root=str(work),
         )
-        self.db.set_session_hidden("local-bot", True)
+        self.hide("local-bot")
         self.close_writer()
         listed = address.list_sessions(lister=_quiet_lister(stored, []))
         by_id = {item["id"]: item for item in listed["sessions"]}
@@ -884,7 +890,7 @@ class AddressTests(unittest.TestCase):
     def test_list_bot_chat_state_comes_from_the_live_list(self):
         self.open_writer()
         self.add_session("local-bot", title="Bot Chat", source="tui", started_at=1)
-        self.db.set_session_hidden("local-bot", True)
+        self.hide("local-bot")
         self.close_writer()
         closed = address.list_sessions(lister=_quiet_lister([], []))
         self.assertEqual([item["state"] for item in closed["sessions"]], ["closed"])
@@ -905,7 +911,7 @@ class AddressTests(unittest.TestCase):
         self.add_session("local-bot-root", title="Bot Chat", source="tui", started_at=1)
         self.db.end_session("local-bot-root", "compression")
         self.add_session("local-bot-tip", parent="local-bot-root", source="tui", started_at=2)
-        self.db.set_session_hidden("local-bot-root", True)
+        self.hide("local-bot-root")
         self.close_writer()
         # Omitted by the lister: one row, at the compression tip.
         omitted = address.list_sessions(lister=_quiet_lister([], []))
@@ -933,7 +939,7 @@ class AddressTests(unittest.TestCase):
         )
         self.open_writer()
         self.add_session("local-default-bot", title="Bot Chat", source="tui", started_at=1)
-        self.db.set_session_hidden("local-default-bot", True)
+        self.hide("local-default-bot")
         self.close_writer()
         from hermes_state import SessionDB
 
@@ -941,10 +947,10 @@ class AddressTests(unittest.TestCase):
         try:
             writer.create_session("local-spike-bot", source="tui")
             writer.set_session_title("local-spike-bot", "Bot Chat")
-            writer.set_session_hidden("local-spike-bot", True)
+            self.hide("local-spike-bot", home=named)
             writer.create_session("local-spike-secret", source="cli")
             writer.set_session_title("local-spike-secret", "Secret")
-            writer.set_session_hidden("local-spike-secret", True)
+            self.hide("local-spike-secret", home=named)
         finally:
             writer.close()
 

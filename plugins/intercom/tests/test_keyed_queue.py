@@ -113,14 +113,13 @@ class KeyedQueueTestBase(unittest.TestCase):
         self.add("local-target", "Reviewer", "tui")
 
     def add(self, session_id, title, source, *, origin=None):
-        self.db.create_session(session_id, source=source)
-        self.db._write_sql("UPDATE sessions SET started_at = ? WHERE id = ?", (self.started, session_id))
+        self.db.create_session(session_id, source=source,
+                               origin_json=json.dumps(origin) if origin is not None else None)
+        with sqlite3.connect(self.home / "state.db") as conn:
+            conn.execute("UPDATE sessions SET started_at = ? WHERE id = ?", (self.started, session_id))
         self.started += 1
         if title:
             self.db.set_session_title(session_id, title)
-        if origin is not None:
-            self.db._write_sql("UPDATE sessions SET origin_json = ? WHERE id = ?",
-                               (json.dumps(origin), session_id))
 
     @staticmethod
     def lister(scope="live", picker=False):

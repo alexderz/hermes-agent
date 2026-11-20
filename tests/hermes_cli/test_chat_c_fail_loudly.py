@@ -22,18 +22,13 @@ from hermes_cli.gateway_session_store import create_titled_session as _REAL_CREA
 
 
 def _row_cwd(session_id):
-    """The row's cwd straight from state.db: under the CI runner a SessionDB read in the same
-    process can return a pre-write snapshot, so the stamp tests read the file itself."""
+    """Read the committed cwd independently of an existing store handle."""
     import sqlite3
 
-    from hermes_state import SessionDB
+    from hermes_constants import get_hermes_home
 
-    db = SessionDB()
-    try:
-        path = str(db.db_path)
-    finally:
-        db.close()
-    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    path = (get_hermes_home() / "state.db").resolve().as_uri() + "?mode=ro"
+    conn = sqlite3.connect(path, uri=True)
     try:
         row = conn.execute("SELECT cwd FROM sessions WHERE id = ?", (session_id,)).fetchone()
     finally:
@@ -51,15 +46,12 @@ def isolated_home(tmp_path, monkeypatch):
     from hermes_cli import gateway_session_store
 
     def create_titled(title):
-        from hermes_state import SessionDB
-        db = SessionDB()
-        try:
+        from persistence_assembly import open_persistence, profile_scope
+        from tests.fixtures.storage_seed import seed_session
+        with open_persistence(profile_scope()) as store:
             sid = "local-" + "ab" * 32
-            db.create_session(sid, source="local")
-            db.set_session_title(sid, title)
+            seed_session(store, sid, "local", title=title)
             return sid
-        finally:
-            db.close()
     monkeypatch.setattr(gateway_session_store, "create_titled_session", create_titled)
     return home
 
@@ -98,29 +90,23 @@ class TestCreateTitledSession:
         sid = _create_titled_session("Bot Chat")
         assert sid, "should return a session id"
 
-        from hermes_state import SessionDB
+        from persistence_assembly import open_persistence, profile_scope
 
-        db = SessionDB()
-        try:
-            session = db.get_session(sid)
+        with open_persistence(profile_scope()) as store:
+            session = store.sessions.get(sid)
             assert session is not None
-            assert db.get_session_title(sid) == "Bot Chat"
-        finally:
-            db.close()
+            assert store.sessions.get_title(sid) == "Bot Chat"
 
     def test_created_session_resolvable_by_title(self, isolated_home):
         """After creation, resolve_session_by_title finds it (idempotent sends)."""
         sid = _create_titled_session("Bot Chat")
         assert sid
 
-        from hermes_state import SessionDB
+        from persistence_assembly import open_persistence, profile_scope
 
-        db = SessionDB()
-        try:
-            resolved = db.resolve_session_by_title("Bot Chat")
+        with open_persistence(profile_scope()) as store:
+            resolved = store.sessions.resolve_by_title("Bot Chat")
             assert resolved == sid
-        finally:
-            db.close()
 
 
 class TestTitledSessionRecordsCwd:
@@ -165,10 +151,6 @@ class TestTitledSessionRecordsCwd:
         _create_titled_session("Remote")
         assert calls[-1][1]["row_cwd"] == ""
 
-    @pytest.mark.xfail(strict=False, reason=(
-        "fork (alex/cli-session-cwd) on 0.23: under scripts/run_tests.sh the stamped cwd is committed "
-        "(fill returns True, same state.db path) but this process's read sees none; a cross-process "
-        "check shows the row stamped. Passes under bare pytest. Follow-up: Hermes Improvement."))
     def test_fill_keeps_git_fields_and_skips_non_cli(self, isolated_home, tmp_path, monkeypatch):
         from hermes_cli.main import _stamp_resumed_session_cwd
         from hermes_state import SessionDB
@@ -209,10 +191,6 @@ class TestTitledSessionRecordsCwd:
         finally:
             db.close()
 
-    @pytest.mark.xfail(strict=False, reason=(
-        "fork (alex/cli-session-cwd) on 0.23: under scripts/run_tests.sh the stamped cwd is committed "
-        "(fill returns True, same state.db path) but this process's read sees none; a cross-process "
-        "check shows the row stamped. Passes under bare pytest. Follow-up: Hermes Improvement."))
     def test_resolve_args_stamps_only_with_in(self, isolated_home, tmp_path, monkeypatch):
         import argparse
 
@@ -239,10 +217,6 @@ class TestTitledSessionRecordsCwd:
         finally:
             db.close()
 
-    @pytest.mark.xfail(strict=False, reason=(
-        "fork (alex/cli-session-cwd) on 0.23: under scripts/run_tests.sh the stamped cwd is committed "
-        "(fill returns True, same state.db path) but this process's read sees none; a cross-process "
-        "check shows the row stamped. Passes under bare pytest. Follow-up: Hermes Improvement."))
     def test_resume_with_in_fills_missing_cwd_only(self, isolated_home, tmp_path, monkeypatch):
         from hermes_cli.main import _stamp_resumed_session_cwd
         from hermes_state import SessionDB
@@ -348,10 +322,7 @@ class TestChatCFailLoudlyOnStderr:
         main_mod._resolve_continue_arg(args, use_tui=True)
 
         assert args.resume, "resume should be set to the new session id"
-        from hermes_state import SessionDB
+        from persistence_assembly import open_persistence, profile_scope
 
-        db = SessionDB()
-        try:
-            assert db.get_session_title(args.resume) == "Bot Chat"
-        finally:
-            db.close()
+        with open_persistence(profile_scope()) as store:
+            assert store.sessions.get_title(args.resume) == "Bot Chat"

@@ -385,9 +385,12 @@ def _lineage(session_id: str) -> set:
     """*session_id*, its compression ancestors and its tip."""
     ids = {session_id}
     try:
-        from hermes_state import SessionDB
+        try:
+            from .state import SessionReader
+        except ImportError:  # loaded as a top-level module by the vendored unittest suite
+            from state import SessionReader
 
-        db = SessionDB(read_only=True)
+        db = SessionReader()
     except Exception:  # health: allow BLE001 -- lineage falls back to this session id
         return ids
     try:

@@ -92,12 +92,13 @@ class RebootTests(CliTestBase):
         }
 
     def add_message(self, sid, role, stamp, tool_calls="[]", active=1):
-        self.db._write_sql(
-            "INSERT INTO messages "
-            "(session_id, role, content, tool_calls, timestamp, active, compacted) "
-            "VALUES (?, ?, ?, ?, ?, ?, 0)",
-            (sid, role, "work", tool_calls, float(stamp), active),
-        )
+        with sqlite3.connect(self.home / "state.db") as conn:
+            conn.execute(
+                "INSERT INTO messages "
+                "(session_id, role, content, tool_calls, timestamp, active, compacted) "
+                "VALUES (?, ?, ?, ?, ?, ?, 0)",
+                (sid, role, "work", tool_calls, float(stamp), active),
+            )
 
     def pending_path(self):
         return self.home / "plugin-data" / "intercom" / "reboot-pending.json"

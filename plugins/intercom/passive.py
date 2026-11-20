@@ -156,9 +156,12 @@ def _lineage_and_root(session_id: str) -> tuple[set, str]:
     lineage root, from one read. The root is the session id when it has no lineage row."""
     ids = {session_id}
     try:
-        from hermes_state import SessionDB
+        try:
+            from .state import SessionReader
+        except ImportError:  # loaded as a top-level module by the vendored unittest suite
+            from state import SessionReader
 
-        db = SessionDB(read_only=True)
+        db = SessionReader()
     except Exception:  # health: allow BLE001 -- lineage and root fall back to this session id
         return ids, session_id
     chain = []

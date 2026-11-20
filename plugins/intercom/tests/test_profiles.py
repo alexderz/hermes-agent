@@ -132,19 +132,17 @@ class ProfilesTestBase(unittest.TestCase):
 
     def add(self, home, session_id, title, source, *, origin=None):
         db = self.dbs[home]
-        db.create_session(session_id, source=source)
+        db.create_session(session_id, source=source,
+                          origin_json=json.dumps(origin) if origin is not None else None)
         db.set_session_title(session_id, title)
-        if origin is not None:
-            db._write_sql("UPDATE sessions SET origin_json = ? WHERE id = ?",
-                          (json.dumps(origin), session_id))
 
     def list_sessions(self, scope="live", picker=False):
         home = _home()
         self.listed.append(home)
         if scope != "stored":
             return {"ok": True, "sessions": []}
-        db = self.dbs[home]
-        rows = db._conn.execute("SELECT id, title, source FROM sessions").fetchall()
+        with sqlite3.connect(home / "state.db") as conn:
+            rows = conn.execute("SELECT id, title, source FROM sessions").fetchall()
         return {"ok": True, "sessions": [{"id": r[0], "title": r[1], "source": r[2]} for r in rows]}
 
     def send(self, to="Bot Chat", message="build is green", *, sender="d-sender", **kwargs):

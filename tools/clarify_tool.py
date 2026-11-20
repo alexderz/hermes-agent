@@ -249,4 +249,5 @@ registry.register(
         secret_file=args.get("secret_file"), task_id=kw.get("task_id")),
     check_fn=check_clarify_requirements,
     emoji="❓",
+    self_checked_args=("questions",),
 )

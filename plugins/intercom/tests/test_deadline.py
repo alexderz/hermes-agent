@@ -148,14 +148,14 @@ class DeadlineTestBase(unittest.TestCase):
     def add(self, session_id, title, source, *, parent=None, origin=None, home=None):
         db = self.dbs[home or self.root]
         kwargs = {"parent_session_id": parent} if parent else {}
-        db.create_session(session_id, source=source, **kwargs)
-        db._write_sql("UPDATE sessions SET started_at = ? WHERE id = ?", (self.started, session_id))
+        db.create_session(session_id, source=source,
+                          origin_json=json.dumps(origin) if origin is not None else None, **kwargs)
+        with sqlite3.connect((home or self.root) / "state.db") as conn:
+            conn.execute("UPDATE sessions SET started_at = ? WHERE id = ?", (self.started, session_id))
         self.started += 1
         if title:
             db.set_session_title(session_id, title)
-        if origin is not None:
-            db._write_sql("UPDATE sessions SET origin_json = ? WHERE id = ?",
-                          (json.dumps(origin), session_id))
+
 
     def compact(self, session_id, tip):
         self.db.end_session(session_id, "compression")
