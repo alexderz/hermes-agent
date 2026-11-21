@@ -20,11 +20,11 @@ function tone(c) {
   return ['good', 'under pace']
 }
 
-const pct = v => (v == null ? '–' : `${Math.round(v)}%`)
-const signed = v => (v == null ? '' : `${v > 0 ? '+' : ''}${Math.round(v)}%`)
+const pct = v => (!Number.isFinite(v) ? '–' : v > 0 && v < 1 ? '<1%' : `${Math.round(v)}%`)
+const signed = v => (v == null ? '' : `${v > 0 ? '+' : ''}${Math.round(v)}pp`)
 const money = v => Number.isFinite(v) ? `$${v.toFixed(2)}` : '–'
 const compactMoney = v => money(v).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')
-const remaining = v => v == null ? null : Math.max(0, Math.min(100, 100 - v))
+const remaining = v => Number.isFinite(v) ? Math.max(0, Math.min(100, 100 - v)) : null
 
 // A single status-bar row, not another mobile toolbar. Reserve enough of the
 // right cluster for the compact meter; the other status items can still clip.
@@ -50,12 +50,12 @@ function Row({ c }) {
         jsx(StatusDot, { tone: t }), `${c.name} ${c.plan || ''}`,
         c.picked ? jsx('span', { style: { fontSize: 10, color: 'var(--ui-accent)' }, children: '· current pick' }) : null
       ] }),
-      jsx('div', { style: { fontWeight: 700, fontSize: 15 }, children: `${pct(c.used_percent)}  P: ${signed(c.pace_delta)}` }),
+      jsx('div', { style: { fontWeight: 700, fontSize: 15 }, children: `${pct(remaining(c.used_percent))}  P: ${signed(c.pace_delta)}` }),
       jsx('div', { style: { color: 'var(--ui-text-tertiary)', fontSize: 11 }, children:
         `${word} · week resets ${c.reset_label || '?'}` +
-        (c.short_used_percent != null ? ` · 5-hour ${pct(c.short_used_percent)}` : '') }),
+        (c.short_used_percent != null ? ` · 5-hour ${pct(remaining(c.short_used_percent))}` : '') }),
       jsx('div', { style: { color: 'var(--ui-text-tertiary)', fontSize: 11, textAlign: 'right' }, children:
-        c.pace_used_percent != null ? `pace ${pct(c.pace_used_percent)}` : '' })
+        c.pace_used_percent != null ? `pace target ${pct(remaining(c.pace_used_percent))}` : '' })
     ]
   })
 }
@@ -76,7 +76,7 @@ function Panel({ data, ctx }) {
   }
   const pick = data.pick
   return jsxs('div', { style: { fontSize: 12, padding: 4 }, children: [
-    jsx('div', { style: { fontWeight: 600, marginBottom: 4 }, children: 'Weekly usage (% used), most over pace first' }),
+    jsx('div', { style: { fontWeight: 600, marginBottom: 4 }, children: 'Weekly quota remaining, most over pace first' }),
     data.warning && data.warning.active
       ? jsx('div', { style: { color: 'var(--ui-text-secondary)', marginBottom: 4 },
           children: `Warning: usage data unavailable for ${data.warning.subscriptions.join(', ')}` })
@@ -92,7 +92,7 @@ function Panel({ data, ctx }) {
     jsx('div', { style: { color: 'var(--ui-text-tertiary)', fontSize: 11, margin: '4px 0 8px' }, children:
       (data.on_demand && data.on_demand.active ? 'Routing would use on-demand OpenRouter. '
         : pick ? `Routing would pick ${SHORT[pick.subscription] || pick.subscription} (${pick.model}). ` : 'No routing pick. ') +
-      'Advisory only for now. P is headroom against the weekly pace line; minus means over pace.' }),
+      'Advisory only for now. Percentages are quota remaining. P is pace headroom in percentage points; minus means over pace.' }),
     jsxs('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' }, children: [
       jsx('span', { style: { color: 'var(--ui-text-quaternary)', fontSize: 11 },
         children: data.written_at ? `Read ${new Date(data.written_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'Not read yet' }),
