@@ -23,6 +23,7 @@ function tone(c) {
 const pct = v => (v == null ? '–' : `${Math.round(v)}%`)
 const signed = v => (v == null ? '' : `${v > 0 ? '+' : ''}${Math.round(v)}%`)
 const money = v => Number.isFinite(v) ? `$${v.toFixed(2)}` : '–'
+const compactMoney = v => money(v).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')
 const remaining = v => v == null ? null : Math.max(0, Math.min(100, 100 - v))
 
 // A single status-bar row, not another mobile toolbar. Reserve enough of the
@@ -84,9 +85,9 @@ function Panel({ data, ctx }) {
     jsxs('div', { style: { display: 'grid', gridTemplateColumns: '1fr auto', padding: '6px 0' }, children: [
       jsxs('div', { style: { display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600 }, children: [
         jsx(StatusDot, { tone: 'muted' }), 'OpenRouter (pay per use)'] }),
-      jsx('div', { style: { fontWeight: 700, fontSize: 15 }, children: `${money(o.week)} this week` }),
+      jsx('div', { style: { fontWeight: 700, fontSize: 15 }, children: `${money(o.week)} this week (UTC)` }),
       jsx('div', { style: { color: 'var(--ui-text-tertiary)', fontSize: 11 }, children:
-        `${money(o.today)} today · ${money(o.month)} this month · balance ${money(o.balance)}` })
+        `${money(o.today)} today (UTC) · ${money(o.month)} this month · balance ${money(o.balance)}` })
     ] }),
     jsx('div', { style: { color: 'var(--ui-text-tertiary)', fontSize: 11, margin: '4px 0 8px' }, children:
       (data.on_demand && data.on_demand.active ? 'Routing would use on-demand OpenRouter. '
@@ -122,7 +123,8 @@ function Meter({ ctx }) {
         `${METER_SHORT[c.id] || c.name} ${pct(remaining(c.used_percent))}${!compact && c.pace_delta != null ? ` P${signed(c.pace_delta)}` : ''}`
       ] })
   })
-  const cost = jsx('span', { 'aria-label': `OpenRouter spending today ${money(o.today)}`, title: 'OpenRouter spending today', children: `OR ${money(o.today)}` }, 'or')
+  const costDetail = `OpenRouter spending: this week (UTC) ${money(o.week)}, today (UTC) ${money(o.today)}`
+  const cost = jsx('span', { 'aria-label': costDetail, title: costDetail, children: `OR W${compactMoney(o.week)} D${compactMoney(o.today)}` }, 'or')
   return jsxs(Popover, { open, onOpenChange: setOpen, children: [
     jsx('style', { children: METER_CSS }),
     jsx(PopoverTrigger, { asChild: true, children: jsx(Button, {
