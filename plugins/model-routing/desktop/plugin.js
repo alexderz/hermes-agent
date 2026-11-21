@@ -1,5 +1,5 @@
 // model-routing usage meter for the Hermes desktop app: a status-bar chip with one reading per
-// subscription (weekly used %, dot coloured by pace) and a popover with the detail. Data comes from
+// subscription (weekly remaining %, dot coloured by pace) and a popover with the detail. Data comes from
 // this plugin's backend (/api/plugins/model-routing/state), refreshed every minute; the collector
 // reads the providers every 15 minutes, and "Refresh now" reads them on demand (read-only, no tokens).
 import {
@@ -11,6 +11,7 @@ import { jsx, jsxs } from 'react/jsx-runtime'
 const ID = 'model-routing'
 const KEY = [ID, 'state']
 const SHORT = { claude: 'Claude', codex: 'GPT', supergrok: 'Grok' }
+const METER_SHORT = { claude: 'Cl', codex: 'GPT', supergrok: 'Gr' }
 
 function tone(c) {
   if (!c.fresh) return ['muted', 'no data']
@@ -21,7 +22,7 @@ function tone(c) {
 
 const pct = v => (v == null ? '–' : `${Math.round(v)}%`)
 const signed = v => (v == null ? '' : `${v > 0 ? '+' : ''}${Math.round(v)}%`)
-const money = v => `$${(v || 0).toFixed(2)}`
+const money = v => Number.isFinite(v) ? `$${v.toFixed(2)}` : '–'
 const remaining = v => v == null ? null : Math.max(0, Math.min(100, 100 - v))
 
 // A single status-bar row, not another mobile toolbar. Reserve enough of the
@@ -115,20 +116,21 @@ function Meter({ ctx }) {
   const o = data.openrouter || {}
   const chips = (compact) => (data.cards || []).map(c => {
     const [t, word] = tone(c)
-    return jsxs('span', { key: c.id, 'aria-label': `${c.name} ${pct(remaining(c.used_percent))} left, ${word}`,
+    return jsxs('span', { key: c.id, 'aria-label': `${c.name} ${pct(remaining(c.used_percent))} remaining, ${word}`,
       style: { display: 'inline-flex', alignItems: 'center', gap: 4 }, children: [
         jsx(StatusDot, { tone: t }),
-        `${SHORT[c.id] || c.name} ${pct(remaining(c.used_percent))}${compact ? '' : ` left${c.pace_delta != null ? ` P${signed(c.pace_delta)}` : ''}`}`
+        `${METER_SHORT[c.id] || c.name} ${pct(remaining(c.used_percent))}${!compact && c.pace_delta != null ? ` P${signed(c.pace_delta)}` : ''}`
       ] })
   })
+  const cost = jsx('span', { 'aria-label': `OpenRouter spending today ${money(o.today)}`, title: 'OpenRouter spending today', children: `OR ${money(o.today)}` }, 'or')
   return jsxs(Popover, { open, onOpenChange: setOpen, children: [
     jsx('style', { children: METER_CSS }),
     jsx(PopoverTrigger, { asChild: true, children: jsx(Button, {
       variant: 'ghost', size: 'micro', 'aria-label': 'Subscription usage',
       'data-subscription-meter': '',
       children: [
-        jsxs('span', { key: 'full', 'data-usage-full': '', style: { display: 'inline-flex', gap: 10, fontSize: 11, color: 'var(--ui-text-secondary)' }, children: [...chips(false), jsx('span', { children: `OR ${money(o.today)}` }, 'or')] }),
-        jsxs('span', { key: 'compact', 'data-usage-compact': '', style: { alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--ui-text-secondary)' }, children: ['Left', ...chips(true)] })
+        jsxs('span', { key: 'full', 'data-usage-full': '', style: { display: 'inline-flex', gap: 10, fontSize: 11, color: 'var(--ui-text-secondary)' }, children: [...chips(false), cost] }),
+        jsxs('span', { key: 'compact', 'data-usage-compact': '', style: { alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--ui-text-secondary)' }, children: [...chips(true), cost] })
       ]
     }) }),
     jsx(PopoverContent, { side: 'top', align: 'end', style: { width: 'min(360px, calc(100vw - 16px))' }, children: jsx(Panel, { data, ctx }) })
