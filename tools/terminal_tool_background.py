@@ -238,6 +238,9 @@ def spawn_background_process(
         if watch_patterns:
             proc_session.watch_patterns = list(watch_patterns)
             result_data["watch_patterns"] = proc_session.watch_patterns
+        # Spawn checkpointed before notify, watch, heartbeat, and chat routing
+        # were set. Rewrite the file a restart actually reads.
+        process_registry._write_checkpoint()
         return json.dumps(result_data, ensure_ascii=False)
     except Exception as e:
         return json.dumps({
@@ -288,11 +291,17 @@ def yield_to_background_handler(
 
 
 def _stamp_routing_if_gateway(process_registry, session, session_key) -> None:
-    """Route the adopted session's completion like a normal notify_on_complete spawn."""
+    """Route the adopted session's completion like a normal notify_on_complete spawn.
+
+    ``adopt_local`` checkpointed before this routing, or before an unsupported
+    session cleared notify. Rewrite so a restart sees that final contract.
+    """
     from gateway.session_context import async_delivery_supported, get_session_env
-    if not async_delivery_supported():
+
+    if async_delivery_supported():
+        _stamp_gateway_routing(session, get_session_env)
+        if session.watcher_platform:
+            _register_completion_watcher(process_registry, session, session_key)
+    else:
         session.notify_on_complete = False
-        return
-    _stamp_gateway_routing(session, get_session_env)
-    if session.watcher_platform:
-        _register_completion_watcher(process_registry, session, session_key)
+    process_registry._write_checkpoint()
