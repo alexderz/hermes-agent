@@ -3059,6 +3059,11 @@ export interface Translations extends NoticeTranslations {
     todos: (done: number, total: number) => string
     previousTodos: (done: number, total: number) => string
     running: string
+    waitingFor: (name: string) => string
+    resultReady: string
+    failed: string
+    lost: string
+    unknown: string
     stop: string
     dismiss: string
     exit: (code: number) => string

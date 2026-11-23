@@ -75,8 +75,10 @@ it('auto-expands only todos and keeps other groups closed as activity arrives', 
   const view = render(stack())
 
   expect(screen.getByText('Visible todo')).toBeTruthy()
+  // The compact background row leads with the job name while the section stays collapsed.
+  expect(screen.getByRole('button', { name: /Background process/ })).toBeTruthy()
 
-  for (const text of ['Hidden legacy goal', 'Background process', 'Worker task', 'Queued request']) {
+  for (const text of ['Hidden legacy goal', 'Worker task', 'Queued request']) {
     expect(screen.queryByText(text)).toBeNull()
   }
 

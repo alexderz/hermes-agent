@@ -5,6 +5,7 @@ subagent rows from the same snapshot the ``process_manage`` tool reads, so a
 ``terminal(background=true)`` spawn is visible the moment it starts instead of only
 when its completion notification lands.
 """
+
 from __future__ import annotations
 
 import time
@@ -17,6 +18,30 @@ RETAIN_SECONDS = 60
 
 # Reader-thread exits report "exited"; `kill_process` / `kill_all` stamp "killed".
 _STATUS_BY_REASON = {"killed": "killed", "lost": "lost"}
+_NAMED_ATTENTION = frozenset({"waiting", "running", "ready", "failed", "lost"})
+_OPEN_STATUSES = frozenset({"running", "waiting", "ready"})
+
+
+def process_is_open(status: str) -> bool:
+    """Waiting, running, and ready are still live. Ready stays until a later snapshot settles it."""
+    return status in _OPEN_STATUSES
+
+
+def _named_attention(entry: dict) -> str | None:
+    attention = entry.get("attention")
+    if attention in _NAMED_ATTENTION:
+        return attention
+    if attention:
+        return "unknown"
+    return None
+
+
+def _unsettled_service(entry: dict) -> bool:
+    if entry.get("service_mode") not in ("await", "notify"):
+        return False
+    if entry.get("exit_code") is not None:
+        return False
+    return (entry.get("completion_reason") or "") != "exited"
 
 
 def _last_output_line(buffer: str) -> str:
@@ -28,16 +53,23 @@ def _last_output_line(buffer: str) -> str:
 
 
 def process_status(entry: dict) -> str:
-    # killed/lost stay distinct from failed. attention is the service row's state.
+    # Killed is not an attention value. Read it before attention so a stop is
+    # not painted ready, waiting, or failed from a stale attention field.
+    if (entry.get("completion_reason") or "") == "killed":
+        return "killed"
+    attention = _named_attention(entry)
+    if attention:
+        return attention
+    if entry.get("status") != "exited":
+        return "waiting" if entry.get("service_mode") == "await" else "running"
     reason = _STATUS_BY_REASON.get(entry.get("completion_reason") or "")
     if reason:
         return reason
-    attention = entry.get("attention")
-    if attention in {"waiting", "ready", "failed", "lost"}:
-        return attention
-    if entry.get("status") != "exited":
-        return "running"
-    return "done" if not entry.get("exit_code") else "failed"
+    if entry.get("exit_code"):
+        return "failed"
+    if _unsettled_service(entry):
+        return "unknown"
+    return "done"
 
 
 def process_rows(now: float | None = None) -> list:
@@ -48,65 +80,102 @@ def process_rows(now: float | None = None) -> list:
     by session key in ``tui_gateway`` instead.
     """
     from hermes_cli.gateway_tools import process_registry as _registry
+
     process_registry = _registry()  # the gateway session's processes (rewired CLI)
 
     now = time.time() if now is None else now
     rows = []
-    live = {"running", "waiting", "ready"}
     for entry in process_registry.list_sessions(include_service_receipts=True):
         proc = process_registry.get(entry["session_id"])
         status = process_status(entry)
         if proc is None:
-            if status not in live:
+            if not process_is_open(status):
                 continue
             elapsed = int(entry.get("uptime_seconds") or 0)
-            rows.append({
-                "kind": "process",
-                "key": entry["session_id"],
-                "id": entry["session_id"],
-                "command": " ".join((entry.get("command") or "").split()) or t("cli.dock.process_goal_label"),
-                "status": status,
-                "exit_code": entry.get("exit_code"),
-                "elapsed": elapsed,
-                "since_exit": 0,
-                "detail": _last_output_line(entry.get("output_preview") or ""),
-            })
+            rows.append(
+                {
+                    "kind": "process",
+                    "key": entry["session_id"],
+                    "id": entry["session_id"],
+                    "command": " ".join((entry.get("command") or "").split())
+                    or t("cli.dock.process_goal_label"),
+                    "status": status,
+                    "exit_code": entry.get("exit_code"),
+                    "elapsed": elapsed,
+                    "since_exit": 0,
+                    "detail": _last_output_line(entry.get("output_preview") or ""),
+                }
+            )
             continue
-        exited_at = proc.exited_at if status not in live else 0.0
-        if status not in live and now - exited_at > RETAIN_SECONDS:
+        open_row = process_is_open(status)
+        exited_at = 0.0 if open_row else (proc.exited_at or 0.0)
+        if not open_row and now - exited_at > RETAIN_SECONDS:
             continue
         end = exited_at or now
-        rows.append({
-            "kind": "process",
-            "key": proc.id,
-            "id": proc.id,
-            "command": " ".join((proc.command or "").split()) or t("cli.dock.process_goal_label"),
-            "status": status,
-            "exit_code": proc.exit_code,
-            "elapsed": max(0, int(end - proc.started_at)),
-            "since_exit": max(0, int(now - exited_at)) if exited_at else 0,
-            "detail": _last_output_line(proc.output_buffer),
-        })
-    rows.sort(key=lambda r: (r["status"] not in live, -r["elapsed"] if r["status"] in live else r["since_exit"]))
+        rows.append(
+            {
+                "kind": "process",
+                "key": proc.id,
+                "id": proc.id,
+                "command": " ".join((proc.command or "").split())
+                or t("cli.dock.process_goal_label"),
+                "status": status,
+                "exit_code": proc.exit_code,
+                "elapsed": max(0, int(end - proc.started_at)),
+                "since_exit": max(0, int(now - exited_at)) if exited_at else 0,
+                "detail": _last_output_line(proc.output_buffer),
+            }
+        )
+    rows.sort(
+        key=lambda r: (
+            not process_is_open(r["status"]),
+            -r["elapsed"] if process_is_open(r["status"]) else r["since_exit"],
+        )
+    )
     return rows
 
 
-_GLYPH = {"running": "⚙", "waiting": "⚙", "ready": "✔", "done": "✔", "failed": "✘", "killed": "✘", "lost": "?"}
+_GLYPH = {
+    "running": "⚙",
+    "waiting": "…",
+    "ready": "◆",
+    "done": "✔",
+    "failed": "✘",
+    "killed": "✘",
+    "lost": "?",
+    "unknown": "?",
+}
 # Finished-status id → catalog key of the exit verdict (looked up at paint time).
-_VERDICT_KEYS = {"done": "cli.dock.exit_code", "failed": "cli.dock.exit_code",
-                 "killed": "cli.dock.verdict_killed", "lost": "cli.dock.verdict_lost"}
+_VERDICT_KEYS = {
+    "done": "cli.dock.exit_code",
+    "failed": "cli.dock.exit_code",
+    "killed": "cli.dock.verdict_killed",
+    "lost": "cli.dock.verdict_lost",
+}
+
+
+def _live_activity(row: dict) -> str:
+    tail = (
+        t("cli.dock.last_output", detail=row["detail"])
+        if row["detail"]
+        else t("cli.dock.starting")
+    )
+    if row["status"] == "waiting":
+        return f"{row['elapsed']}s · {t('cli.dock.verdict_waiting')} · {tail}"
+    return f"{row['elapsed']}s · {tail}"
 
 
 def process_activity(row: dict) -> str:
-    """The trailing ``· …`` part of a dock line: elapsed + latest output while running, the exit
-    verdict + age once finished."""
-    if row["status"] in {"running", "waiting"}:
-        return f"{row['elapsed']}s · " + (
-            t("cli.dock.last_output", detail=row["detail"]) if row["detail"] else t("cli.dock.starting"))
-    if row["status"] == "ready":
-        return f"{row['elapsed']}s · " + (row["detail"] or "ready")
-    verdict = _VERDICT_KEYS[row["status"]]
-    verdict = t(verdict, code=row["exit_code"])
+    """The trailing ``· …`` part of a dock line: elapsed + latest output while the row is live,
+    the exit verdict + age once finished. Ready says the result is ready and nothing more."""
+    status = row["status"]
+    if status in ("running", "waiting"):
+        return _live_activity(row)
+    if status == "ready":
+        return t("cli.dock.verdict_ready")
+    if status == "unknown":
+        return t("cli.dock.verdict_unknown")
+    verdict = t(_VERDICT_KEYS[status], code=row["exit_code"])
     return t("cli.dock.verdict_ago", verdict=verdict, seconds=row["since_exit"])
 
 
@@ -116,6 +185,7 @@ def process_glyph(row: dict) -> str:
 
 def process_tail(process_id: str) -> str:
     from hermes_cli.gateway_tools import process_registry as _registry
+
     process_registry = _registry()  # the gateway session's processes (rewired CLI)
 
     proc = process_registry.get(process_id)
@@ -128,6 +198,7 @@ def process_tail(process_id: str) -> str:
 
 def kill(process_id: str) -> dict:
     from hermes_cli.gateway_tools import process_registry as _registry
+
     process_registry = _registry()  # the gateway session's processes (rewired CLI)
 
     return process_registry.kill_process(process_id)

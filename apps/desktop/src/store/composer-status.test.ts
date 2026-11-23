@@ -8,6 +8,7 @@ import {
   reconcileBackgroundProcesses,
   refreshBackgroundProcesses,
   resetBackgroundPollingGuard,
+  resetSessionBackground,
   stopBackgroundProcess
 } from './composer-status'
 import { $gateway } from './gateway'
@@ -315,24 +316,30 @@ describe('refreshBackgroundProcesses dead-session guard', () => {
     expect(request).toHaveBeenCalledTimes(2)
   })
 
-  it('dismisses a stale process row when Stop is clicked after the runtime is gone', async () => {
+  it('keeps a stale process visible as unknown when Stop is clicked after the runtime is gone', async () => {
     reconcileBackgroundProcesses(SID, [running('stale')])
     markSessionGone(SID)
-    $gateway.set({ request: vi.fn() } as never)
+    const request = vi.fn()
+    $gateway.set({ request } as never)
+    vi.mocked(notifyError).mockClear()
 
     await stopBackgroundProcess(SID, 'stale')
 
-    expect(items()).toEqual([])
+    expect(items()).toEqual([expect.objectContaining({ id: 'stale', state: 'unknown' })])
+    expect(request).not.toHaveBeenCalled()
+    expect(notifyError).toHaveBeenCalledWith(expect.any(Error), 'Could not stop the process')
   })
 
-  it('dismisses a stale process row while the gateway is disconnected', async () => {
+  it('keeps a gone session row visible as unknown while the gateway is disconnected', async () => {
     reconcileBackgroundProcesses(SID, [running('disconnected')])
     markSessionGone(SID)
     $gateway.set(null as never)
+    vi.mocked(notifyError).mockClear()
 
     await stopBackgroundProcess(SID, 'disconnected')
 
-    expect(items()).toEqual([])
+    expect(items()).toEqual([expect.objectContaining({ id: 'disconnected', state: 'unknown' })])
+    expect(notifyError).toHaveBeenCalledWith(expect.any(Error), 'Could not stop the process')
   })
 
   it('keeps the row and reports failure when the gateway is disconnected', async () => {
@@ -342,23 +349,262 @@ describe('refreshBackgroundProcesses dead-session guard', () => {
 
     await stopBackgroundProcess(SID, 'unreachable')
 
-    expect(items()).toEqual([expect.objectContaining({ id: 'unreachable', state: 'running' })])
+    expect(items()).toEqual([expect.objectContaining({ id: 'unreachable', state: 'unknown' })])
     expect(notifyError).toHaveBeenCalledWith(expect.any(Error), 'Could not stop the process')
   })
 
-  it('dismisses and latches when Stop discovers the runtime is gone', async () => {
+  it('keeps the row as unknown and latches when Stop discovers the runtime is gone', async () => {
     const request = vi.fn(async () => {
       throw new Error('session not found')
     })
 
     reconcileBackgroundProcesses(SID, [running('rejected')])
     $gateway.set({ request } as never)
+    vi.mocked(notifyError).mockClear()
 
     await stopBackgroundProcess(SID, 'rejected')
     await stopBackgroundProcess(SID, 'rejected')
 
-    expect(items()).toEqual([])
+    expect(items()).toEqual([expect.objectContaining({ id: 'rejected', state: 'unknown' })])
     expect(request).toHaveBeenCalledTimes(1)
+    expect(notifyError).toHaveBeenCalledWith(expect.any(Error), 'Could not stop the process')
+  })
+})
+
+// process.kill's JSON-RPC result is registry.kill_process's dict. Transport
+// success is not a stopped worker: legacy confirms only status killed or
+// already_exited without scope_stop_failed. A service stop confirms only when
+// that same killed snapshot comes back; running and unresolved leave it live.
+describe('stopBackgroundProcess kill outcomes', () => {
+  // dismissedBySession survives the store reset, so each case gets its own session.
+  let owner = ''
+
+  const waiting = (id: string) => ({
+    attention: 'waiting',
+    command: id,
+    service_mode: 'await',
+    session_id: id,
+    status: 'running'
+  })
+
+  const rows = () => $backgroundStatusBySession.get()[owner] ?? []
+
+  beforeEach(() => {
+    owner = `stop-${Math.random().toString(16).slice(2)}`
+    $backgroundStatusBySession.set({})
+    resetBackgroundPollingGuard()
+    vi.mocked(notifyError).mockClear()
+  })
+
+  afterEach(() => {
+    $gateway.set(null as never)
+    resetBackgroundPollingGuard()
+  })
+
+  async function stopWith(id: string, result: unknown) {
+    const request = vi.fn(async () => result)
+    $gateway.set({ request } as never)
+    reconcileBackgroundProcesses(owner, [waiting(id)])
+    await stopBackgroundProcess(owner, id)
+
+    return request
+  }
+
+  it('keeps the row when a resolved kill is unresolved', async () => {
+    await stopWith('unresolved', {
+      error: 'service stop did not record a durable outcome',
+      exit_code: null,
+      note: 'service stop did not record a durable outcome',
+      process_running: true,
+      service: 'await',
+      service_invocation_id: 'inv',
+      session_id: 'unresolved',
+      status: 'unresolved'
+    })
+
+    expect(rows()).toEqual([expect.objectContaining({ id: 'unresolved', state: 'waiting' })])
+    expect(notifyError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'service stop did not record a durable outcome' }),
+      'Could not stop the process'
+    )
+    reconcileBackgroundProcesses(owner, [waiting('unresolved')])
+    expect(rows()).toEqual([expect.objectContaining({ id: 'unresolved', state: 'waiting' })])
+  })
+
+  it('keeps the row when a resolved kill says the service is still running', async () => {
+    await stopWith('still-running', {
+      exit_code: null,
+      process_running: true,
+      service: 'await',
+      session_id: 'still-running',
+      status: 'running'
+    })
+
+    expect(rows()).toEqual([expect.objectContaining({ id: 'still-running', state: 'waiting' })])
+    expect(notifyError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Stop was not confirmed' }),
+      'Could not stop the process'
+    )
+  })
+
+  it('keeps the row when a resolved kill reports an error', async () => {
+    await stopWith('survivors', {
+      error: 'Kill incomplete: 1 process(es) still alive (42); session running',
+      process_running: true,
+      session_id: 'survivors',
+      status: 'error',
+      survivors: [42]
+    })
+
+    expect(rows()).toEqual([expect.objectContaining({ id: 'survivors', state: 'waiting' })])
+    expect(notifyError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Kill incomplete: 1 process(es) still alive (42); session running' }),
+      'Could not stop the process'
+    )
+  })
+
+  it('keeps the row when the kill status is unknown or not found', async () => {
+    await stopWith('mystery', { error: 'stop outcome unknown', status: 'unknown' })
+    expect(rows()).toEqual([expect.objectContaining({ id: 'mystery', state: 'waiting' })])
+
+    const request = vi.fn(async () => ({ error: 'No process with ID missing', status: 'not_found' }))
+    $gateway.set({ request } as never)
+    reconcileBackgroundProcesses(owner, [waiting('mystery'), waiting('missing')])
+    await stopBackgroundProcess(owner, 'missing')
+
+    expect(rows().map(row => [row.id, row.state])).toEqual([
+      ['mystery', 'waiting'],
+      ['missing', 'waiting']
+    ])
+  })
+
+  it('dismisses a legacy killed result and does not resurrect it from a later list', async () => {
+    await stopWith('legacy', {
+      completion_reason: 'killed',
+      output: '',
+      session_id: 'legacy',
+      status: 'killed',
+      termination_source: 'process.kill'
+    })
+
+    expect(rows()).toEqual([])
+    expect(notifyError).not.toHaveBeenCalled()
+    reconcileBackgroundProcesses(owner, [waiting('legacy')])
+    expect(rows()).toEqual([])
+  })
+
+  it('dismisses already_exited without a failed scope stop, and keeps one that failed', async () => {
+    await stopWith('gone-child', {
+      command: 'gone-child',
+      completion_reason: 'exited',
+      exit_code: 0,
+      output: '',
+      status: 'already_exited',
+      termination_source: null
+    })
+    expect(rows()).toEqual([])
+
+    await stopWith('scope', {
+      exit_code: 0,
+      output: '',
+      scope_stop_failed: 'hermes-job.scope',
+      status: 'already_exited'
+    })
+    expect(rows()).toEqual([expect.objectContaining({ id: 'scope', state: 'waiting' })])
+    expect(notifyError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Stop was not confirmed' }),
+      'Could not stop the process'
+    )
+  })
+
+  it('dismisses a service kill that recorded a killed snapshot', async () => {
+    await stopWith('service-dead', {
+      command: 'deploy-web',
+      completion_reason: 'killed',
+      exit_code: -15,
+      output: '',
+      session_id: 'service-dead',
+      status: 'killed',
+      termination_source: 'process.kill'
+    })
+
+    expect(rows()).toEqual([])
+    expect(notifyError).not.toHaveBeenCalled()
+  })
+
+  it('drops an unconfirmed row once a later snapshot no longer reports it', async () => {
+    await stopWith('settled', {
+      error: 'service invocation does not match; it was not signalled',
+      exit_code: null,
+      process_running: true,
+      status: 'unresolved'
+    })
+    expect(rows()).toEqual([expect.objectContaining({ id: 'settled', state: 'waiting' })])
+
+    reconcileBackgroundProcesses(owner, [])
+    expect(rows()).toEqual([])
+  })
+
+  it('keeps a waiting service on rewind when Stop is unresolved, and still drops a settled row', async () => {
+    const request = vi.fn(async () => ({
+      error: 'service stop intent could not be stored; it was not signalled',
+      exit_code: null,
+      process_running: true,
+      status: 'unresolved'
+    }))
+
+    $gateway.set({ request } as never)
+    reconcileBackgroundProcesses(owner, [
+      waiting('live'),
+      { command: 'legacy-build', exit_code: 0, session_id: 'done-row', status: 'exited' }
+    ])
+
+    resetSessionBackground(owner)
+    await request.mock.results[0]!.value
+    await Promise.resolve()
+
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(request).toHaveBeenCalledWith('process.kill', { process_id: 'live', session_id: owner })
+    expect(rows()).toEqual([expect.objectContaining({ id: 'live', state: 'waiting' })])
+    expect(notifyError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'service stop intent could not be stored; it was not signalled' }),
+      'Could not stop the process'
+    )
+  })
+
+  it('drops a rewind Stop once the kill is confirmed', async () => {
+    const request = vi.fn(async () => ({
+      completion_reason: 'killed',
+      output: '',
+      session_id: 'live',
+      status: 'killed',
+      termination_source: 'process.kill'
+    }))
+
+    $gateway.set({ request } as never)
+    reconcileBackgroundProcesses(owner, [waiting('live')])
+
+    resetSessionBackground(owner)
+    await request.mock.results[0]!.value
+    await Promise.resolve()
+
+    expect(rows()).toEqual([])
+    expect(notifyError).not.toHaveBeenCalled()
+  })
+
+  it('keeps the row when a rewind Stop fails', async () => {
+    const request = vi.fn(async () => {
+      throw new Error('socket closed')
+    })
+
+    $gateway.set({ request } as never)
+    reconcileBackgroundProcesses(owner, [running('live')])
+
+    resetSessionBackground(owner)
+    await request.mock.results[0]!.value.catch(() => undefined)
+
+    expect(rows()).toEqual([expect.objectContaining({ id: 'live', state: 'running' })])
+    expect(notifyError).toHaveBeenCalledWith(expect.any(Error), 'Could not stop the process')
   })
 })
 

@@ -16,6 +16,10 @@ export interface ProcessEntry {
   exited_at?: number | null
   completion_reason?: string | null
   output_preview?: string
+  /** Optional until process.list publishes it on the shared contract. */
+  attention?: string | null
+  /** Optional until process.list publishes it on the shared contract. */
+  service_mode?: string | null
 }
 
 export interface ProcessRow {
@@ -26,7 +30,7 @@ export interface ProcessRow {
   id: string
   /** Seconds since exit; 0 while running. */
   sinceExitSeconds: number
-  status: 'done' | 'failed' | 'killed' | 'lost' | 'running'
+  status: 'done' | 'failed' | 'killed' | 'lost' | 'ready' | 'running' | 'unknown' | 'waiting'
 }
 
 /** A finished process stays on the dock long enough to read its exit line, then
@@ -44,13 +48,46 @@ export function applyProcessSnapshot(sid: string | null, processes: ProcessEntry
 }
 
 const REASON_STATUS: Record<string, ProcessRow['status']> = { killed: 'killed', lost: 'lost' }
+const NAMED_ATTENTION = new Set<ProcessRow['status']>(['failed', 'lost', 'ready', 'running', 'waiting'])
 
-export const processStatus = (entry: ProcessEntry): ProcessRow['status'] => {
-  if (entry.status !== 'exited') {
-    return 'running'
+const namedAttention = (value: string | null | undefined): ProcessRow['status'] | null => {
+  if (value && NAMED_ATTENTION.has(value as ProcessRow['status'])) {
+    return value as ProcessRow['status']
   }
 
-  return REASON_STATUS[entry.completion_reason ?? ''] ?? (entry.exit_code ? 'failed' : 'done')
+  return value ? 'unknown' : null
+}
+
+const unsettledService = (entry: ProcessEntry): boolean => {
+  if (entry.service_mode !== 'await' && entry.service_mode !== 'notify') {
+    return false
+  }
+
+  if (entry.exit_code !== undefined && entry.exit_code !== null) {
+    return false
+  }
+
+  return (entry.completion_reason ?? '') !== 'exited'
+}
+
+export const processIsOpen = (status: ProcessRow['status']): boolean =>
+  status === 'running' || status === 'waiting' || status === 'ready'
+
+export const processStatus = (entry: ProcessEntry): ProcessRow['status'] => {
+  const attention = namedAttention(entry.attention)
+
+  if (attention) {
+    return attention
+  }
+
+  if (entry.status !== 'exited') {
+    return entry.service_mode === 'await' ? 'waiting' : 'running'
+  }
+
+  return (
+    REASON_STATUS[entry.completion_reason ?? ''] ??
+    (entry.exit_code ? 'failed' : unsettledService(entry) ? 'unknown' : 'done')
+  )
 }
 
 const lastOutputLine = (preview: string | undefined): string => {
@@ -66,8 +103,18 @@ const lastOutputLine = (preview: string | undefined): string => {
 }
 
 export const processVerdict = (row: ProcessRow, exitCode: number | null | undefined): string => {
-  if (row.status === 'running') {
-    return row.detail ? `last: ${row.detail}` : 'starting'
+  if (row.status === 'running' || row.status === 'waiting') {
+    const tail = row.detail ? `last: ${row.detail}` : 'starting'
+
+    return row.status === 'waiting' ? `waiting · ${tail}` : tail
+  }
+
+  if (row.status === 'ready') {
+    return 'result ready'
+  }
+
+  if (row.status === 'unknown') {
+    return 'unknown'
   }
 
   const verdict = row.status === 'killed' || row.status === 'lost' ? row.status : `exit ${exitCode ?? '?'}`
@@ -83,10 +130,11 @@ export const buildProcessRows = (processes: readonly ProcessEntry[], nowMs: numb
 
   for (const entry of processes) {
     const status = processStatus(entry)
-    const exitedAt = status === 'running' ? 0 : (entry.exited_at ?? 0)
+    const open = processIsOpen(status)
+    const exitedAt = open ? 0 : (entry.exited_at ?? 0)
     const sinceExitSeconds = exitedAt ? Math.max(0, Math.floor(nowS - exitedAt)) : 0
 
-    if (status !== 'running' && (!exitedAt || sinceExitSeconds > PROCESS_RETAIN_SECONDS)) {
+    if (!open && (!exitedAt || sinceExitSeconds > PROCESS_RETAIN_SECONDS)) {
       continue
     }
 
@@ -103,15 +151,16 @@ export const buildProcessRows = (processes: readonly ProcessEntry[], nowMs: numb
     rows.push(row)
   }
 
-  return rows.sort((a, b) =>
-    (a.status === 'running') !== (b.status === 'running')
-      ? a.status === 'running'
-        ? -1
-        : 1
-      : a.status === 'running'
-        ? b.elapsedSeconds - a.elapsedSeconds
-        : a.sinceExitSeconds - b.sinceExitSeconds
-  )
+  return rows.sort((a, b) => {
+    const aOpen = processIsOpen(a.status)
+    const bOpen = processIsOpen(b.status)
+
+    if (aOpen !== bOpen) {
+      return aOpen ? -1 : 1
+    }
+
+    return aOpen ? b.elapsedSeconds - a.elapsedSeconds : a.sinceExitSeconds - b.sinceExitSeconds
+  })
 }
 
 export function useProcessRows(nowMs: number): ProcessRow[] {
