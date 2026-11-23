@@ -70,20 +70,30 @@ def _child_session_id(record):
     return child if isinstance(child, str) and child else None
 
 
-def _live_work_owners():
+def _live_work_owners(profile_home=None):
     """``(kind, owner candidates)`` for every live top-level child and running background process in this
     process. A child names its durable conversation (``owner_agent_session_id``, the spine completion delivery
     routes by). A process names the conversation that spawned it (``parent_session_id``, from
     ``HERMES_SESSION_ID``) and its routing ``session_key``, which on the gateway path is a route
-    (``agent:main:local:dm:...``), never a stored id."""
+    (``agent:main:local:dm:...``), never a stored id.
+
+    ``profile_home`` is the requested profile directory. Omitted, it is this process's home.
+    Pending service receipts are read from that directory only. A receipt with no parent id
+    is not given one from its route."""
+    from hermes_constants import get_hermes_home
     from tools.delegate_tool_registry import _active_subagents, _active_subagents_lock
     from tools.process_registry import process_registry
+    from tools.process_registry_service import ready_pending_service_owners
 
     with _active_subagents_lock:
         owners = [("subagents", (str(r.get("owner_agent_session_id") or ""), ""))
                   for r in _active_subagents.values() if not r.get("depth")]
+    seen = set()
     for entry in process_registry.list_sessions(include_service_receipts=True):
-        proc = process_registry.get(entry.get("session_id"))
+        session_id = entry.get("session_id")
+        if session_id:
+            seen.add(session_id)
+        proc = process_registry.get(session_id)
         running = proc is not None and not getattr(proc, "exited", True)
         ready = entry.get("attention") == "ready"
         if not running and not ready:
@@ -94,6 +104,12 @@ def _live_work_owners():
         else:
             parent = str(entry.get("parent_session_id") or "")
             route = str(entry.get("session_key") or "")
+        owners.append(("background", (parent, route)))
+    home = profile_home if profile_home is not None else get_hermes_home()
+    for session_id, parent, route in ready_pending_service_owners(home):
+        if session_id in seen:
+            continue
+        seen.add(session_id)
         owners.append(("background", (parent, route)))
     return owners
 
@@ -134,17 +150,18 @@ def _(rid, params):
     for a row that is not open or for any row right after a renderer reload; this read needs neither. One
     process hosts several profiles, so only conversations stored in the requested profile's state.db are
     returned — a caller never learns another profile's session ids."""
-    owners = _live_work_owners()
-    if not owners:
-        return _ok(rid, {"sessions": []})
     scope = params if isinstance(params, dict) else {}
     if not str(scope.get("profile") or "").strip():
         # A legacy-fallback socket ticketed to a non-launch profile answers for that profile only.
         from tui_gateway.ws_legacy_fallback import connection_profile_home
         if home := connection_profile_home():
             scope = {"profile": Path(home).name}
+    profile_home = _profile_home(scope.get("profile"))
+    owners = _live_work_owners(profile_home or _hermes_home)
+    if not owners:
+        return _ok(rid, {"sessions": []})
     counts = {}
-    namespaces = _route_namespaces(_profile_home(scope.get("profile")))
+    namespaces = _route_namespaces(profile_home)
     with _profile_db(scope) as db:
         if db is None:
             return _ok(rid, {"sessions": []})

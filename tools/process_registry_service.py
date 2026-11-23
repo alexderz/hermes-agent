@@ -11,10 +11,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shlex
 import shutil
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Optional
 
 logger = logging.getLogger("tools.process_registry")
@@ -152,6 +154,7 @@ def prepare_listed_sessions(registry, include_retained: bool, include_service_re
 
     Pending service receipts are extra. Settled receipts stay behind ``include_retained``.
     An empty owner makes ``load_completed_results`` return nothing; that is intentional.
+    The offscreen roster reads one profile's pending receipts on its own.
     """
     refresh_service_sessions(registry)
     reconcile_from_registry(registry)
@@ -947,6 +950,79 @@ def reconcile_from_registry(registry) -> None:
         logger.debug("service admission reconcile skipped", exc_info=True)
         return
     reconcile_service_admissions(authority)
+
+
+def _read_pending_service_receipt(path: Path) -> Optional[dict]:
+    try:
+        record = json.loads(path.read_bytes().decode("utf-8-sig"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(record, dict):
+        return None
+    if record.get("admission_pending") is not True or not record.get("service_unit"):
+        return None
+    session_id = record.get("id")
+    if session_id != path.stem or not isinstance(session_id, str):
+        return None
+    if re.fullmatch(r"proc_[\w]+", session_id) is None:
+        return None
+    return record
+
+
+def load_pending_service_receipts(profile_home) -> list[dict]:
+    """Pending service receipts in one profile home.
+
+    No owner check: the caller fences them. A hosted scope sees none. Other
+    homes are not scanned, and this read does not admit or enqueue anything.
+    """
+    from tools.environments.sandbox_scope import hosted_scope
+
+    if profile_home is None or hosted_scope() is not None:
+        return []
+    directory = Path(profile_home) / "logs" / "process-results"
+    found: list[dict] = []
+    try:
+        paths = sorted(directory.glob("proc_*.json"))
+    except OSError:
+        return found
+    for path in paths:
+        record = _read_pending_service_receipt(path)
+        if record is not None:
+            found.append(record)
+    return found
+
+
+def _receipt_attention(record: dict) -> Optional[str]:
+    reason = record.get("completion_reason") or ""
+    if not isinstance(reason, str):
+        reason = ""
+    exit_code = record.get("exit_code", None)
+    exited = exit_code is not None or reason in {"exited", "lost", "killed"}
+    return attention_for(SimpleNamespace(
+        service_mode=record.get("service_mode") or "",
+        exited=exited,
+        completion_reason=reason,
+        exit_code=exit_code,
+        admission_pending=True,
+    ))
+
+
+def ready_pending_service_owners(profile_home) -> list[tuple[str, str, str]]:
+    """(session id, parent id, route) for ready pending receipts in one home.
+
+    A missing or non-string parent stays unresolved. The route is not copied
+    into the parent.
+    """
+    owners = []
+    for record in load_pending_service_receipts(profile_home):
+        parent = record.get("parent_session_id")
+        if not isinstance(parent, str) or not parent.strip():
+            continue
+        if _receipt_attention(record) != "ready":
+            continue
+        route = record.get("session_key")
+        owners.append((record["id"], parent, route if isinstance(route, str) else ""))
+    return owners
 
 
 def pending_service_events() -> list[dict]:
