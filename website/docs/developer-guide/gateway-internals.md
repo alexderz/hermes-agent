@@ -908,10 +908,11 @@ tail), `all` (running updates + final raw output), `result` (final raw output on
 (final raw output only on non-zero exit), `off`.
 
 `terminal(service="notify")` delivers its one result through this same completion path after
-its transient user unit exits. `service="await"` does not arm that notification: the call itself
-waits for the required result. Both modes are one Linux local-user-bus unit, not a native child.
-The unit outlives gateway shutdown. A timeout, steer, or interrupt of an await leaves that
-invocation unresolved and does not restart the worker. Stop and recovery act only when the live
+its transient user unit exits. A still-blocking `service="await"` returns the required result
+directly, without a duplicate completion turn. If a timeout, steer, or interrupt releases that
+wait, the unresolved invocation keeps running and arms the completion path for later delivery;
+the worker is not restarted. Both modes use one Linux local-user-bus unit, not a native child,
+and the unit outlives gateway shutdown. Stop and recovery act only when the live
 invocation and boot id match the recorded ones, and recovery does not run the command again.
 
 The watcher is armed on the gateway loop at registration time (`terminal_tool_background.py::
