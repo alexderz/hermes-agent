@@ -1439,3 +1439,106 @@ def test_lagging_checkpoint_without_stop_intent_does_not_drop_the_receipt(monkey
             path.unlink(missing_ok=True)
         else:
             path.write_bytes(original)
+
+
+def test_stale_exit0_writer_cannot_regress_a_committed_stop(monkeypatch):
+    """Two finishers, one Stop. The exit-0 writer pauses before its disk write.
+
+    Stop checkpoints intent, and a second matching show commits killed/-15 and
+    drops the checkpoint row. Releasing the stale writer must not leave a
+    success receipt or a pending success event.
+
+    UNFIXED PRODUCT DEFECT if this fails: ``_finish_exit`` writes the frozen
+    receipt after releasing the session condition, then returns when it sees
+    ``session.exited`` without restoring the killed receipt.
+    """
+    import tools.process_registry_results as results
+    import tools.process_registry_service as service_mod
+    from tools.process_registry import ProcessRegistry, ProcessSession
+    from tools.process_registry_service import _finish_exit, pending_service_events, read_boot_id
+
+    session_id = "proc_staleexit0w"
+    unit = f"hermes-bg-{session_id}.service"
+    invocation = "inv-owned-stale"
+    registry = ProcessRegistry()
+    session = ProcessSession(
+        id=session_id, command="printf marker", task_id="task-stale-exit",
+        owner_task_id="task-stale-exit", session_key="agent:main:local:dm:stale-exit",
+        started_at=1700000000.0, service_unit=unit, service_invocation_id=invocation,
+        service_boot_id=read_boot_id(), service_mode="await", tool_call_id="call-stale-exit",
+        notify_on_complete=True, output_buffer="marker\n",
+    )
+    registry._running[session.id] = session
+    show = {
+        "LoadState": "loaded", "Id": unit, "InvocationID": invocation, "SubState": "exited",
+        "Result": "success", "ExecMainCode": "1", "ExecMainStatus": "0",
+        "ActiveState": "inactive", "NRestarts": "0",
+    }
+    monkeypatch.setattr(service_mod, "systemctl_show", lambda queried: show if queried == unit else None)
+
+    def _no_systemctl(argv, **_kwargs):
+        assert unit in argv, argv
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(service_mod, "_run", _no_systemctl)
+    real_write = results.write_frozen_result
+    entered = threading.Event()
+    release = threading.Event()
+    seen = {"exit0": 0}
+
+    def paused(session_id_arg, record, *, strict=False):
+        if record.get("exit_code") == 0 and record.get("completion_reason") != "killed":
+            seen["exit0"] += 1
+            if seen["exit0"] == 1:
+                entered.set()
+                if not release.wait(8):
+                    raise TimeoutError("stale exit-0 writer was not released")
+        return real_write(session_id_arg, record, strict=strict)
+
+    monkeypatch.setattr(results, "write_frozen_result", paused)
+    errors = []
+
+    def finish():
+        try:
+            errors.append(("finish", _finish_exit(registry, session, 0, "exited", "", publish=True)))
+        except Exception as exc:
+            errors.append(("finish-exc", exc))
+
+    worker = threading.Thread(target=finish, name="stale-exit0-writer")
+    worker.start()
+    try:
+        assert entered.wait(5), errors
+        stopped = registry.kill_process(session.id)
+        assert stopped.get("status") == "killed", stopped
+        assert session.exit_code == -15, (session.exit_code, session.completion_reason, errors)
+        assert session.completion_reason == "killed"
+        from tools.process_registry_service import _checkpoint_rows
+        assert session.id not in _checkpoint_rows(), _checkpoint_rows()
+    finally:
+        release.set()
+        worker.join(8)
+    assert not worker.is_alive()
+    assert not any(isinstance(item[1], Exception) for item in errors), errors
+    from hermes_constants import get_hermes_home
+    receipt_path = get_hermes_home() / "logs" / "process-results" / f"{session.id}.json"
+    stored = json.loads(receipt_path.read_text(encoding="utf-8-sig"))
+    events = [item for item in pending_service_events() if item.get("session_id") == session.id]
+    observed = {
+        "receipt_exit": stored.get("exit_code"),
+        "receipt_reason": stored.get("completion_reason"),
+        "receipt_pending": stored.get("admission_pending"),
+        "events": [
+            {
+                "exit_code": item.get("exit_code"),
+                "completion_reason": item.get("completion_reason"),
+            }
+            for item in events
+        ],
+    }
+    assert stored["exit_code"] == -15, observed
+    assert stored["completion_reason"] == "killed", observed
+    assert events, observed
+    assert all(
+        item.get("exit_code") == -15 and item.get("completion_reason") == "killed" for item in events
+    ), observed
+    receipt_path.unlink(missing_ok=True)

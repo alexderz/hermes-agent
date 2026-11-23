@@ -528,24 +528,83 @@ def _unit_is_active(unit: str) -> str:
     return active.stdout.strip()
 
 
-def _wait_for_release(registry, row, flag) -> None:
-    from tools.process_registry_service import refresh_service_session
+def _arm_watcher_probe(runner) -> dict:
+    """Count entry into the existing watcher. Each wrapper calls the original."""
+    entered = {"run": 0, "settled": 0}
+    real_run = runner._run_process_watcher
+    real_settled = runner._watch_service_until_settled
 
+    async def run_watcher(watcher):
+        entered["run"] += 1
+        return await real_run(watcher)
+
+    async def settled(session, session_id, interval):
+        entered["settled"] += 1
+        return await real_settled(session, session_id, interval)
+
+    runner._run_process_watcher = run_watcher
+    runner._watch_service_until_settled = settled
+    return entered
+
+
+async def _observe_release(runner, row, flag, payload) -> None:
+    """Write the release flag and let the existing watcher observe the exit.
+
+    The watcher sleeps, then ``_watch_service_until_settled`` refreshes the
+    singleton. That refresh is the exit driver. This helper does not poll,
+    list receipts, or build a completion of its own.
+    """
+    import asyncio
+
+    from tools.process_registry import process_registry
+
+    process_registry._running[row.id] = row
     flag.write_text("go", encoding="utf-8")
-    deadline = time.monotonic() + 20
-    while time.monotonic() < deadline and not row.exited:
-        refresh_service_session(registry, row)
-        if not row.exited:
-            time.sleep(0.2)
+    await asyncio.wait_for(runner._run_process_watcher(payload), timeout=40)
+
+
+async def _admit_watched_completion(runner, row) -> str:
+    """Drain the completion the watcher published, then drain once more.
+
+    ``drain_notifications`` is the queue consumer. Delivery uses the existing
+    completion batch, which admits through the private authority. The second
+    drain is empty, so it cannot admit again. The event is the one
+    ``_publish_finished`` queued. This helper does not rebuild it, list
+    receipts, or call ``_inject_watch_notification`` itself.
+
+    The required result is one authority admission. A refusal here is the
+    stopped boundary: the published completion has no ``parent_session_id``,
+    so ``_owner`` raises ``admission_conflict``.
+    """
+    from tools.process_registry import process_registry
+
+    def owned():
+        return [
+            (evt, text)
+            for evt, text in process_registry.drain_notifications(
+                session_key=row.session_key, skip_poll_observed=False,
+            )
+            if evt.get("session_id") == row.id
+        ]
+
+    first = owned()
+    assert len(first) == 1, first
+    evt = first[0][0]
+    delivered = await runner._enqueue_process_completion_notification(first[0][1], evt)
+    assert delivered is True, {
+        "delivered": delivered,
+        "event_parent": evt.get("parent_session_id"),
+        "row_parent": row.parent_session_id,
+        "event_keys": sorted(evt),
+    }
+    assert owned() == []
+    return first[0][1]
 
 
 async def _recover_running(request, monkeypatch, tmp_path, *, exit_code: int, marker: str):
     """Crash the helper while the unit is still waiting, then arm the existing watcher."""
     from tools.process_registry import process_registry
-    from tools.process_registry_notifications import format_process_notification
-    from tools.process_registry_service import (
-        _UNRESOLVED_NOTE, pending_service_events, service_outcome_content,
-    )
+    from tools.process_registry_service import _UNRESOLVED_NOTE, service_outcome_content
     from tests.gateway.test_automation_notification_category import _native_owner
 
     _forget_services()
@@ -584,19 +643,17 @@ async def _recover_running(request, monkeypatch, tmp_path, *, exit_code: int, ma
         assert spliced["status"] == "unresolved", spliced
         assert spliced["note"] == _UNRESOLVED_NOTE
         assert spliced["exit_code"] is None
-        _wait_for_release(registry, row, driven["flag"])
+        entered = _arm_watcher_probe(runner)
+        await _observe_release(runner, row, driven["flag"], payloads[0])
+        assert entered["run"] == 1 and entered["settled"] >= 1, entered
         assert row.exited is True and row.exit_code == exit_code, (row.exit_code, row.completion_reason)
-        events = [item for item in pending_service_events() if item.get("session_id") == row.id]
-        assert len(events) == 1, events
-        text = format_process_notification(events[0])
-        assert text and marker in text, text
         if row.admission_pending:
             held = json.loads(service_outcome_content(driven["state"]["tool_call_id"]) or "{}")
             assert held.get("status") == "unresolved", held
             assert held.get("note") == _UNRESOLVED_NOTE
         before = _payload_texts(authority, owner)
-        injected = await runner._inject_watch_notification(text, events[0])
-        assert injected is True, injected
+        text = await _admit_watched_completion(runner, row)
+        assert text and marker in text, text
         after = _payload_texts(authority, owner)
         return {
             "text": text, "before": before, "after": after, "marker": marker,
@@ -609,7 +666,13 @@ async def _recover_running(request, monkeypatch, tmp_path, *, exit_code: int, ma
 
 @pytest.mark.asyncio
 async def test_running_recovery_admits_exit_0_once(request, monkeypatch, tmp_path):
-    """The worker is still running at recovery. The watcher admits the real exit once."""
+    """The worker is still running at recovery. The real watcher must admit exit 0 once.
+
+    UNFIXED PRODUCT DEFECT if admission fails: the watcher refreshes and
+    ``_publish_finished`` queues the completion, and the service branch does
+    not build another event. That queued event omits ``parent_session_id``.
+    The existing completion consumer then refuses it (``admission_conflict``).
+    """
     outcome = await _recover_running(request, monkeypatch, tmp_path, exit_code=0, marker="HERMES_WAIT_CONT_")
     assert outcome["launches"] == 1
     assert outcome["parent"] == 0
@@ -624,6 +687,11 @@ async def test_running_recovery_admits_exit_0_once(request, monkeypatch, tmp_pat
 
 @pytest.mark.asyncio
 async def test_running_recovery_admits_exit_3_without_step2(request, monkeypatch, tmp_path):
+    """Same watcher path for exit 3: one admission, and the text is not STEP2.
+
+    The same published-event refusal stops this before the text check. See
+    ``test_running_recovery_admits_exit_0_once``.
+    """
     outcome = await _recover_running(request, monkeypatch, tmp_path, exit_code=3, marker="HERMES_WAIT_CONT_")
     assert outcome["launches"] == 1
     assert outcome["parent"] == 0
