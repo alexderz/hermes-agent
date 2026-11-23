@@ -274,14 +274,14 @@ def test_exit_code_comes_from_the_terminal_show(request, monkeypatch):
     import tools.process_registry_service as service_mod
 
     seen = {}
-    real = results.save_completed_result
+    real = results.write_frozen_result
 
-    def wrapped(session, *, strict=False):
+    def wrapped(session_id, record, *, strict=False):
         if strict and "show" not in seen:
-            seen["show"] = service_mod.systemctl_show(session.service_unit)
-        return real(session, strict=strict)
+            seen["show"] = service_mod.systemctl_show(record.get("service_unit") or "")
+        return real(session_id, record, strict=strict)
 
-    monkeypatch.setattr(results, "save_completed_result", wrapped)
+    monkeypatch.setattr(results, "write_frozen_result", wrapped)
     with _unit(request, monkeypatch) as case:
         result = _dispatch(
             {"command": "printf 'HERMES_WAIT_EXIT3\\n'; exit 3", "service": "await", "timeout": 60},
@@ -631,14 +631,14 @@ def test_result_write_failure_keeps_the_unit_and_the_same_launch(request, monkey
     import tools.process_registry_results as results
 
     flag = {"fail": True}
-    real = results.save_completed_result
+    real = results.write_frozen_result
 
-    def wrapped(session, *, strict=False):
+    def wrapped(session_id, record, *, strict=False):
         if flag["fail"] and strict:
             return False
-        return real(session, strict=strict)
+        return real(session_id, record, strict=strict)
 
-    monkeypatch.setattr(results, "save_completed_result", wrapped)
+    monkeypatch.setattr(results, "write_frozen_result", wrapped)
     with _unit(request, monkeypatch) as case:
         first = _dispatch(
             {"command": f"printf '{_MARKER}\\n'; exit 0", "service": "await", "timeout": 2},
@@ -985,3 +985,457 @@ def test_replay_splices_the_real_outcome_and_a_new_id_still_runs(request, monkey
         finally:
             _stop_owned(second_unit)
             _release(second_unit)
+
+
+def _count_stops(monkeypatch, unit: str) -> list:
+    import tools.process_registry_service as service_mod
+
+    stops = []
+    real_run = service_mod._run
+
+    def wrapped(argv, **kwargs):
+        if any(part == "stop" for part in argv) and unit in argv:
+            stops.append(list(argv))
+        return real_run(argv, **kwargs)
+
+    monkeypatch.setattr(service_mod, "_run", wrapped)
+    return stops
+
+
+def test_recovered_running_await_arms_one_watcher_and_same_process_does_not(request, monkeypatch):
+    """A newly attached running await arms the existing watcher once. A live row does not."""
+    from tools.process_registry import ProcessRegistry, _checkpoint_path, process_registry
+    from tools.process_registry_service import _UNRESOLVED_NOTE, recover_service_entry, service_outcome_content
+
+    with _unit(request, monkeypatch) as case:
+        first = _dispatch(
+            {"command": "sleep 30", "service": "await", "timeout": 1},
+            case.tool_call_id, case.task_id,
+        )
+        assert first.get("status") == "unresolved", first
+        session = _session(first["session_id"])
+        assert session is not None and session.service_invocation_id
+        watchers_before = [
+            item for item in process_registry.pending_watchers if item.get("session_id") == session.id
+        ]
+        entry = next(
+            item for item in json.loads(_checkpoint_path().read_text(encoding="utf-8-sig"))
+            if item.get("session_id") == session.id
+        )
+        assert recover_service_entry(process_registry, entry) is False
+        assert [
+            item for item in process_registry.pending_watchers if item.get("session_id") == session.id
+        ] == watchers_before
+        session.notify_on_complete = False
+        session.watcher_interval = 0
+        assert process_registry._write_checkpoint(strict=True) is True
+        process_registry._running.pop(session.id, None)
+        process_registry.pending_watchers = [
+            item for item in process_registry.pending_watchers if item.get("session_id") != session.id
+        ]
+        fresh = ProcessRegistry()
+        assert fresh.recover_from_checkpoint() >= 1
+        row = fresh.get(session.id)
+        assert row is not None and row.exited is False
+        assert row.notify_on_complete is True
+        assert row._reader_thread is None
+        payloads = [item for item in fresh.pending_watchers if item.get("session_id") == row.id]
+        assert len(payloads) == 1 and payloads[0]["notify_on_complete"] is True, payloads
+        assert case.seen["launches"] == 1
+        assert recover_service_entry(fresh, entry) is False
+        assert len([item for item in fresh.pending_watchers if item.get("session_id") == row.id]) == 1
+        process_registry._running[row.id] = row
+        try:
+            body = json.loads(service_outcome_content(case.tool_call_id))
+        finally:
+            process_registry._running.pop(row.id, None)
+        assert body["status"] == "unresolved", body
+        assert body["note"] == _UNRESOLVED_NOTE
+        assert body["exit_code"] is None
+
+
+def test_empty_invocation_recovery_does_not_arm_notify(request, monkeypatch):
+    from tools.process_registry import ProcessRegistry, _checkpoint_path, process_registry
+
+    with _unit(request, monkeypatch) as case:
+        started = _dispatch(
+            {"command": "sleep 30", "service": "await", "timeout": 1},
+            case.tool_call_id, case.task_id,
+        )
+        session = _session(started["session_id"])
+        session.service_invocation_id = ""
+        session.notify_on_complete = False
+        session.watcher_interval = 0
+        assert process_registry._write_checkpoint(strict=True) is True
+        process_registry._running.pop(session.id, None)
+        fresh = ProcessRegistry()
+        import tools.process_registry_service as service_mod
+        monkeypatch.setattr(service_mod, "systemctl_show", lambda _unit: {
+            "LoadState": "loaded", "InvocationID": "live-but-not-stored", "SubState": "running",
+            "Result": "success", "ExecMainCode": "0", "ExecMainStatus": "0",
+        })
+        assert fresh.recover_from_checkpoint() >= 1
+        row = fresh.get(session.id)
+        assert row is not None
+        assert row.notify_on_complete is False
+        assert not any(item.get("notify_on_complete") for item in fresh.pending_watchers if item.get("session_id") == row.id)
+        entries = json.loads(_checkpoint_path().read_text(encoding="utf-8-sig"))
+        stored = next(item for item in entries if item.get("session_id") == row.id)
+        assert not stored.get("notify_on_complete")
+        assert case.seen["launches"] == 1
+
+
+def test_already_exited_recovery_splices_once_and_admits_nothing(request, monkeypatch):
+    from tools.process_registry import ProcessRegistry, _checkpoint_path, process_registry
+    from tools.process_registry_service import pending_service_events, service_outcome_content
+    import tools.process_registry_service as service_mod
+
+    with _unit(request, monkeypatch) as case:
+        monkeypatch.setattr(service_mod, "_cleanup_unit_if_match", lambda _session: None)
+        result = _dispatch(
+            {"command": f"printf '{_MARKER}\\n'; exit 0", "service": "await", "timeout": 30},
+            case.tool_call_id, case.task_id,
+        )
+        assert result.get("exit_code") == 0, result
+        session = _session(result["session_id"])
+        assert session is not None and session.notify_on_complete is False
+        assert session.admission_pending is False
+        fields = {
+            "session_id": session.id, "command": session.command, "service_unit": session.service_unit,
+            "service_invocation_id": session.service_invocation_id, "service_boot_id": session.service_boot_id,
+            "service_mode": session.service_mode, "tool_call_id": session.tool_call_id,
+            "notify_on_complete": False, "watcher_interval": 0, "service_stop_intent": False,
+            "started_at": session.started_at, "task_id": session.task_id, "owner_task_id": session.owner_task_id,
+            "session_key": session.session_key, "pid": None, "output_log": session.output_log,
+        }
+        process_registry._running.pop(session.id, None)
+        process_registry._finished.pop(session.id, None)
+        path = _checkpoint_path()
+        original = path.read_bytes() if path.exists() else None
+        try:
+            path.write_text(json.dumps([fields]), encoding="utf-8")
+            fresh = ProcessRegistry()
+            assert fresh.recover_from_checkpoint() >= 1
+            row = fresh.get(session.id)
+            assert row is not None and row.exited is True and row.exit_code == 0, row.exit_code
+            assert row.admission_pending is False and row.notify_on_complete is False
+            assert [item for item in pending_service_events() if item.get("session_id") == row.id] == []
+            import tools.process_registry as registry_mod
+            previous = registry_mod.process_registry
+            registry_mod.process_registry = fresh
+            try:
+                body = json.loads(service_outcome_content(case.tool_call_id))
+            finally:
+                registry_mod.process_registry = previous
+            assert body["status"] == "exited", body
+            assert body["exit_code"] == 0
+            assert _MARKER in (body.get("output") or "")
+            assert case.seen["launches"] == 1
+        finally:
+            if original is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_bytes(original)
+
+
+def test_failed_stop_checkpoint_does_not_signal_or_persist_killed(request, monkeypatch):
+    """Finish must not persist killed from the transient bit when the checkpoint fails."""
+    import threading
+
+    from tools.process_registry import process_registry
+    from tools.process_registry_service import _finish_exit
+
+    with _unit(request, monkeypatch) as case:
+        started = _dispatch(
+            {"command": "sleep 30", "service": "notify"},
+            case.tool_call_id, case.task_id,
+        )
+        session = _session(started["session_id"])
+        stops = _count_stops(monkeypatch, case.unit)
+        stop_entered = threading.Event()
+        finish_waiting = threading.Event()
+        real_checkpoint = process_registry._write_checkpoint
+
+        def wrapped_checkpoint(*args, **kwargs):
+            if kwargs.get("strict") and session.service_stop_intent:
+                stop_entered.set()
+                finish_waiting.wait(5)
+                return False
+            return real_checkpoint(*args, **kwargs)
+
+        monkeypatch.setattr(process_registry, "_write_checkpoint", wrapped_checkpoint)
+        real_wait = threading.Condition.wait
+
+        def wrapped_wait(self, timeout=None):
+            if getattr(self, "_lock", None) is session._lock:
+                finish_waiting.set()
+            return real_wait(self, timeout)
+
+        monkeypatch.setattr(threading.Condition, "wait", wrapped_wait)
+        errors = []
+
+        def stop():
+            try:
+                errors.append(("stop", process_registry.kill_process(session.id)))
+            except Exception as exc:
+                errors.append(("stop-exc", exc))
+
+        def finish():
+            try:
+                assert stop_entered.wait(5)
+                errors.append(("finish", _finish_exit(
+                    process_registry, session, 0, "exited", "", publish=False,
+                )))
+            except Exception as exc:
+                errors.append(("finish-exc", exc))
+
+        stopper = threading.Thread(target=stop)
+        finisher = threading.Thread(target=finish)
+        stopper.start()
+        finisher.start()
+        stopper.join(15)
+        finisher.join(15)
+        assert not stopper.is_alive() and not finisher.is_alive()
+        assert not any(isinstance(item[1], Exception) for item in errors), errors
+        assert stops == [], stops
+        assert session.service_stop_intent is False
+        assert session.completion_reason != "killed"
+        assert session.exit_code == 0, (session.exit_code, session.completion_reason, errors)
+        from hermes_constants import get_hermes_home
+        receipt = json.loads(
+            (get_hermes_home() / "logs" / "process-results" / f"{session.id}.json").read_text(encoding="utf-8-sig"),
+        )
+        assert receipt["exit_code"] == 0
+        assert receipt["completion_reason"] != "killed"
+        assert _up(case.unit)
+        assert case.seen["launches"] == 1
+
+
+def test_completion_before_stop_is_not_signalled(request, monkeypatch):
+    from tools.process_registry import process_registry
+    from tools.process_registry_service import _finish_exit
+    import tools.process_registry_service as service_mod
+
+    with _unit(request, monkeypatch) as case:
+        started = _dispatch(
+            {"command": "sleep 30", "service": "notify"},
+            case.tool_call_id, case.task_id,
+        )
+        session = _session(started["session_id"])
+        stops = _count_stops(monkeypatch, case.unit)
+        real_show = service_mod.systemctl_show
+
+        def show(unit):
+            if unit == case.unit and not session.exited:
+                _finish_exit(process_registry, session, 0, "exited", "", publish=True)
+            return real_show(unit)
+
+        monkeypatch.setattr(service_mod, "systemctl_show", show)
+        result = process_registry.kill_process(session.id)
+        assert stops == [], stops
+        assert result.get("status") != "killed", result
+        assert session.exit_code == 0, session.exit_code
+        assert session.completion_reason != "killed"
+        from hermes_constants import get_hermes_home
+        receipt = json.loads(
+            (get_hermes_home() / "logs" / "process-results" / f"{session.id}.json").read_text(encoding="utf-8-sig"),
+        )
+        assert receipt["exit_code"] == 0
+        assert receipt["completion_reason"] != "killed"
+        assert _up(case.unit)
+
+
+def test_durable_stop_wins_over_a_racing_success(request, monkeypatch):
+    import threading
+
+    from tools.process_registry import process_registry
+    from tools.process_registry_service import _finish_exit, pending_service_events
+    import tools.process_registry_service as service_mod
+
+    with _unit(request, monkeypatch) as case:
+        started = _dispatch(
+            {"command": "sleep 30", "service": "notify"},
+            case.tool_call_id, case.task_id,
+        )
+        session = _session(started["session_id"])
+        durable = threading.Event()
+        finish_done = threading.Event()
+        real_run = service_mod._run
+
+        def wrapped(argv, **kwargs):
+            if any(part == "stop" for part in argv) and case.unit in argv:
+                durable.set()
+                assert finish_done.wait(5)
+            return real_run(argv, **kwargs)
+
+        monkeypatch.setattr(service_mod, "_run", wrapped)
+        errors = []
+
+        def stop():
+            try:
+                errors.append(("stop", process_registry.kill_process(session.id)))
+            except Exception as exc:
+                errors.append(("stop-exc", exc))
+
+        def finish():
+            try:
+                assert durable.wait(5)
+                errors.append(("finish", _finish_exit(
+                    process_registry, session, 0, "exited", "", publish=False,
+                )))
+            finally:
+                finish_done.set()
+
+        stopper = threading.Thread(target=stop)
+        finisher = threading.Thread(target=finish)
+        stopper.start()
+        finisher.start()
+        stopper.join(15)
+        finisher.join(15)
+        assert not stopper.is_alive() and not finisher.is_alive()
+        assert not any(isinstance(item[1], Exception) for item in errors), errors
+        assert session.exit_code == -15, (session.exit_code, session.completion_reason, errors)
+        assert session.completion_reason == "killed"
+        from hermes_constants import get_hermes_home
+        receipt = json.loads(
+            (get_hermes_home() / "logs" / "process-results" / f"{session.id}.json").read_text(encoding="utf-8-sig"),
+        )
+        assert receipt["exit_code"] == -15
+        assert receipt["completion_reason"] == "killed"
+        assert not any(
+            item.get("session_id") == session.id and item.get("exit_code") == 0
+            for item in pending_service_events()
+        )
+
+
+def _write_service_checkpoint(session_id: str, **extra):
+    from tools.process_registry import _checkpoint_path
+    from tools.process_registry_service import read_boot_id
+
+    entry = {
+        "session_id": session_id, "command": "sleep 30", "pid": None,
+        "service_unit": f"hermes-bg-{session_id}.service",
+        "service_invocation_id": "inv-stale", "service_boot_id": read_boot_id(),
+        "service_mode": "notify", "tool_call_id": f"call-{session_id}",
+        "service_stop_intent": False, "notify_on_complete": True, "started_at": 1700000000,
+        "task_id": "task-stale", "owner_task_id": "task-stale",
+        "session_key": "agent:main:local:dm:stale", "watcher_interval": 0,
+    }
+    entry.update(extra)
+    path = _checkpoint_path()
+    original = path.read_bytes() if path.exists() else None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps([entry]), encoding="utf-8")
+    return path, original
+
+
+def _write_exit_receipt(session_id: str, **extra) -> Path:
+    from hermes_constants import get_hermes_home
+
+    directory = get_hermes_home() / "logs" / "process-results"
+    directory.mkdir(parents=True, exist_ok=True)
+    record = {
+        "id": session_id, "command": "sleep 30", "cwd": "/", "task_id": "task-stale",
+        "owner_task_id": "task-stale", "session_key": "agent:main:local:dm:stale",
+        "parent_session_id": "parent-stale", "started_at": 1700000000, "exit_code": 0,
+        "completion_reason": "exited", "termination_source": "", "notify_on_complete": True,
+        "service_unit": f"hermes-bg-{session_id}.service", "service_invocation_id": "inv-stale",
+        "service_boot_id": "", "service_mode": "notify", "tool_call_id": f"call-{session_id}",
+        "service_stop_intent": False, "admission_pending": True, "output": "stale-success",
+    }
+    record.update(extra)
+    path = directory / f"{session_id}.json"
+    path.write_text(json.dumps(record), encoding="utf-8")
+    return path
+
+
+def test_stale_success_with_durable_stop_is_not_admitted_when_show_fails(monkeypatch):
+    """Cold process: exit 0 receipt plus a not-exited stop row, and show is unavailable."""
+    from tools.process_registry import ProcessRegistry
+    from tools.process_registry_service import pending_service_events, refresh_service_session
+    import tools.process_registry_service as service_mod
+
+    session_id = "proc_stalesuccess1"
+    path, original = _write_service_checkpoint(session_id, service_stop_intent=True)
+    receipt = _write_exit_receipt(session_id)
+    monkeypatch.setattr(service_mod, "systemctl_show", lambda _unit: None)
+    try:
+        fresh = ProcessRegistry()
+        assert fresh.recover_from_checkpoint() >= 1
+        assert [item for item in pending_service_events() if item.get("session_id") == session_id] == []
+        row = fresh.get(session_id)
+        assert row is not None and row.exited is False
+        assert row.exit_code != 0
+        stored = json.loads(receipt.read_text(encoding="utf-8-sig"))
+        assert stored["exit_code"] == 0 and stored["admission_pending"] is True
+
+        def matched(unit):
+            return {
+                "LoadState": "loaded", "InvocationID": "inv-stale", "SubState": "exited",
+                "Result": "success", "ExecMainCode": "1", "ExecMainStatus": "0",
+                "Id": unit, "ActiveState": "inactive", "NRestarts": "0",
+            }
+
+        monkeypatch.setattr(service_mod, "systemctl_show", matched)
+        # The unit name is synthetic. Cleanup must not reach a real systemctl stop.
+        monkeypatch.setattr(
+            service_mod, "_run",
+            lambda argv, **_kwargs: subprocess.CompletedProcess(argv, 0, "", ""),
+        )
+        refresh_service_session(fresh, row)
+        assert row.exit_code == -15, (row.exit_code, row.completion_reason)
+        assert row.completion_reason == "killed"
+        assert row.termination_source == "unit_stopped"
+        rewritten = json.loads(receipt.read_text(encoding="utf-8-sig"))
+        assert rewritten["exit_code"] == -15
+        assert rewritten["completion_reason"] == "killed"
+    finally:
+        receipt.unlink(missing_ok=True)
+        if original is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_bytes(original)
+
+
+def test_committed_success_without_a_checkpoint_row_is_still_admitted(monkeypatch):
+    """A gone checkpoint row is the commit. The barrier must not drop that result."""
+    from tools.process_registry_service import pending_service_events
+
+    session_id = "proc_committed001"
+    path, original = _write_service_checkpoint("proc_otherstale1", service_stop_intent=True)
+    receipt = _write_exit_receipt(session_id)
+    try:
+        events = [item for item in pending_service_events() if item.get("session_id") == session_id]
+        assert len(events) == 1, events
+        assert events[0]["exit_code"] == 0
+    finally:
+        receipt.unlink(missing_ok=True)
+        if original is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_bytes(original)
+
+
+def test_lagging_checkpoint_without_stop_intent_does_not_drop_the_receipt(monkeypatch):
+    """Best-effort checkpoint cleanup can lag a committed exit. That alone is not a contradiction."""
+    from tools.process_registry import ProcessRegistry
+    from tools.process_registry_service import pending_service_events
+    import tools.process_registry_service as service_mod
+
+    session_id = "proc_lagging0001"
+    path, original = _write_service_checkpoint(session_id, service_stop_intent=False)
+    receipt = _write_exit_receipt(session_id)
+    monkeypatch.setattr(service_mod, "systemctl_show", lambda _unit: None)
+    try:
+        fresh = ProcessRegistry()
+        assert fresh.recover_from_checkpoint() >= 1
+        events = [item for item in pending_service_events() if item.get("session_id") == session_id]
+        assert len(events) == 1 and events[0]["exit_code"] == 0, events
+        row = fresh.get(session_id)
+        assert row is not None and row.exited is False
+    finally:
+        receipt.unlink(missing_ok=True)
+        if original is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_bytes(original)

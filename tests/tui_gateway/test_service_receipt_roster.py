@@ -213,6 +213,152 @@ def _assert_unresolved_parent(row, launch_parent):
     assert not isinstance(row.get("parent_session_id"), dict)
 
 
+def _settle_through_canonical_admissions(
+    case, process_registry, process_rows, live_owners, roster, queue_before,
+):
+    """Queued admissions hold. A real claim to started clears exit 0, nonzero, and lost."""
+    from types import SimpleNamespace
+
+    from gateway.session_ancillary import process_snapshot
+    from persistence_assembly import open_persistence, profile_scope
+    from tools.process_registry import ProcessSession
+    from tools.process_registry_service import attention_for
+
+    launch_parent = case["launch_parent"]
+    bot2_parent = case["bot2_parent"]
+    failed_parent = case["failed_parent"]
+    lost_parent = case["lost_parent"]
+    launch_sid = case["launch_sid"]
+    bot2_sid = case["bot2_sid"]
+    failed_sid = case["failed_sid"]
+    lost_sid = case["lost_sid"]
+    launch_route = case["launch_route"]
+
+    def _memory(sid, parent, route, **fields):
+        session = ProcessSession(
+            id=sid, command=fields.get("command", "true"), task_id="task-cold",
+            session_key=route, parent_session_id=parent, started_at=1700000000,
+            exited=True, exited_at=1.0, exit_code=fields.get("exit_code", 0),
+            completion_reason=fields.get("completion_reason", "exited"),
+            notify_on_complete=True, service_unit=f"hermes-bg-{sid}.service",
+            service_invocation_id="inv-cold", service_boot_id="boot-cold",
+            service_mode="notify", tool_call_id=f"call-{sid}", admission_pending=True,
+            output_buffer=fields.get("output", ""),
+        )
+        process_registry._finished[sid] = session
+        return session
+
+    _memory(launch_sid, launch_parent, launch_route, command="ready-cold-cmd", output="ready-cold-out")
+    _memory(
+        failed_sid, failed_parent, case["failed_route"], command="failed-cold-cmd",
+        output="failed-cold-out", exit_code=1,
+    )
+    _memory(
+        lost_sid, lost_parent, case["lost_route"], command="lost-cold-cmd",
+        output="lost-cold-out", exit_code=None, completion_reason="lost",
+    )
+    authority = SimpleNamespace(persistence=case["launch_db"])
+    previous_lookup = getattr(process_registry, "_service_authority_lookup", None)
+    process_registry._service_authority_lookup = lambda: authority
+    epoch = case["launch_db"].runtime.begin_epoch(instance_id="der831-settlement")
+    bot2_db = open_persistence(profile_scope(home=case["bot2"]))
+    bot2_epoch = bot2_db.runtime.begin_epoch(instance_id="der831-settlement-bot2")
+
+    def _identity(sid):
+        return json.dumps(("completion", sid, 1700000000), separators=(",", ":"))
+
+    def _admit(db, parent, sid, admit_epoch):
+        identity = _identity(sid)
+        db.admissions.admit(
+            epoch=admit_epoch, principal_id="automation:test", session_id=parent,
+            request_id=f"completion-{sid}",
+            payload={"local_automation_v1": {"identity": identity, "identities": [identity]}},
+        )
+
+    def _stored(home, sid):
+        return json.loads((home / "logs" / "process-results" / f"{sid}.json").read_text(encoding="utf-8"))
+
+    try:
+        for parent, sid in (
+            (launch_parent, launch_sid), (failed_parent, failed_sid), (lost_parent, lost_sid),
+        ):
+            _admit(case["launch_db"], parent, sid, epoch)
+        _admit(bot2_db, bot2_parent, bot2_sid, bot2_epoch)
+        held = _by_id(process_registry.list_sessions(include_service_receipts=True))
+        assert held[launch_sid]["attention"] == "ready"
+        assert held[launch_sid]["exit_code"] == 0
+        assert held[failed_sid]["attention"] == "failed"
+        assert held[failed_sid]["exit_code"] == 1
+        assert held[lost_sid]["attention"] == "lost"
+        assert held[launch_sid]["admission_pending"] is True
+        assert _stored(case["bot2"], bot2_sid)["admission_pending"] is True
+        for parent in (launch_parent, failed_parent, lost_parent):
+            claimed = case["launch_db"].admissions.claim(epoch=epoch, session_id=parent)
+            assert claimed is not None and str(claimed.status) == "started", claimed
+        claimed_foreign = bot2_db.admissions.claim(epoch=bot2_epoch, session_id=bot2_parent)
+        assert claimed_foreign is not None and str(claimed_foreign.status) == "started"
+        real_authority = SimpleNamespace(
+            sessions={launch_parent: SimpleNamespace(route=launch_route, source=None)},
+            persistence=case["launch_db"],
+        )
+        process_snapshot(real_authority, SimpleNamespace(session_id=launch_parent), None, [])
+        for sid, code, reason in (
+            (launch_sid, 0, "exited"), (failed_sid, 1, "exited"), (lost_sid, None, "lost"),
+        ):
+            stored = _stored(case["launch"], sid)
+            assert stored["admission_pending"] is False, sid
+            assert stored["exit_code"] == code, stored
+            assert stored["completion_reason"] == reason, stored
+            mem = process_registry.get(sid)
+            assert mem is not None and mem.admission_pending is False, sid
+            assert mem.exit_code == code and mem.completion_reason == reason
+            assert attention_for(mem) is None
+        assert _stored(case["bot2"], bot2_sid)["admission_pending"] is True
+        settled = roster()
+        assert launch_parent not in settled
+        assert failed_parent not in settled
+        assert lost_parent not in settled
+        assert ("background", (launch_parent, launch_route)) not in live_owners(case["launch"])
+        assert ("background", (failed_parent, case["failed_route"])) not in live_owners()
+        assert ("background", (lost_parent, case["lost_route"])) not in live_owners()
+        assert roster("bot2") == {}
+        assert _stored(case["bot2"], bot2_sid)["admission_pending"] is False
+        assert _stored(case["bot2"], bot2_sid)["exit_code"] == 0
+        painted = _by_id(process_rows())
+        assert launch_sid not in painted
+        assert failed_sid not in painted
+        assert lost_sid not in painted
+        assert launch_sid not in _by_id(_snapshot(case["launch"], launch_parent, launch_route))
+        assert failed_sid not in _by_id(_snapshot(case["launch"], failed_parent, case["failed_route"]))
+        assert lost_sid not in _by_id(_snapshot(case["launch"], lost_parent, case["lost_route"]))
+        for sid in (launch_sid, failed_sid, lost_sid):
+            process_registry._finished.pop(sid, None)
+            assert process_registry.get(sid) is None
+        assert launch_parent not in roster()
+        assert failed_parent not in roster()
+        assert lost_parent not in roster()
+        settled_flag = _by_id(process_registry.list_sessions(include_service_receipts=True))
+        assert launch_sid not in settled_flag
+        assert failed_sid not in settled_flag
+        assert lost_sid not in settled_flag
+        assert launch_sid not in _by_id(_processes(launch_route, str(case["launch"])))
+        assert failed_sid not in _by_id(_processes(case["failed_route"], str(case["launch"])))
+        assert lost_sid not in _by_id(_processes(case["lost_route"], str(case["launch"])))
+        assert launch_sid not in _by_id(_snapshot(case["launch"], launch_parent, launch_route))
+        assert failed_sid not in _by_id(_snapshot(case["launch"], failed_parent, case["failed_route"]))
+        assert lost_sid not in _by_id(_snapshot(case["launch"], lost_parent, case["lost_route"]))
+        assert bot2_sid not in _by_id(_processes(case["bot2_route"], str(case["bot2"])))
+        assert process_registry.completion_queue.qsize() == queue_before
+    finally:
+        for sid in (launch_sid, failed_sid, lost_sid):
+            process_registry._finished.pop(sid, None)
+        if previous_lookup is None:
+            process_registry._service_authority_lookup = None
+        else:
+            process_registry._service_authority_lookup = previous_lookup
+        bot2_db.close()
+
+
 def test_disk_only_pending_receipt_stays_in_the_roster_without_an_owner(cold_roster):
     """Ready, failed, and lost receipts stay visible with no model owner.
 
@@ -408,36 +554,9 @@ def test_disk_only_pending_receipt_stays_in_the_roster_without_an_owner(cold_ros
     assert load_completed_results() == {}
     assert os.environ.get("HERMES_SESSION_ID", "") == ""
 
-    from tools.process_registry_service import clear_service_admission
-
-    assert clear_service_admission(launch_sid) is True
-    assert clear_service_admission(failed_sid) is True
-    assert clear_service_admission(lost_sid) is True
-    for sid, code in ((launch_sid, 0), (failed_sid, 1), (lost_sid, None)):
-        stored = json.loads(
-            (case["launch"] / "logs" / "process-results" / f"{sid}.json").read_text(encoding="utf-8"),
-        )
-        assert stored["admission_pending"] is False
-        assert stored["exit_code"] == code
-    settled = roster()
-    assert launch_parent not in settled
-    assert failed_parent not in settled
-    assert lost_parent not in settled
-    assert ("background", (launch_parent, launch_route)) not in _live_work_owners(case["launch"])
-    assert ("background", (failed_parent, case["failed_route"])) not in _live_work_owners()
-    assert ("background", (lost_parent, case["lost_route"])) not in _live_work_owners()
-    assert roster("bot2") == foreign
-    settled_flag = _by_id(process_registry.list_sessions(include_service_receipts=True))
-    assert launch_sid not in settled_flag
-    assert failed_sid not in settled_flag
-    assert lost_sid not in settled_flag
-    assert launch_sid not in _by_id(_processes(launch_route, str(case["launch"])))
-    assert failed_sid not in _by_id(_processes(case["failed_route"], str(case["launch"])))
-    assert lost_sid not in _by_id(_processes(case["lost_route"], str(case["launch"])))
-    assert launch_sid not in _by_id(_snapshot(case["launch"], launch_parent, launch_route))
-    assert failed_sid not in _by_id(_snapshot(case["launch"], failed_parent, case["failed_route"]))
-    assert lost_sid not in _by_id(_snapshot(case["launch"], lost_parent, case["lost_route"]))
-    assert process_registry.completion_queue.qsize() == queue_before
+    _settle_through_canonical_admissions(
+        case, process_registry, process_rows, _live_work_owners, roster, queue_before,
+    )
     missing = json.loads(
         (case["launch"] / "logs" / "process-results" / f"{missing_sid}.json").read_text(encoding="utf-8"),
     )

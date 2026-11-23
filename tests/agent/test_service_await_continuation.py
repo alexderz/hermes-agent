@@ -243,6 +243,7 @@ _HELPER = textwrap.dedent("""\
     marker = os.environ["HERMES_WAIT_MARKER"]
     session_key = os.environ["HERMES_WAIT_SESSION_KEY"]
     tool_call_id = os.environ["HERMES_WAIT_TOOL_CALL"]
+    exit_code = os.environ.get("HERMES_WAIT_EXIT", "0")
 
     class _Fixed:
         hex = hex_id + "ffff"
@@ -265,7 +266,7 @@ _HELPER = textwrap.dedent("""\
 
     command = (
         "while [ ! -f " + shlex.quote(flag) + " ]; do sleep 0.2; done; "
-        "printf '%s\\n' " + shlex.quote(marker) + "; exit 0"
+        "printf '%s\\n' " + shlex.quote(marker) + "; exit " + exit_code
     )
     try:
         raw = run_terminal_service(
@@ -312,7 +313,10 @@ def _payload_texts(authority, owner) -> list[str]:
     return texts
 
 
-def _drive_released_unit(monkeypatch, tmp_path, metadata, route, unit, hex_id):
+def _drive_released_unit(
+    monkeypatch, tmp_path, metadata, route, unit, hex_id, *,
+    settle: bool = True, disarm_checkpoint: bool = False, exit_code: int = 0,
+):
     """Start, kill, and recover the helper off the event loop.
 
     The wait is a real subprocess and ``systemctl show``. Keeping it synchronous
@@ -355,6 +359,7 @@ def _drive_released_unit(monkeypatch, tmp_path, metadata, route, unit, hex_id):
     env["HERMES_WAIT_MARKER"] = marker
     env["HERMES_WAIT_SESSION_KEY"] = route
     env["HERMES_WAIT_TOOL_CALL"] = f"call-{hex_id}"
+    env["HERMES_WAIT_EXIT"] = str(exit_code)
     env["HERMES_WAIT_ROOT"] = str(ROOT)
     env["HERMES_WAIT_WORKDIR"] = str(tmp_path)
     env["PYTHONPATH"] = str(ROOT) + os.pathsep + env.get("PYTHONPATH", "")
@@ -384,6 +389,15 @@ def _drive_released_unit(monkeypatch, tmp_path, metadata, route, unit, hex_id):
         assert state["launches"] == 1, state
         assert state["unit"] == unit, state
         assert parent_launches["n"] == 0
+        if disarm_checkpoint:
+            from tools.process_registry import _checkpoint_path
+            checkpoint = _checkpoint_path()
+            entries = json.loads(checkpoint.read_text(encoding="utf-8-sig"))
+            for item in entries:
+                if item.get("session_id") == state["session_id"]:
+                    item["notify_on_complete"] = False
+                    item["watcher_interval"] = 0
+            checkpoint.write_text(json.dumps(entries), encoding="utf-8")
         fresh = ProcessRegistry()
         assert fresh.recover_from_checkpoint() >= 1
         row = fresh.get(state["session_id"])
@@ -393,6 +407,13 @@ def _drive_released_unit(monkeypatch, tmp_path, metadata, route, unit, hex_id):
         assert row.systemd_unit == ""
         assert row._reader_thread is None
         assert row.exited is False
+        if not settle:
+            return {
+                "unit": unit, "marker": marker, "state": state, "row_id": row.id,
+                "row": row, "registry": fresh, "flag": flag,
+                "parent_launches": parent_launches, "events": [], "stored": None,
+                "receipt": tmp_path / "logs" / "process-results" / f"{row.id}.json",
+            }
         active = subprocess.run(
             ["systemctl", "--user", "is-active", unit], check=False, capture_output=True, text=True,
             env=_bus_env(),
@@ -497,3 +518,116 @@ async def test_released_wait_recovers_once_and_admits_the_real_exit(request, mon
         if unit:
             _stop_owned(unit)
         authority.runner.session_store.close_all_db_handles()
+
+
+def _unit_is_active(unit: str) -> str:
+    active = subprocess.run(
+        ["systemctl", "--user", "is-active", unit], check=False, capture_output=True, text=True,
+        env=_bus_env(),
+    )
+    return active.stdout.strip()
+
+
+def _wait_for_release(registry, row, flag) -> None:
+    from tools.process_registry_service import refresh_service_session
+
+    flag.write_text("go", encoding="utf-8")
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline and not row.exited:
+        refresh_service_session(registry, row)
+        if not row.exited:
+            time.sleep(0.2)
+
+
+async def _recover_running(request, monkeypatch, tmp_path, *, exit_code: int, marker: str):
+    """Crash the helper while the unit is still waiting, then arm the existing watcher."""
+    from tools.process_registry import process_registry
+    from tools.process_registry_notifications import format_process_notification
+    from tools.process_registry_service import (
+        _UNRESOLVED_NOTE, pending_service_events, service_outcome_content,
+    )
+    from tests.gateway.test_automation_notification_category import _native_owner
+
+    _forget_services()
+    runner, authority, _adapter, _source, metadata = await _native_owner(tmp_path, monkeypatch, "human-1")
+    route = metadata["gateway_session_key"]
+    owner = authority.logical_owner(metadata["gateway_session_id"])
+    hex_id = _real_uuid4().hex[:12]
+    unit = f"hermes-bg-proc_{hex_id}.service"
+    _own(request, unit)
+    try:
+        driven = _drive_released_unit(
+            monkeypatch, tmp_path, metadata, route, unit, hex_id,
+            settle=False, disarm_checkpoint=True, exit_code=exit_code,
+        )
+        row = driven["row"]
+        registry = driven["registry"]
+        assert row.exited is False
+        active = _unit_is_active(unit)
+        assert active in {"active", "activating"}, active
+        assert row.notify_on_complete is True, row.notify_on_complete
+        payloads = [item for item in registry.pending_watchers if item.get("session_id") == row.id]
+        assert len(payloads) == 1 and payloads[0]["notify_on_complete"] is True, payloads
+        from tools.process_registry import _checkpoint_path
+        from tools.process_registry_service import recover_service_entry
+        entries = json.loads(_checkpoint_path().read_text(encoding="utf-8-sig"))
+        entry = next(item for item in entries if item.get("session_id") == row.id)
+        assert recover_service_entry(registry, entry) is False
+        assert len([item for item in registry.pending_watchers if item.get("session_id") == row.id]) == 1
+        assert driven["parent_launches"]["n"] == 0
+        assert driven["state"]["launches"] == 1
+        process_registry._running[row.id] = row
+        try:
+            spliced = json.loads(service_outcome_content(driven["state"]["tool_call_id"]))
+        finally:
+            process_registry._running.pop(row.id, None)
+        assert spliced["status"] == "unresolved", spliced
+        assert spliced["note"] == _UNRESOLVED_NOTE
+        assert spliced["exit_code"] is None
+        _wait_for_release(registry, row, driven["flag"])
+        assert row.exited is True and row.exit_code == exit_code, (row.exit_code, row.completion_reason)
+        events = [item for item in pending_service_events() if item.get("session_id") == row.id]
+        assert len(events) == 1, events
+        text = format_process_notification(events[0])
+        assert text and marker in text, text
+        if row.admission_pending:
+            held = json.loads(service_outcome_content(driven["state"]["tool_call_id"]) or "{}")
+            assert held.get("status") == "unresolved", held
+            assert held.get("note") == _UNRESOLVED_NOTE
+        before = _payload_texts(authority, owner)
+        injected = await runner._inject_watch_notification(text, events[0])
+        assert injected is True, injected
+        after = _payload_texts(authority, owner)
+        return {
+            "text": text, "before": before, "after": after, "marker": marker,
+            "launches": driven["state"]["launches"], "parent": driven["parent_launches"]["n"],
+            "authority": authority, "runner": runner,
+        }
+    finally:
+        _stop_owned(unit)
+
+
+@pytest.mark.asyncio
+async def test_running_recovery_admits_exit_0_once(request, monkeypatch, tmp_path):
+    """The worker is still running at recovery. The watcher admits the real exit once."""
+    outcome = await _recover_running(request, monkeypatch, tmp_path, exit_code=0, marker="HERMES_WAIT_CONT_")
+    assert outcome["launches"] == 1
+    assert outcome["parent"] == 0
+    matching = [
+        text for text in outcome["after"]
+        if "HERMES_WAIT_CONT_" in text and "exit code 0" in text
+    ]
+    before = [text for text in outcome["before"] if "HERMES_WAIT_CONT_" in text and "exit code 0" in text]
+    assert len(matching) == len(before) + 1, outcome["after"]
+    assert _parent_step(True, matching[-1], "HERMES_WAIT_CONT_") == "STEP2"
+
+
+@pytest.mark.asyncio
+async def test_running_recovery_admits_exit_3_without_step2(request, monkeypatch, tmp_path):
+    outcome = await _recover_running(request, monkeypatch, tmp_path, exit_code=3, marker="HERMES_WAIT_CONT_")
+    assert outcome["launches"] == 1
+    assert outcome["parent"] == 0
+    assert "exit code 3" in outcome["text"]
+    assert "HERMES_WAIT_CONT_" in outcome["text"]
+    assert _parent_step(True, outcome["text"], "HERMES_WAIT_CONT_") is None
+    assert "STEP2" not in outcome["text"]

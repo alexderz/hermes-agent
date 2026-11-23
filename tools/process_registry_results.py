@@ -76,35 +76,46 @@ def _result_paths():
     return pending + settled
 
 
-def save_completed_result(session, *, strict: bool = False):
-    """Retain *session*'s completion receipt under this profile's logs. A hosted agent's process
-    has none on this host: its command and output are the tenant's, kept in the live registry only."""
-    if session.sandbox_key:
-        return False if strict else None
-    from agent.redact import redact_sensitive_text, redact_terminal_output
+def frozen_result_record(session) -> dict:
+    """Copy one receipt. A live caller already holds ``session._lock``; this does not take it."""
     from tools.process_registry import MAX_OUTPUT_CHARS
 
-    with session._lock:
-        record = {key: getattr(session, key) for key in _RESULT_FIELDS}
-        record.update({
-            key: getattr(session, key, default) for key, default in _OPTIONAL_RESULT_FIELDS.items()
-        })
-        record["output"] = session.output_buffer[-MAX_OUTPUT_CHARS:]
-    # Live-output opt-out must not persist raw credentials in durable receipts.
-    record["output"] = redact_terminal_output(record["output"], record["command"], force=True)
-    record["command"] = redact_sensitive_text(record["command"], code_file=True, force=True)
+    record = {key: getattr(session, key) for key in _RESULT_FIELDS}
+    record.update({
+        key: getattr(session, key, default) for key, default in _OPTIONAL_RESULT_FIELDS.items()
+    })
+    record["output"] = session.output_buffer[-MAX_OUTPUT_CHARS:]
+    return record
+
+
+def write_frozen_result(session_id: str, record: dict, *, strict: bool = False):
+    """Write an already-copied receipt. Does not take the session lock."""
+    from agent.redact import redact_sensitive_text, redact_terminal_output
+
+    body = dict(record)
+    body["output"] = redact_terminal_output(body.get("output") or "", body.get("command") or "", force=True)
+    body["command"] = redact_sensitive_text(body.get("command") or "", code_file=True, force=True)
     directory = get_hermes_home() / "logs" / "process-results"
     try:
         from hermes_constants import assert_named_profile_home_live
         assert_named_profile_home_live(directory)
         make_user_dir(directory, mode=0o700, parents=True, exist_ok=True)
-        atomic_json_write(directory / f"{session.id}.json", record, mode=0o600)
+        atomic_json_write(directory / f"{session_id}.json", body, mode=0o600)
         _result_paths()
     except OSError:
-        # Preserve live delivery on disk failure, but never silently claim durability.
-        logger.warning("Could not retain completed process result %s", session.id, exc_info=True)
+        logger.warning("Could not retain completed process result %s", session_id, exc_info=True)
         return False if strict else None
     return True if strict else None
+
+
+def save_completed_result(session, *, strict: bool = False):
+    """Retain *session*'s completion receipt under this profile's logs. A hosted agent's process
+    has none on this host: its command and output are the tenant's, kept in the live registry only."""
+    if session.sandbox_key:
+        return False if strict else None
+    with session._lock:
+        record = frozen_result_record(session)
+    return write_frozen_result(session.id, record, strict=strict)
 
 
 def _owns_result(owner: str, parent: str | None) -> bool:

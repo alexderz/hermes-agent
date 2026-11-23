@@ -15,6 +15,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Optional
@@ -205,15 +206,16 @@ def attention_for(session) -> Optional[str]:
         return None
     if not session.exited:
         return "waiting" if mode == "await" else "running"
-    if session.completion_reason == "lost":
-        return "lost"
     if session.completion_reason == "killed":
         return None
+    pending = bool(getattr(session, "admission_pending", False))
+    if session.completion_reason == "lost":
+        return "lost" if pending else None
     if session.exit_code == 0:
-        return "ready" if session.admission_pending else None
+        return "ready" if pending else None
     if session.exit_code is None:
         return "waiting" if mode == "await" else "running"
-    return "failed"
+    return "failed" if pending else None
 
 
 def service_projection(session) -> dict:
@@ -462,37 +464,60 @@ def refresh_service_session(registry, session, *, publish: bool = True) -> None:
         _cleanup_unit_if_match(session)
 
 
+def _outcome_cv(session) -> threading.Condition:
+    """Condition on the session lock. ``_stop_phase`` is process-local, not a checkpoint field."""
+    cond = getattr(session, "_outcome_cv", None)
+    if cond is not None:
+        return cond
+    with session._lock:
+        cond = getattr(session, "_outcome_cv", None)
+        if cond is None:
+            cond = threading.Condition(session._lock)
+            session._outcome_cv = cond
+        return cond
+
+
+def _restore_undecided(session) -> None:
+    """Caller holds the session lock. The row stays running."""
+    session.exit_code = None
+    session.admission_pending = False
+    session.completion_reason = "exited"
+    session.termination_source = ""
+
+
 def _finish_exit(registry, session, code: int, reason: str, source: str, *, publish: bool = True) -> bool:
-    from tools.process_registry_results import save_completed_result
+    from tools.process_registry_results import frozen_result_record, save_completed_result, write_frozen_result
 
     # The show can flip to exited during the systemctl call that follows an empty tail.
     # Read the log again now, before the receipt snapshot, so the tool result has those bytes.
     tail_service_output(session)
-    with session._lock:
+    cv = _outcome_cv(session)
+    with cv:
+        while getattr(session, "_stop_phase", None) == "inflight":
+            cv.wait()
         if session.exited:
             return True
+        # Only a durable intent (checkpoint already landed, or a recovered row) is killed.
+        # The in-flight bit is waited out above so a failed checkpoint cannot fabricate it.
         if session.service_stop_intent:
             code, reason, source = -15, "killed", "unit_stopped"
         session.exit_code = code
         session.completion_reason = reason
         session.termination_source = source
         session.admission_pending = bool(session.notify_on_complete)
-    if not save_completed_result(session, strict=True):
-        with session._lock:
+        record = frozen_result_record(session)
+    if not write_frozen_result(session.id, record, strict=True):
+        with cv:
             if not session.exited:
-                session.exit_code = None
-                session.admission_pending = False
-                session.completion_reason = "exited"
-                session.termination_source = ""
+                _restore_undecided(session)
         return False
-    with session._lock:
+    with cv:
+        while getattr(session, "_stop_phase", None) == "inflight":
+            cv.wait()
         if session.exited:
             return True
         if session.service_stop_intent and source != "unit_stopped":
-            session.exit_code = None
-            session.admission_pending = False
-            session.completion_reason = "exited"
-            session.termination_source = ""
+            _restore_undecided(session)
             return False
         session.mark_exited(code, reason, source)
     if publish:
@@ -562,9 +587,24 @@ def recover_service_entry(registry, entry: dict) -> bool:
     session = ProcessSession(id=session_id, detached=True, pid=None, **fields)
     with registry._lock:
         registry._running[session.id] = session
+    stored_invocation = str(entry.get("service_invocation_id") or "")
+    stored_notify = bool(entry.get("notify_on_complete"))
     refresh_service_session(registry, session, publish=False)
-    if not session.exited and session.watcher_interval > 0:
-        registry.pending_watchers.append(_watcher_payload(session))
+    armed = False
+    if (
+        not session.exited
+        and (entry.get("service_mode") or "") == "await"
+        and stored_invocation
+        and not stored_notify
+        and not session.notify_on_complete
+    ):
+        # The blocking waiter died with this process. Arm the existing release path once.
+        # An invocation adopted only by this show is not that stored handoff.
+        _release_await(registry, session)
+        armed = True
+    if not armed and not session.exited and session.watcher_interval > 0:
+        if not any(item.get("session_id") == session.id for item in registry.pending_watchers):
+            registry.pending_watchers.append(_watcher_payload(session))
     logger.info("Recovered service %s invocation %s", session.service_unit, session.service_invocation_id or "<unset>")
     return True
 
@@ -601,10 +641,38 @@ def stop_owned_service(registry, session, *, source: str, consume_output: bool) 
             or (session.service_boot_id and boot and session.service_boot_id != boot)
         ):
             return _unresolved_stop(session, "service invocation changed before stop; it was not signalled")
-    session.service_stop_intent = True
+    cv = _outcome_cv(session)
+    with cv:
+        if session.exited:
+            committed = True
+        else:
+            session.service_stop_intent = True
+            session._stop_phase = "inflight"
+            committed = False
+    if committed:
+        return _committed_stop(registry, session, consume_output=consume_output)
     if not registry._write_checkpoint(strict=True):
-        session.service_stop_intent = False
+        with cv:
+            if getattr(session, "_stop_phase", None) == "inflight":
+                session.service_stop_intent = False
+                session._stop_phase = None
+                cv.notify_all()
         return _unresolved_stop(session, "service stop intent could not be stored; it was not signalled")
+    with cv:
+        if session.exited:
+            if getattr(session, "_stop_phase", None) == "inflight":
+                session._stop_phase = None
+                cv.notify_all()
+            lost = True
+        else:
+            session._stop_phase = "durable"
+            cv.notify_all()
+            lost = False
+    if lost:
+        # Drop the not-yet-exited checkpoint row now that completion won, so a
+        # later admit is not blocked by a stop intent the signal never sent.
+        registry._write_checkpoint()
+        return _committed_stop(registry, session, consume_output=consume_output)
     binary = shutil.which("systemctl")
     if binary:
         try:
@@ -618,6 +686,15 @@ def stop_owned_service(registry, session, *, source: str, consume_output: bool) 
         from tools.process_registry import ProcessRegistry
         return {"status": "killed", "session_id": session.id, **ProcessRegistry._exit_snapshot(session, "killed")}
     return _unresolved_stop(session, "service stop did not record a durable outcome")
+
+
+def _committed_stop(registry, session, *, consume_output: bool) -> dict:
+    """The exit was already recorded. Do not signal and do not rewrite the receipt."""
+    if consume_output:
+        registry._completion_consumed.add(session.id)
+    from tools.process_registry import ProcessRegistry
+    status = "killed" if session.completion_reason == "killed" else "already_exited"
+    return {"status": status, "session_id": session.id, **ProcessRegistry._exit_snapshot(session, status)}
 
 
 def _unresolved_stop(session, note: str) -> dict:
@@ -867,6 +944,15 @@ def service_outcome_content(tool_call_id: str) -> Optional[str]:
                           and item.get("tool_call_id") == tool_call_id and item.get("service_unit")), None)
             if entry is None:
                 return None
+            if entry.get("notify_on_complete"):
+                return json.dumps({
+                    "status": "unresolved", "exit_code": None, "process_running": True,
+                    "service": entry.get("service_mode") or "",
+                    "service_invocation_id": entry.get("service_invocation_id") or "",
+                    "service_unit": entry.get("service_unit") or "",
+                    "systemd_unit": "", "output": "", "error": None,
+                    "note": _UNRESOLVED_NOTE,
+                })
             if entry.get("service_invocation_id"):
                 return json.dumps({
                     "status": "running", "exit_code": None, "process_running": True,
@@ -883,6 +969,8 @@ def service_outcome_content(tool_call_id: str) -> Optional[str]:
                 "note": "The service start is unresolved. Do not run it again. This step is not done.",
             })
         session = _session_from_receipt(record)
+    if _handoff_pending(session):
+        return _tool_json(session, status="unresolved", note=_UNRESOLVED_NOTE)
     if session.exited and session.exit_code is not None:
         return _tool_json(session, status="exited")
     if session.service_invocation_id:
@@ -893,7 +981,14 @@ def service_outcome_content(tool_call_id: str) -> Optional[str]:
     )
 
 
-def clear_service_admission(session_id: str) -> bool:
+def _handoff_pending(session) -> bool:
+    """Notify is armed, or the receipt still owns the one exit delivery."""
+    if getattr(session, "admission_pending", False):
+        return True
+    return bool(getattr(session, "notify_on_complete", False) and not session.exited)
+
+
+def clear_service_admission(session_id: str, profile_home=None) -> bool:
     """Drop a pending admission flag without changing the stored exit code."""
     if not session_id:
         return False
@@ -903,7 +998,8 @@ def clear_service_admission(session_id: str) -> bool:
     session = process_registry.get(session_id)
     if session is not None:
         session.admission_pending = False
-    path = get_hermes_home() / "logs" / "process-results" / f"{session_id}.json"
+    home = Path(profile_home) if profile_home is not None else get_hermes_home()
+    path = home / "logs" / "process-results" / f"{session_id}.json"
     try:
         record = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
@@ -919,37 +1015,75 @@ def clear_service_admission(session_id: str) -> bool:
     return True
 
 
-def reconcile_service_admissions(authority) -> None:
-    """Clear a delivered exit-0 receipt once its admission is no longer queued.
+def _authority_profile_dir(authority, profile_home):
+    if profile_home is not None:
+        return profile_home
+    store = getattr(authority, "persistence", None)
+    scope = getattr(store, "scope", None)
+    return getattr(scope, "profile_dir", None)
 
-    A missing admission stays ready. A queued admission stays ready. No authority
-    leaves the flag alone.
+
+def _settled_exit(exit_code, completion_reason) -> bool:
+    if completion_reason == "lost":
+        return True
+    return exit_code is not None
+
+
+def reconcile_service_admissions(authority, profile_home=None) -> None:
+    """Clear a delivered receipt once its admission is no longer queued.
+
+    Memory rows and this profile's disk-only receipts, including nonzero and lost.
+    A missing admission stays pending. A queued admission stays pending. No
+    authority store leaves the flag alone. This read does not admit or start a unit.
     """
     if authority is None:
+        return
+    from tools.environments.sandbox_scope import hosted_scope
+    if hosted_scope() is not None:
+        return
+    store = getattr(authority, "persistence", None)
+    list_admissions = getattr(getattr(store, "admissions", None), "list", None)
+    if not callable(list_admissions):
         return
     from session_rules.automation import automation_descriptor
     from tools.process_registry import process_registry
 
+    home = _authority_profile_dir(authority, profile_home)
     with process_registry._lock:
-        pending = [
+        memory = [
             session for session in (*process_registry._running.values(), *process_registry._finished.values())
-            if getattr(session, "admission_pending", False) and session.exit_code == 0 and session.service_unit
+            if getattr(session, "admission_pending", False) and session.service_unit
+            and _settled_exit(session.exit_code, session.completion_reason)
         ]
-    if not pending:
+    seen = {session.id for session in memory}
+    disks = []
+    if home is not None:
+        for record in load_pending_service_receipts(home):
+            sid = record.get("id")
+            if sid in seen or not isinstance(sid, str):
+                continue
+            if _settled_exit(record.get("exit_code"), record.get("completion_reason") or ""):
+                disks.append(record)
+    if not memory and not disks:
         return
-    store = getattr(authority, "persistence", None)
-    if store is None:
-        return
-    for session in pending:
-        parent = str(session.parent_session_id or "")
-        if not parent:
-            continue
-        try:
-            rows = store.admissions.list(session_id=parent, pending_only=False)
-        except Exception:  # health: allow BLE001 -- a down authority store must not fail the process list
-            logger.warning("service admission lookup failed for %s", session.id, exc_info=True)
-            continue
-        identity = json.dumps(("completion", session.id, session.started_at), separators=(",", ":"))
+    cache: dict = {}
+
+    def rows_for(parent: str):
+        if parent not in cache:
+            try:
+                cache[parent] = list_admissions(session_id=parent, pending_only=False)
+            except Exception:  # health: allow BLE001 -- a down authority store must not fail the process list
+                logger.warning("service admission lookup failed for %s", parent, exc_info=True)
+                cache[parent] = None
+        return cache[parent]
+
+    def settle(session_id: str, parent, started_at) -> None:
+        if not isinstance(parent, str) or not parent.strip() or not session_id:
+            return
+        rows = rows_for(parent)
+        if not rows:
+            return
+        identity = json.dumps(("completion", session_id, started_at), separators=(",", ":"))
         matched = []
         for row in rows:
             payload = getattr(row, "payload", None)
@@ -960,7 +1094,28 @@ def reconcile_service_admissions(authority) -> None:
             if identity in identities:
                 matched.append(row)
         if matched and all(str(getattr(row, "status", "")) != "queued" for row in matched):
-            clear_service_admission(session.id)
+            clear_service_admission(session_id, profile_home=home)
+
+    for session in memory:
+        settle(session.id, session.parent_session_id, session.started_at)
+    for record in disks:
+        settle(str(record.get("id") or ""), record.get("parent_session_id"), record.get("started_at"))
+
+
+def _reconcile_profile_home(profile_home) -> None:
+    """Reconcile one profile's receipts against that profile's admission store."""
+    from tools.environments.sandbox_scope import hosted_scope
+    if profile_home is None or hosted_scope() is not None:
+        return
+    from persistence_assembly import open_persistence_reader, profile_scope
+    try:
+        scope = profile_scope(home=Path(profile_home))
+        with open_persistence_reader(scope.profile_dir) as persistence:
+            reconcile_service_admissions(
+                SimpleNamespace(persistence=persistence), profile_home=profile_home,
+            )
+    except Exception:  # health: allow BLE001 -- a closed or missing profile store leaves the flags
+        logger.debug("service admission reconcile skipped", exc_info=True)
 
 
 def reconcile_from_registry(registry) -> None:
@@ -1040,6 +1195,7 @@ def pending_service_obligation_owners(profile_home) -> list[tuple[str, str, str]
     Ready, failed, and lost stay distinct. A missing or non-string parent stays
     unresolved. The route is not copied into the parent. A hosted scope sees none.
     """
+    _reconcile_profile_home(profile_home)
     owners = []
     for record in load_pending_service_receipts(profile_home):
         parent = record.get("parent_session_id")
@@ -1129,10 +1285,40 @@ def _listed_receipt_entry(record: dict) -> dict:
     return entry
 
 
+def _checkpoint_rows() -> dict:
+    from tools.process_registry import _checkpoint_path
+    try:
+        entries = json.loads(_checkpoint_path().read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return {}
+    rows = {}
+    if isinstance(entries, list):
+        for item in entries:
+            if isinstance(item, dict) and isinstance(item.get("session_id"), str):
+                rows[item["session_id"]] = item
+    return rows
+
+
+def _stop_contradicts_success(record: dict, row) -> bool:
+    """A durable stop on a still-present checkpoint row contradicts an exit-0 receipt.
+
+    The checkpoint omits exited sessions, but that rewrite is best-effort and can lag a
+    committed receipt. A not-exited row without stop intent is not a contradiction: blocking
+    every such receipt would drop a real exit when show is unavailable. No row means the
+    receipt is the commit.
+    """
+    if not isinstance(row, dict) or not row.get("service_stop_intent"):
+        return False
+    if record.get("completion_reason") == "killed":
+        return False
+    return record.get("exit_code") == 0
+
+
 def pending_service_events() -> list[dict]:
     """Completion events copied from admission_pending receipt bytes. ``started_at`` is not recomputed."""
     from hermes_constants import get_hermes_home
     directory = get_hermes_home() / "logs" / "process-results"
+    checkpoint = _checkpoint_rows()
     events = []
     try:
         paths = sorted(directory.glob("proc_*.json"))
@@ -1144,6 +1330,8 @@ def pending_service_events() -> list[dict]:
         except (OSError, ValueError):
             continue
         if record.get("admission_pending") is not True or not record.get("service_unit"):
+            continue
+        if _stop_contradicts_success(record, checkpoint.get(record.get("id") or path.stem)):
             continue
         events.append({
             "type": "completion",
