@@ -8,6 +8,7 @@ import { useSessionView } from '@/app/chat/session-view'
 import { AGENTS_ROUTE } from '@/app/routes'
 import type { SubmitTextOptions } from '@/app/session/hooks/use-prompt-actions/utils'
 import { BillingBanner } from '@/components/billing-banner'
+import { formatElapsed, useElapsedSeconds } from '@/components/chat/activity-timer'
 import { composerDockCard } from '@/components/chat/composer-dock'
 import { StatusSection } from '@/components/chat/status-section'
 import { FreeTierNoticeStrip, useFreeTierNoticeOwner } from '@/components/free-tier/notice-strip'
@@ -43,12 +44,13 @@ import { openSessionInNewWindow } from '@/store/windows'
 import { PreviewStatusRow } from './preview-row'
 import { SessionControlSections } from './session-control'
 import { useSessionValue } from './session-control-utils'
-import { StatusItemRow } from './status-row'
+import { backgroundStatusPhrase, lastBackgroundOutputLine, StatusItemRow } from './status-row'
 import { SubagentSection } from './subagent-section'
 import { useSubagentSnapshot } from './use-subagent-snapshot'
 
 // Slow safety-net poll for silent exits (processes without notify_on_complete
-// emit no event when they die). Only armed while a running row is on screen.
+// emit no event when they die). Armed while a waiting, running, or ready row
+// is on screen. Ready stays until a later snapshot says it settled.
 const BACKGROUND_POLL_MS = 5_000
 
 // A localhost/loopback preview is only meaningful while its dev server is up, so
@@ -65,13 +67,83 @@ const GROUP_ICON: Record<StatusGroup['type'], string> = {
   background: 'server-process'
 }
 
-// Goals and todos are the plan the user is following; subagents and background
-// processes are how Hermes is executing it. Simple mode shows the plan only.
+// Goals and todos are the plan. Background work stays visible in Simple mode
+// because the user is waiting on it. Subagents stay advanced-only.
 const GROUP_TIER: Record<StatusGroup['type'], Tiered> = {
   goal: {},
   todo: {},
   subagent: { tier: 'advanced' },
-  background: { tier: 'advanced' }
+  background: {}
+}
+
+const backgroundOpen = (item: ComposerStatusItem) =>
+  item.state === 'waiting' || item.state === 'running' || item.state === 'ready'
+
+function backgroundClockSeconds(item: ComposerStatusItem | undefined, ticking: number): number | null {
+  if (!item) {
+    return null
+  }
+
+  if ((item.state === 'waiting' || item.state === 'running') && typeof item.startedEpochMs === 'number') {
+    return ticking
+  }
+
+  return typeof item.uptimeSeconds === 'number' ? item.uptimeSeconds : null
+}
+
+function backgroundGroupLabel(items: readonly ComposerStatusItem[], s: Translations['statusStack']): string {
+  const first = items[0]
+  const name = first?.title || s.background(items.length)
+  const phrase = first ? backgroundStatusPhrase(first, s) : null
+  const parts = [name]
+
+  if (phrase) {
+    parts.push(phrase)
+  }
+
+  if (items.length > 1) {
+    parts.push(s.background(items.length))
+  }
+
+  return parts.join(' · ')
+}
+
+function backgroundStopButton(group: StatusGroup, sessionId: null | string, label: string) {
+  if (!sessionId) {
+    return undefined
+  }
+
+  const target = group.items.find(item => item.state === 'waiting' || item.state === 'running')
+
+  if (!target) {
+    return undefined
+  }
+
+  return (
+    <Button
+      className="text-muted-foreground/75 hover:text-foreground/90"
+      onClick={() => void stopBackgroundProcess(sessionId, target.id)}
+      size="micro"
+      type="button"
+      variant="text"
+    >
+      {label}
+    </Button>
+  )
+}
+
+function BackgroundPreview({ item, s }: { item: ComposerStatusItem; s: Translations['statusStack'] }) {
+  const phrase = backgroundStatusPhrase(item, s)
+  const output = lastBackgroundOutputLine(item.output)
+
+  return (
+    <div className="min-w-0 px-2 pb-1">
+      {phrase && <div className="break-words text-[0.73rem] leading-4 text-foreground/90">{phrase}</div>}
+      {output && (
+        <div className="line-clamp-2 break-words text-[0.62rem] leading-4 text-muted-foreground/75">{output}</div>
+      )}
+    </div>
+  )
 }
 
 const groupLabel = (group: StatusGroup, s: Translations['statusStack']) => {
@@ -96,6 +168,87 @@ const groupLabel = (group: StatusGroup, s: Translations['statusStack']) => {
 
 const hasRunningTodo = (group: StatusGroup) =>
   group.type === 'todo' && group.items.some(item => item.todoStatus === 'in_progress' && item.state === 'running')
+
+function backgroundClockLive(item: ComposerStatusItem | undefined): boolean {
+  return Boolean(
+    item && (item.state === 'waiting' || item.state === 'running') && typeof item.startedEpochMs === 'number'
+  )
+}
+
+function backgroundClockKey(item: ComposerStatusItem | undefined): string | undefined {
+  return item ? `background:${item.id}` : undefined
+}
+
+function groupShelf({
+  backgroundTicking,
+  group,
+  onOpenAgents,
+  onOpenSubagent,
+  sessionId,
+  s
+}: {
+  backgroundTicking: number
+  group: StatusGroup
+  onOpenAgents: () => void
+  onOpenSubagent: (item: ComposerStatusItem) => void
+  sessionId: null | string
+  s: Translations['statusStack']
+}): ReactNode {
+  if (group.type === 'subagent' && sessionId) {
+    return <SubagentSection key={sessionId} sessionId={sessionId} />
+  }
+
+  const elapsed = group.type === 'background' ? backgroundClockSeconds(group.items[0], backgroundTicking) : null
+
+  return (
+    <StatusSection
+      accessory={
+        group.type === 'background' ? (
+          backgroundStopButton(group, sessionId, s.stop)
+        ) : group.type === 'subagent' ? (
+          <Tip label={<TipKeybindLabel actionId="nav.agents" text={s.agents} />}>
+            <Button
+              className="text-muted-foreground/75 hover:text-foreground/90"
+              onClick={onOpenAgents}
+              size="micro"
+              type="button"
+              variant="text"
+            >
+              {s.agents}
+            </Button>
+          </Tip>
+        ) : undefined
+      }
+      collapsedIndicator={
+        hasRunningTodo(group) ? (
+          <GlyphSpinner
+            ariaLabel={s.running}
+            className="text-[0.8rem] leading-none text-muted-foreground/80"
+            spinner="braille"
+          />
+        ) : elapsed !== null ? (
+          <span className="text-[0.62rem] text-muted-foreground/80 tabular-nums">{formatElapsed(elapsed)}</span>
+        ) : undefined
+      }
+      defaultCollapsed={group.type !== 'todo'}
+      icon={<Codicon className="text-muted-foreground/70" name={GROUP_ICON[group.type]} size="0.8rem" />}
+      label={group.type === 'background' ? backgroundGroupLabel(group.items, s) : groupLabel(group, s)}
+      preview={
+        group.type === 'background' && group.items[0] ? <BackgroundPreview item={group.items[0]} s={s} /> : undefined
+      }
+    >
+      {group.items.map(item => (
+        <StatusItemRow
+          item={item}
+          key={item.id}
+          onDismiss={sessionId ? id => dismissBackgroundProcess(sessionId, id) : undefined}
+          onOpen={() => onOpenSubagent(item)}
+          onStop={sessionId ? id => void stopBackgroundProcess(sessionId, id) : undefined}
+        />
+      ))}
+    </StatusSection>
+  )
+}
 
 interface ComposerStatusStackProps {
   onSubmit?: (value: string, options?: SubmitTextOptions) => Promise<boolean> | boolean
@@ -155,7 +308,17 @@ export function ComposerStatusStack({ onSubmit, queue, sessionId }: ComposerStat
   // alive) even when Simple keeps the background group itself off screen.
   const allGroups = useMemo(() => groupStatusItems(items), [items])
 
-  const hasRunningBackground = allGroups.some(g => g.type === 'background' && g.items.some(i => i.state === 'running'))
+  const backgroundItems = allGroups.find(group => group.type === 'background')?.items ?? []
+  const backgroundPrimary = backgroundItems[0]
+
+  const backgroundTicking = useElapsedSeconds(
+    backgroundClockLive(backgroundPrimary),
+    backgroundClockKey(backgroundPrimary),
+    backgroundPrimary?.startedEpochMs
+  )
+
+  const hasRunningBackground = backgroundItems.some(item => item.state === 'running')
+  const hasOpenBackground = backgroundItems.some(backgroundOpen)
 
   const groups = useMemo(
     () => allGroups.filter(group => shown(GROUP_TIER[group.type]) && (group.type !== 'goal' || !isStructuredSupported)),
@@ -189,7 +352,7 @@ export function ComposerStatusStack({ onSubmit, queue, sessionId }: ComposerStat
   const paneVisible = usePaneVisible()
 
   useEffect(() => {
-    if (!sessionId || !hasRunningBackground || !paneVisible) {
+    if (!sessionId || !hasOpenBackground || !paneVisible) {
       return
     }
 
@@ -200,7 +363,7 @@ export function ComposerStatusStack({ onSubmit, queue, sessionId }: ComposerStat
     }, BACKGROUND_POLL_MS)
 
     return () => clearInterval(timer)
-  }, [hasRunningBackground, sessionId, paneVisible])
+  }, [hasOpenBackground, sessionId, paneVisible])
 
   const openAgents = () => navigate(AGENTS_ROUTE)
 
@@ -256,55 +419,16 @@ export function ComposerStatusStack({ onSubmit, queue, sessionId }: ComposerStat
   }
 
   for (const group of groups) {
-    if (group.type === 'subagent' && sessionId) {
-      sections.push({ key: group.type, node: <SubagentSection key={sessionId} sessionId={sessionId} /> })
-
-      continue
-    }
-
     sections.push({
       key: group.type,
-      node: (
-        <StatusSection
-          accessory={
-            group.type === 'subagent' ? (
-              <Tip label={<TipKeybindLabel actionId="nav.agents" text={t.statusStack.agents} />}>
-                <Button
-                  className="text-muted-foreground/75 hover:text-foreground/90"
-                  onClick={openAgents}
-                  size="micro"
-                  type="button"
-                  variant="text"
-                >
-                  {t.statusStack.agents}
-                </Button>
-              </Tip>
-            ) : undefined
-          }
-          collapsedIndicator={
-            hasRunningTodo(group) ? (
-              <GlyphSpinner
-                ariaLabel={t.statusStack.running}
-                className="text-[0.8rem] leading-none text-muted-foreground/80"
-                spinner="braille"
-              />
-            ) : undefined
-          }
-          defaultCollapsed={group.type !== 'todo'}
-          icon={<Codicon className="text-muted-foreground/70" name={GROUP_ICON[group.type]} size="0.8rem" />}
-          label={groupLabel(group, t.statusStack)}
-        >
-          {group.items.map(item => (
-            <StatusItemRow
-              item={item}
-              key={item.id}
-              onDismiss={sessionId ? id => dismissBackgroundProcess(sessionId, id) : undefined}
-              onOpen={() => openSubagent(item)}
-              onStop={sessionId ? id => void stopBackgroundProcess(sessionId, id) : undefined}
-            />
-          ))}
-        </StatusSection>
-      )
+      node: groupShelf({
+        backgroundTicking,
+        group,
+        onOpenAgents: openAgents,
+        onOpenSubagent: openSubagent,
+        sessionId,
+        s: t.statusStack
+      })
     })
   }
 

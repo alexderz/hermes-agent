@@ -4,7 +4,7 @@ import { useStore } from '@nanostores/react'
 import { useEffect, useState } from 'react'
 
 import { $agentDockCollapsed, useAgentRoster } from '../app/agentRoster.js'
-import { type ProcessRow, useProcessRows } from '../app/processRoster.js'
+import { processIsOpen, type ProcessRow, useProcessRows } from '../app/processRoster.js'
 import { $uiState } from '../app/uiStore.js'
 import { messages } from '../i18n/runtime.js'
 import { useT } from '../i18n/useT.js'
@@ -33,7 +33,7 @@ export const buildProcessBlock = (rows: readonly ProcessRow[], maxRows: number):
   return {
     hidden: rows.length - shown.length,
     rows: shown,
-    running: rows.filter(r => r.status === 'running').length,
+    running: rows.filter(r => processIsOpen(r.status)).length,
     total: rows.length
   }
 }
@@ -64,7 +64,12 @@ export const processSummary = (block: ProcessBlock): string => {
  * activity once the process has finished. */
 export function ProcessRowLine({ cols, row, t }: { cols: number; row: ProcessRow; t: Theme }) {
   const glyph = processGlyph(row.status, t)
-  const activity = row.status === 'running' ? `${fmtDuration(row.elapsedSeconds)} · ${row.detail}` : row.detail
+
+  const activity =
+    row.status === 'running' || row.status === 'waiting'
+      ? `${fmtDuration(row.elapsedSeconds)} · ${row.detail}`
+      : row.detail
+
   const commandWidth = Math.max(8, cols - stringWidth(activity) - 6)
 
   return (

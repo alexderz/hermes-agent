@@ -198,6 +198,37 @@ def test_tools_lists_the_gateway_session_catalog_with_main_rendering(gateway, ca
     assert ("tools.show", {"session_id": SID}) in client.calls
 
 
+def test_ready_receipt_stays_refreshable_and_keeps_attention(gateway):
+    """API double: scripted process.list, not a live gateway lifecycle."""
+    _agent, client = gateway
+    now = time.time()
+    client.processes.append({
+        "session_id": "ready-1",
+        "command": "deploy-web",
+        "status": "exited",
+        "exit_code": 0,
+        "started_epoch": now - 400,
+        "exited_at": now - 120,
+        "completion_reason": "exited",
+        "output_tail": "published\n",
+        "attention": "ready",
+        "service_mode": "await",
+    })
+    view = gateway_tools.process_registry()
+    view.dirty = True
+    view._polled = 0
+    rows = view.list_sessions()
+    ready = next(row for row in rows if row["session_id"] == "ready-1")
+    assert ready["attention"] == "ready"
+    assert ready["service_mode"] == "await"
+    assert ready["status"] == "exited"
+    view.dirty = False
+    view._polled = 0
+    before = len(client.calls)
+    view.refresh()
+    assert len(client.calls) > before
+
+
 def test_reload_skills_rescans_in_the_gateway_session_and_prints_main_lines(gateway, capsys, monkeypatch):
     """/reload-skills rescans where the turn runs; main's lines print from the gateway's diff."""
     from agent import skill_commands

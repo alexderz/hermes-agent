@@ -170,7 +170,7 @@ class SubagentMonitor:
         if self.entries:
             parts.append(t('cli.subagents.count_live', count=len(self.entries)))
         if self.processes:
-            running = sum(r['status'] == 'running' for r in self.processes)
+            running = sum(procs.process_is_open(r['status']) for r in self.processes)
             if running:
                 parts.append(t('cli.subagents.count_procs_one' if running == 1 else 'cli.subagents.count_procs_other',
                                count=running))
@@ -249,7 +249,7 @@ class SubagentMonitor:
                 lines.append(_clip(' ' + t('cli.subagents.more_subagents', count=hidden), columns))
         if self.processes:
             proc_count = min(len(self.processes), max(1, budget - agent_count))
-            running = sum(r['status'] == 'running' for r in self.processes)
+            running = sum(procs.process_is_open(r['status']) for r in self.processes)
             done = len(self.processes) - running
             summary = ' · '.join(p for p in (
                 t('cli.subagents.count_running', count=running) if running else '',

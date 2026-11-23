@@ -24,7 +24,7 @@ export {
 } from './runtime-gone'
 
 /** Composer status stack feed — merged todos, subagents, background per session. */
-export type StatusItemState = 'done' | 'failed' | 'running'
+export type StatusItemState = 'done' | 'failed' | 'lost' | 'ready' | 'running' | 'unknown' | 'waiting'
 export type StatusItemType = 'background' | 'goal' | 'subagent' | 'todo'
 
 export interface ComposerStatusItem {
@@ -39,6 +39,10 @@ export interface ComposerStatusItem {
   id: string
   /** background process: captured stdout/stderr tail for the inline viewer. */
   output?: string
+  /** Unix milliseconds the process started. Elapsed is derived while it is live. */
+  startedEpochMs?: number
+  /** Snapshot age in seconds once the process is no longer ticking. */
+  uptimeSeconds?: number
   /** subagent: its own stored session id — row click opens that session window
    *  (livestreamed by the gateway's child-session mirror). */
   sessionId?: string
@@ -57,10 +61,15 @@ export const $backgroundStatusBySession = atom<Record<string, ComposerStatusItem
 // the snapshot's stamp forward; they are not new backend data.
 const backgroundWrittenAt = new WeakMap<readonly ComposerStatusItem[], number>()
 
-// Stored session ids that have at least one RUNNING background process. The
-// sidebar row reads this for a hollow dot — distinct from the filled dot of an
-// active LLM turn — so the user can tell at a glance "this session has
-// something chugging along in the background" even when the turn is idle.
+// Stored session ids that still have background work the sidebar should mark
+// with a hollow dot — waiting, running, ready, or a failure that has not
+// lingered out. Distinct from the filled dot of an active LLM turn.
+const PENDING_BACKGROUND_STATES = new Set<StatusItemState>(['failed', 'lost', 'ready', 'running', 'unknown', 'waiting'])
+
+function sessionHasPendingBackground(items: readonly ComposerStatusItem[]): boolean {
+  return items.some(item => PENDING_BACKGROUND_STATES.has(item.state))
+}
+
 //
 // $backgroundStatusBySession is keyed by RUNTIME session id (gateway events
 // and process.list both speak that); the sidebar row knows only the STORED id.
@@ -87,7 +96,7 @@ export const $backgroundRunningSessionIds = computed(
       const writtenAt = backgroundWrittenAt.get(items) ?? -Infinity
       noteEventFed(eventFedAt, aliases, writtenAt)
 
-      if (items.some(i => i.state === 'running') && !rosterSaysIdle(roster, 'background', aliases, writtenAt)) {
+      if (sessionHasPendingBackground(items) && !rosterSaysIdle(roster, 'background', aliases, writtenAt)) {
         for (const alias of aliases) {
           ids.add(alias)
         }
@@ -107,11 +116,42 @@ export const $backgroundRunningSessionIds = computed(
 // while, so without this every refresh would resurrect a dismissed row.
 const dismissedBySession = new Map<string, Set<string>>()
 
-// Finished tasks self-clear so the stack only ever holds running work. Success
-// goes quick; failure lingers longer so its exit code stays readable (the output
-// also lives in the transcript). A manual X still drops either at once.
+// Settled tasks self-clear. Success goes quick; failure lingers longer so its
+// exit code stays readable (the output also lives in the transcript). Waiting
+// and ready stay until a later snapshot says they settled. A manual X still
+// drops a finished row at once.
 const SUCCESS_LINGER_MS = 4_000
 const FAILURE_LINGER_MS = 12_000
+
+function autoDismissDelay(state: StatusItemState): number | null {
+  if (state === 'running' || state === 'waiting' || state === 'ready') {
+    return null
+  }
+
+  if (state === 'failed' || state === 'lost' || state === 'unknown') {
+    return FAILURE_LINGER_MS
+  }
+
+  return SUCCESS_LINGER_MS
+}
+
+function releasedLiveWork(previous: StatusItemState | undefined, state: StatusItemState): boolean {
+  const wasLive = previous === 'running' || previous === 'waiting'
+  const stillLive = state === 'running' || state === 'waiting'
+
+  return wasLive && !stillLive
+}
+
+function nativeBackgroundTitle(
+  state: StatusItemState
+): 'notifications.native.backgroundDoneTitle' | 'notifications.native.backgroundFailedTitle' {
+  if (state === 'failed' || state === 'lost' || state === 'unknown') {
+    return 'notifications.native.backgroundFailedTitle'
+  }
+
+  return 'notifications.native.backgroundDoneTitle'
+}
+
 const autoClearTimers = new Map<string, Map<string, ReturnType<typeof setTimeout>>>()
 
 function scheduleAutoDismiss(sid: string, id: string, delayMs: number) {
@@ -208,6 +248,8 @@ const sameStatusItem = (a: ComposerStatusItem, b: ComposerStatusItem) =>
   a.title === b.title &&
   a.output === b.output &&
   a.exitCode === b.exitCode &&
+  a.startedEpochMs === b.startedEpochMs &&
+  a.uptimeSeconds === b.uptimeSeconds &&
   a.currentTool === b.currentTool &&
   a.goalStatus === b.goalStatus &&
   a.todoStatus === b.todoStatus &&
@@ -308,31 +350,102 @@ const writeBackground = (sid: string, items: ComposerStatusItem[], snapshotAt: n
   $backgroundStatusBySession.set(next)
 }
 
-// `tui_gateway` process.list entry (tools/process_registry.list_sessions + output_tail).
+// `process.list` entry. `attention` and `service_mode` are optional until the
+// shared generated contract publishes them. Rows that omit both keep the
+// historic running / exit-code mapping.
 interface GatewayProcessEntry {
+  attention?: string
   command?: string
+  completion_reason?: string
   exit_code?: number
   output_tail?: string
+  service_mode?: string
   session_id?: string
+  started_epoch?: number
   status?: string
+  uptime_seconds?: number
+}
+
+function namedAttention(value: string | undefined): StatusItemState | null {
+  if (value === 'waiting' || value === 'running' || value === 'ready' || value === 'failed' || value === 'lost') {
+    return value
+  }
+
+  return value ? 'unknown' : null
+}
+
+function unsettledService(proc: GatewayProcessEntry, exitCode: number | undefined): boolean {
+  if (proc.service_mode !== 'await' && proc.service_mode !== 'notify') {
+    return false
+  }
+
+  if (exitCode !== undefined) {
+    return false
+  }
+
+  return (proc.completion_reason ?? '') !== 'exited'
+}
+
+function completionState(proc: GatewayProcessEntry, exitCode: number | undefined): StatusItemState {
+  if (proc.completion_reason === 'lost') {
+    return 'lost'
+  }
+
+  if (proc.completion_reason === 'killed') {
+    return 'failed'
+  }
+
+  if (exitCode) {
+    return 'failed'
+  }
+
+  return unsettledService(proc, exitCode) ? 'unknown' : 'done'
+}
+
+function backgroundState(proc: GatewayProcessEntry, exitCode: number | undefined): StatusItemState {
+  const attention = namedAttention(proc.attention)
+
+  if (attention) {
+    return attention
+  }
+
+  if (proc.status !== 'exited') {
+    return proc.service_mode === 'await' ? 'waiting' : 'running'
+  }
+
+  return completionState(proc, exitCode)
+}
+
+function startedEpochMs(epoch: number | undefined): number | undefined {
+  return typeof epoch === 'number' && epoch > 0 ? epoch * 1000 : undefined
+}
+
+function snapshotUptime(seconds: number | undefined): number | undefined {
+  return typeof seconds === 'number' && seconds >= 0 ? seconds : undefined
 }
 
 const toBackgroundItem = (proc: GatewayProcessEntry): ComposerStatusItem => {
-  const exited = proc.status === 'exited'
   const exitCode = typeof proc.exit_code === 'number' ? proc.exit_code : undefined
 
   return {
     exitCode,
     id: proc.session_id ?? '',
     output: proc.output_tail || undefined,
-    state: exited ? (exitCode ? 'failed' : 'done') : 'running',
+    startedEpochMs: startedEpochMs(proc.started_epoch),
+    state: backgroundState(proc, exitCode),
     title: (proc.command ?? '').split('\n')[0]!.trim() || 'background process',
-    type: 'background'
+    type: 'background',
+    uptimeSeconds: snapshotUptime(proc.uptime_seconds)
   }
 }
 
 const sameItem = (a: ComposerStatusItem, b: ComposerStatusItem) =>
-  a.state === b.state && a.title === b.title && a.output === b.output && a.exitCode === b.exitCode
+  a.state === b.state &&
+  a.title === b.title &&
+  a.output === b.output &&
+  a.exitCode === b.exitCode &&
+  a.startedEpochMs === b.startedEpochMs &&
+  a.uptimeSeconds === b.uptimeSeconds
 
 /**
  * Layout-stable sync of the registry snapshot into the store: existing rows
@@ -355,7 +468,9 @@ export function reconcileBackgroundProcesses(sid: string, procs: GatewayProcessE
   const prevState = new Map(prev.map(item => [item.id, item.state]))
 
   for (const [id, item] of fresh) {
-    if (item.state !== 'running' && prevState.get(id) === 'running') {
+    const previous = prevState.get(id)
+
+    if (releasedLiveWork(previous, item.state)) {
       let body = item.title
 
       if (item.exitCode !== undefined) {
@@ -374,11 +489,7 @@ export function reconcileBackgroundProcesses(sid: string, procs: GatewayProcessE
         body,
         kind: 'backgroundDone',
         sessionId: sid,
-        title: translateNow(
-          item.state === 'failed'
-            ? 'notifications.native.backgroundFailedTitle'
-            : 'notifications.native.backgroundDoneTitle'
-        )
+        title: translateNow(nativeBackgroundTitle(item.state))
       })
     }
   }
@@ -403,12 +514,14 @@ export function reconcileBackgroundProcesses(sid: string, procs: GatewayProcessE
     }
   }
 
-  // Arm the self-clear on every finished task (failures linger longer); cancel
-  // it for anything running again or gone from the snapshot.
+  // Waiting and ready stay until the server drops them. Lost and unknown use
+  // the failure linger; a settled exit still uses the short success linger.
   const finishedDelay = new Map(
-    next
-      .filter(item => item.state !== 'running')
-      .map(item => [item.id, item.state === 'failed' ? FAILURE_LINGER_MS : SUCCESS_LINGER_MS])
+    next.flatMap(item => {
+      const delay = autoDismissDelay(item.state)
+
+      return delay === null ? [] : [[item.id, delay] as const]
+    })
   )
 
   for (const [id, delay] of finishedDelay) {
@@ -536,7 +649,7 @@ export function resetSessionBackground(sid: string) {
   for (const item of list) {
     dismissed.add(item.id)
 
-    if (item.state === 'running') {
+    if (item.state === 'running' || item.state === 'waiting') {
       if (gateway && !isSessionGone(sid)) {
         void requestForOwnedSession(sid, ambientRequestFor(gateway), 'process.kill', {
           process_id: item.id,

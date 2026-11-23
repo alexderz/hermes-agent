@@ -6,7 +6,7 @@ import stripAnsi from 'strip-ansi'
 import { expect, it } from 'vitest'
 
 import { buildProcessRows, PROCESS_RETAIN_SECONDS, type ProcessEntry } from '../app/processRoster.js'
-import { AgentsPanelView, buildProcessBlock, splitDockBudget } from '../components/agentsPanel.js'
+import { AgentsPanelView, buildProcessBlock, processSummary, splitDockBudget } from '../components/agentsPanel.js'
 import { buildAgentRows, dockRowLimit } from '../lib/agentRows.js'
 import { DEFAULT_THEME } from '../theme.js'
 import type { SubagentProgress } from '../types.js'
@@ -108,4 +108,75 @@ it('paints a Processes block under the agents without letting either block hide 
   const collapsed = paint(<AgentsPanelView collapsed cols={80} {...agentRows} processes={block} t={DEFAULT_THEME} />)
 
   expect(collapsed.trim().split('\n')).toHaveLength(1)
+})
+
+it('keeps waiting and ready off the success path and holds ready past the retain window', () => {
+  const waiting: ProcessEntry = {
+    ...running,
+    session_id: 'proc_wait',
+    command: 'deploy-web',
+    attention: 'waiting',
+    service_mode: 'await',
+    uptime_seconds: 15,
+    output_preview: 'fetching\nstep 2/4\n'
+  }
+
+  const ready: ProcessEntry = {
+    session_id: 'proc_ready',
+    command: 'pack-image',
+    status: 'exited',
+    exit_code: 0,
+    attention: 'ready',
+    service_mode: 'await',
+    uptime_seconds: 40,
+    exited_at: NOW - (PROCESS_RETAIN_SECONDS + 30),
+    completion_reason: 'exited',
+    output_preview: 'published\n'
+  }
+
+  const lost: ProcessEntry = {
+    session_id: 'proc_lost',
+    command: 'watcher',
+    status: 'exited',
+    exit_code: 0,
+    completion_reason: 'lost',
+    uptime_seconds: 8,
+    exited_at: NOW - 3
+  }
+
+  const rows = buildProcessRows([ready, waiting, lost], NOW * 1000)
+  const byId = Object.fromEntries(rows.map(row => [row.id, row]))
+
+  expect(rows.map(row => row.status).sort()).toEqual(['lost', 'ready', 'waiting'])
+  expect(byId.proc_wait?.detail).toContain('waiting')
+  expect(byId.proc_wait?.detail).toContain('step 2/4')
+  expect(byId.proc_ready?.detail).toBe('result ready')
+  expect(byId.proc_ready?.detail.toLowerCase()).not.toContain('continuation queued')
+  expect(byId.proc_lost?.status).not.toBe('done')
+
+  const block = buildProcessBlock(rows, 5)
+
+  const openBlock = buildProcessBlock(
+    rows.filter(row => row.status === 'waiting' || row.status === 'ready'),
+    5
+  )
+
+  expect(processSummary(openBlock)).not.toMatch(/done/)
+  expect(processSummary(block)).toContain('2 running')
+
+  const painted = paint(
+    <AgentsPanelView cols={40} {...buildAgentRows([], [], NOW * 1000)} processes={block} t={DEFAULT_THEME} />
+  )
+
+  const wide = paint(
+    <AgentsPanelView cols={80} {...buildAgentRows([], [], NOW * 1000)} processes={block} t={DEFAULT_THEME} />
+  )
+
+  expect(wide).toContain('deploy-web')
+  expect(painted).toContain('deploy-')
+  expect(painted).toContain('pack-image')
+  expect(painted).toContain('result ready')
+  expect(painted).toContain('waiting')
+  expect(painted).not.toContain('✔')
+  expect(painted.toLowerCase()).not.toContain('continuation queued')
 })

@@ -1,6 +1,7 @@
 import { Fragment, memo, type ReactNode } from 'react'
 
 import { openAgentTerminal } from '@/app/right-sidebar/terminal/terminals'
+import { formatElapsed, useElapsedSeconds } from '@/components/chat/activity-timer'
 import { StatusPendingIcon } from '@/components/chat/status-pending-icon'
 import { StatusRow } from '@/components/chat/status-row'
 import { Codicon } from '@/components/ui/codicon'
@@ -9,9 +10,94 @@ import { type Translations, useI18n } from '@/i18n'
 import { capitalize } from '@/lib/text'
 import type { TodoStatus } from '@/lib/todos'
 import { cn } from '@/lib/utils'
-import type { ComposerStatusItem } from '@/store/composer-status'
+import type { ComposerStatusItem, StatusItemState } from '@/store/composer-status'
 
 const toolLabel = (name: string) => name.split('_').filter(Boolean).map(capitalize).join(' ') || name
+
+export function lastBackgroundOutputLine(output: string | undefined): string {
+  if (!output) {
+    return ''
+  }
+
+  const lines = output.split('\n')
+
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const text = lines[index]!.replace(/\s+/g, ' ').trim()
+
+    if (text) {
+      return text
+    }
+  }
+
+  return ''
+}
+
+export function backgroundStatusPhrase(item: ComposerStatusItem, s: Translations['statusStack']): string | null {
+  switch (item.state) {
+    case 'waiting':
+      return s.waitingFor(item.title)
+
+    case 'ready':
+      return s.resultReady
+
+    case 'failed':
+      return s.failed
+
+    case 'lost':
+      return s.lost
+
+    case 'unknown':
+      return s.unknown
+
+    case 'running':
+      return s.running
+
+    default:
+      return null
+  }
+}
+
+function backgroundElapsed(item: ComposerStatusItem, ticking: number): number | null {
+  const live = item.state === 'running' || item.state === 'waiting'
+
+  if (live && typeof item.startedEpochMs === 'number') {
+    return ticking
+  }
+
+  if (typeof item.uptimeSeconds === 'number') {
+    return item.uptimeSeconds
+  }
+
+  return live ? ticking : null
+}
+
+function isStoppableBackground(item: ComposerStatusItem): boolean {
+  return item.type === 'background' && (item.state === 'running' || item.state === 'waiting')
+}
+
+function hasLiveBackgroundClock(item: ComposerStatusItem): boolean {
+  return (
+    item.type === 'background' &&
+    (item.state === 'running' || item.state === 'waiting') &&
+    typeof item.startedEpochMs === 'number'
+  )
+}
+
+function backgroundFailureTone(state: StatusItemState): boolean {
+  return state === 'failed' || state === 'lost' || state === 'unknown'
+}
+
+function backgroundDotClass(state: StatusItemState): string {
+  if (state === 'failed' || state === 'lost' || state === 'unknown') {
+    return 'size-1.5 rounded-full bg-destructive/80'
+  }
+
+  if (state === 'waiting' || state === 'ready') {
+    return 'size-1.5 rounded-full border border-(--ui-text-tertiary)'
+  }
+
+  return 'size-1.5 rounded-full bg-emerald-500/70'
+}
 
 // Todo rows speak checkbox, not spinner-and-dot: a dashed ring while the item
 // is still open (pending), codicons once it resolves, a live spinner only on
@@ -52,6 +138,10 @@ function leadingGlyph(item: ComposerStatusItem, s: Translations['statusStack'], 
     return <Codicon className={glyph.tone} name={glyph.icon} size="0.8rem" />
   }
 
+  if (item.type === 'background' && item.state !== 'running') {
+    return <span aria-hidden className={backgroundDotClass(item.state)} data-state={item.state} />
+  }
+
   if (item.state === 'running') {
     return (
       <GlyphSpinner
@@ -67,6 +157,80 @@ function leadingGlyph(item: ComposerStatusItem, s: Translations['statusStack'], 
       aria-hidden
       className={cn('size-1.5 rounded-full', item.state === 'failed' ? 'bg-destructive/80' : 'bg-emerald-500/70')}
     />
+  )
+}
+
+function BackgroundCopy({
+  elapsed,
+  failed,
+  item,
+  s
+}: {
+  elapsed: number | null
+  failed: boolean
+  item: ComposerStatusItem
+  s: Translations['statusStack']
+}) {
+  const phrase = backgroundStatusPhrase(item, s)
+  const output = lastBackgroundOutputLine(item.output)
+
+  return (
+    <div className="min-w-0 flex-1">
+      <div className="flex min-w-0 flex-wrap items-baseline gap-x-1.5">
+        <span className="min-w-0 break-words text-[0.73rem] leading-4 text-foreground/92">{item.title}</span>
+        {phrase && (
+          <span
+            className={cn(
+              'min-w-0 break-words text-[0.62rem] leading-4',
+              failed ? 'text-destructive/90' : 'text-muted-foreground/80'
+            )}
+          >
+            {phrase}
+          </span>
+        )}
+        {elapsed !== null && (
+          <span className="shrink-0 text-[0.62rem] leading-4 text-muted-foreground/70 tabular-nums">
+            {formatElapsed(elapsed)}
+          </span>
+        )}
+      </div>
+      {output && (
+        <div className="line-clamp-2 break-words text-[0.62rem] leading-4 text-muted-foreground/70">{output}</div>
+      )}
+    </div>
+  )
+}
+
+function statusItemBody(
+  item: ComposerStatusItem,
+  ticking: number,
+  failed: boolean,
+  s: Translations['statusStack']
+): ReactNode {
+  if (item.type === 'background') {
+    return (
+      <BackgroundCopy
+        elapsed={backgroundElapsed(item, ticking)}
+        failed={backgroundFailureTone(item.state)}
+        item={item}
+        s={s}
+      />
+    )
+  }
+
+  return (
+    <span
+      className={cn(
+        'min-w-0 flex-1 truncate text-[0.73rem] leading-4',
+        failed
+          ? 'text-destructive/90'
+          : item.todoStatus && item.todoStatus !== 'in_progress'
+            ? 'text-muted-foreground/75'
+            : 'text-foreground/92'
+      )}
+    >
+      {item.title}
+    </span>
   )
 }
 
@@ -98,11 +262,12 @@ export const StatusItemRow = memo(function StatusItemRow({
   const { t } = useI18n()
   const s = t.statusStack
   const failed = item.state === 'failed'
-  const running = item.state === 'running'
+  const stoppable = isStoppableBackground(item)
+  const ticking = useElapsedSeconds(hasLiveBackgroundClock(item), item.id, item.startedEpochMs)
 
   const action =
     item.type === 'background'
-      ? running
+      ? stoppable
         ? onStop && { label: s.stop, onClick: () => onStop(item.id) }
         : onDismiss && { label: s.dismiss, onClick: () => onDismiss(item.id) }
       : null
@@ -126,18 +291,7 @@ export const StatusItemRow = memo(function StatusItemRow({
           ) : undefined
         }
       >
-        <span
-          className={cn(
-            'min-w-0 flex-1 truncate text-[0.73rem] leading-4',
-            failed
-              ? 'text-destructive/90'
-              : item.todoStatus && item.todoStatus !== 'in_progress'
-                ? 'text-muted-foreground/75'
-                : 'text-foreground/92'
-          )}
-        >
-          {item.title}
-        </span>
+        {statusItemBody(item, ticking, failed, s)}
         {item.type === 'subagent' && item.currentTool && (
           <span className="shrink-0 truncate text-[0.62rem] leading-4 text-muted-foreground/70">
             {toolLabel(item.currentTool)}

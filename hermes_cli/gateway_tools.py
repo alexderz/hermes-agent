@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 _POLL_SECONDS = 1.0
 # A finished process stays interesting this long (main's dock RETAIN_SECONDS).
 _RETAIN_SECONDS = 60
+# Ready is already exited, so the retain window must not be the only reason to keep asking.
+_OPEN_ATTENTION = frozenset({"waiting", "running", "ready"})
 
 _view = None
 
@@ -40,6 +42,8 @@ class _Proc:
         self.output_buffer = row.get("output_tail") or ""
         self.completion_reason = row.get("completion_reason") or "exited"
         self.exited = row.get("status") == "exited"
+        self.attention = row.get("attention") or None
+        self.service_mode = row.get("service_mode") or None
 
 
 class GatewayProcessView:
@@ -67,7 +71,12 @@ class GatewayProcessView:
         self.dirty = True
 
     def _interesting(self, now):
-        return any(not p.exited or (p.exited_at and now - p.exited_at <= _RETAIN_SECONDS) for p in self.rows)
+        return any(
+            getattr(p, "attention", None) in _OPEN_ATTENTION
+            or not p.exited
+            or (p.exited_at and now - p.exited_at <= _RETAIN_SECONDS)
+            for p in self.rows
+        )
 
     def refresh(self, *, force=False):
         now = time.time()
@@ -89,10 +98,18 @@ class GatewayProcessView:
     def list_sessions(self):
         self.refresh()
         now = time.time()
-        return [{"session_id": p.id, "command": p.command[:200],
-                 "status": "exited" if p.exited else "running", "exit_code": p.exit_code,
-                 "completion_reason": p.completion_reason if p.exited else None,
-                 "uptime_seconds": int(now - p.started_at) if p.started_at else 0} for p in self.rows]
+        rows = []
+        for proc in self.rows:
+            row = {"session_id": proc.id, "command": proc.command[:200],
+                   "status": "exited" if proc.exited else "running", "exit_code": proc.exit_code,
+                   "completion_reason": proc.completion_reason if proc.exited else None,
+                   "uptime_seconds": int(now - proc.started_at) if proc.started_at else 0}
+            if proc.attention:
+                row["attention"] = proc.attention
+            if proc.service_mode:
+                row["service_mode"] = proc.service_mode
+            rows.append(row)
+        return rows
 
     def get(self, process_id):
         return next((p for p in self.rows if p.id == process_id), None)
