@@ -65,13 +65,15 @@ function agyTone(c) {
 // right cluster for the compact meter; the other status items can still clip.
 const METER_CSS = `
   [data-usage-compact] { display: none; }
+  [data-usage-full], [data-usage-compact] { max-width: 100%; min-width: 0; }
+  [data-slot="statusbar"] > :last-child:has([data-subscription-meter]) {
+    flex-shrink: 0;
+    min-width: 0;
+    max-width: calc(100dvw - 2.5rem);
+  }
   @media (max-width: 600px) {
     [data-usage-full] { display: none !important; }
     [data-usage-compact] { display: inline-flex; }
-    [data-slot="statusbar"] > :last-child:has([data-subscription-meter]) {
-      flex-shrink: 0;
-      max-width: calc(100% - 2.5rem);
-    }
   }
   @media (max-width: 400px) {
     [data-usage-compact] {
@@ -90,10 +92,10 @@ const METER_CSS = `
 function Row({ c }) {
   const [t, word] = tone(c)
   return jsxs('div', {
-    style: { display: 'grid', gridTemplateColumns: '1fr auto', gap: '2px 12px', padding: '6px 0',
-      borderBottom: '1px solid var(--ui-stroke-secondary)' },
+    style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: '2px 12px', padding: '6px 0',
+      borderBottom: '1px solid var(--ui-stroke-secondary)', minWidth: 0 },
     children: [
-      jsxs('div', { style: { display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600 }, children: [
+      jsxs('div', { style: { display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, minWidth: 0, overflowWrap: 'anywhere' }, children: [
         jsx(StatusDot, { tone: t }), `${c.name} ${c.plan || ''}`,
         c.picked ? jsx('span', { style: { fontSize: 10, color: 'var(--ui-accent)' }, children: '· current pick' }) : null
       ] }),
@@ -107,26 +109,44 @@ function Row({ c }) {
   })
 }
 
+function groupMetric(group) {
+  const buckets = group.buckets || []
+  return buckets.find(bucket => bucket.window === 'weekly' && Number.isFinite(bucket.remaining_percent))
+    || buckets.find(bucket => Number.isFinite(bucket.remaining_percent))
+    || null
+}
+
 function AgyDetails({ c }) {
   const groups = c.fresh ? (c.groups || []) : []
+  const summary = agySummary(c)
   return jsxs('div', {
     'data-agy-details': '',
-    style: { padding: '6px 0', borderBottom: '1px solid var(--ui-stroke-secondary)' },
+    style: { padding: '6px 0', borderBottom: '1px solid var(--ui-stroke-secondary)', minWidth: 0 },
     children: [
-      jsxs('div', { style: { display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600 }, children: [
-        jsx(StatusDot, { tone: agyTone(c) }), 'Antigravity'
+      jsxs('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: '2px 12px', alignItems: 'center' }, children: [
+        jsxs('div', { style: { display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, minWidth: 0 }, children: [
+          jsx(StatusDot, { tone: agyTone(c) }), 'Antigravity'
+        ] }),
+        summary ? jsx('div', { 'data-agy-summary': '', style: { fontWeight: 700, fontSize: 15 }, children: pct(summary.remaining_percent) }) : null
       ] }),
-      groups.length ? groups.map(group => jsxs('div', {
-        'data-agy-group': group.name,
-        children: [
-          jsx('div', { style: { fontWeight: 600, marginTop: 4 }, children: group.name }),
-          ...(group.buckets || []).map(bucket => jsx('div', {
-            'data-agy-bucket': bucket.id,
-            style: { color: 'var(--ui-text-tertiary)', fontSize: 11 },
-            children: `${windowWord(bucket.window)} ${pct(bucket.remaining_percent)} remaining, resets ${bucket.reset_label || '?'}`
-          }, bucket.id))
-        ]
-      }, group.name)) : jsx('div', {
+      groups.length ? groups.map(group => {
+        const metric = groupMetric(group)
+        return jsxs('div', {
+          'data-agy-group': group.name,
+          style: { minWidth: 0, marginTop: 4 },
+          children: [
+            jsxs('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: '2px 8px', alignItems: 'baseline' }, children: [
+              jsx('div', { style: { fontWeight: 600, minWidth: 0, overflowWrap: 'anywhere' }, children: group.name }),
+              metric ? jsx('div', { 'data-agy-metric': metric.id, style: { fontWeight: 700 }, children: pct(metric.remaining_percent) }) : null
+            ] }),
+            ...(group.buckets || []).map(bucket => jsx('div', {
+              'data-agy-bucket': bucket.id,
+              style: { color: 'var(--ui-text-tertiary)', fontSize: 11, minWidth: 0, overflowWrap: 'anywhere' },
+              children: `${windowWord(bucket.window)} ${pct(bucket.remaining_percent)} remaining, resets ${bucket.reset_label || '?'}`
+            }, bucket.id))
+          ]
+        }, group.name)
+      }) : jsx('div', {
         style: { color: 'var(--ui-text-tertiary)', fontSize: 11 },
         children: c.reason || 'quota unavailable'
       })
@@ -149,7 +169,10 @@ function Panel({ data, ctx }) {
     }
   }
   const pick = data.pick
-  return jsxs('div', { style: { fontSize: 12, padding: 4 }, children: [
+  return jsxs('div', {
+    'data-subscription-panel': '',
+    style: { fontSize: 12, padding: 4, minWidth: 0, maxWidth: '100%', maxHeight: 'min(72dvh, calc(100dvh - 48px))', overflow: 'auto', overflowWrap: 'anywhere' },
+    children: [
     jsx('div', { style: { fontWeight: 600, marginBottom: 4 }, children:
       'Weekly quota remaining, most over pace first. Antigravity groups are separate allowances and are not paced.' }),
     data.warning && data.warning.active
@@ -158,8 +181,8 @@ function Panel({ data, ctx }) {
       : null,
     ...(data.cards || []).filter(c => !isAgy(c)).map(c => jsx(Row, { c }, c.id)),
     (data.cards || []).some(isAgy) ? jsx(AgyDetails, { c: (data.cards || []).find(isAgy) }, 'agy') : null,
-    jsxs('div', { style: { display: 'grid', gridTemplateColumns: '1fr auto', padding: '6px 0' }, children: [
-      jsxs('div', { style: { display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600 }, children: [
+    jsxs('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: '2px 12px', padding: '6px 0', minWidth: 0 }, children: [
+      jsxs('div', { style: { display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, minWidth: 0, overflowWrap: 'anywhere' }, children: [
         jsx(StatusDot, { tone: 'muted' }), 'OpenRouter (pay per use)'] }),
       jsx('div', { style: { fontWeight: 700, fontSize: 15 }, children: `${money(o.week)} this week (UTC)` }),
       jsx('div', { style: { color: 'var(--ui-text-tertiary)', fontSize: 11 }, children:
@@ -219,7 +242,11 @@ function Meter({ ctx }) {
         jsxs('span', { key: 'compact', 'data-usage-compact': '', style: { alignItems: 'center', flexWrap: 'nowrap', whiteSpace: 'nowrap', gap: 6, fontSize: 11, color: 'var(--ui-text-secondary)' }, children: [...chips(true), cost] })
       ]
     }) }),
-    jsx(PopoverContent, { side: 'top', align: 'end', style: { width: 'min(360px, calc(100vw - 16px))' }, children: jsx(Panel, { data, ctx }) })
+    jsx(PopoverContent, {
+      side: 'top', align: 'end', collisionPadding: 8,
+      style: { width: 'min(360px, calc(100dvw - 16px))', maxWidth: 'calc(100dvw - 16px)' },
+      children: jsx(Panel, { data, ctx })
+    })
   ] })
 }
 
