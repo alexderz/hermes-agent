@@ -20,6 +20,8 @@ RETAIN_SECONDS = 60
 _STATUS_BY_REASON = {"killed": "killed", "lost": "lost"}
 _NAMED_ATTENTION = frozenset({"waiting", "running", "ready", "failed", "lost"})
 _OPEN_STATUSES = frozenset({"running", "waiting", "ready"})
+# Unconsumed outcomes. Not open: the heading still counts them as done.
+_PENDING_OUTCOMES = frozenset({"failed", "lost"})
 
 
 def process_is_open(status: str) -> bool:
@@ -34,6 +36,16 @@ def _named_attention(entry: dict) -> str | None:
     if attention:
         return "unknown"
     return None
+
+
+def _pending_outcome(entry: dict, status: str) -> bool:
+    """Hold a failed or lost receipt until admission settles.
+
+    The flag is omitted on a settled or legacy row, so those still leave after
+    ``RETAIN_SECONDS``. Killed is not in ``status`` here: ``process_status``
+    reads that reason before attention.
+    """
+    return entry.get("admission_pending") is True and status in _PENDING_OUTCOMES
 
 
 def _unsettled_service(entry: dict) -> bool:
@@ -88,8 +100,9 @@ def process_rows(now: float | None = None) -> list:
     for entry in process_registry.list_sessions(include_service_receipts=True):
         proc = process_registry.get(entry["session_id"])
         status = process_status(entry)
+        pending = _pending_outcome(entry, status)
         if proc is None:
-            if not process_is_open(status):
+            if not (process_is_open(status) or pending):
                 continue
             elapsed = int(entry.get("uptime_seconds") or 0)
             rows.append(
@@ -109,7 +122,7 @@ def process_rows(now: float | None = None) -> list:
             continue
         open_row = process_is_open(status)
         exited_at = 0.0 if open_row else (proc.exited_at or 0.0)
-        if not open_row and now - exited_at > RETAIN_SECONDS:
+        if not open_row and not pending and now - exited_at > RETAIN_SECONDS:
             continue
         end = exited_at or now
         rows.append(

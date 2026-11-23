@@ -271,3 +271,139 @@ def test_missing_proc_paints_a_live_receipt_and_killed_beats_stale_attention(mon
     assert "published" not in dock.process_activity(rows["receipt"])
     assert rows["stopped"]["status"] == "killed"
     assert "settled" not in rows
+
+
+def test_disk_only_pending_failed_and_lost_outlive_the_retain_window(monkeypatch):
+    """A disk receipt with no proc stays up past 60s only while admission is pending.
+
+    Settled failures still leave. Killed is not held by a stale attention or the flag.
+    """
+    from hermes_cli import cli_process_dock as dock
+
+    now = 20_000.0
+    old = now - (dock.RETAIN_SECONDS + 30)
+    entries = [
+        {
+            "session_id": "fail-disk",
+            "command": "fail-cold",
+            "status": "exited",
+            "exit_code": 1,
+            "attention": "failed",
+            "service_mode": "notify",
+            "completion_reason": "exited",
+            "admission_pending": True,
+            "uptime_seconds": 90,
+            "exited_at": old,
+            "output_preview": "boom\n",
+        },
+        {
+            "session_id": "lost-disk",
+            "command": "lost-cold",
+            "status": "exited",
+            "exit_code": 0,
+            "attention": "lost",
+            "service_mode": "await",
+            "completion_reason": "lost",
+            "admission_pending": True,
+            "uptime_seconds": 12,
+            "exited_at": old,
+            "output_preview": "gone\n",
+        },
+        {
+            "session_id": "fail-mem",
+            "command": "fail-live",
+            "status": "exited",
+            "exit_code": 7,
+            "attention": "failed",
+            "service_mode": "notify",
+            "completion_reason": "exited",
+            "admission_pending": True,
+        },
+        {
+            "session_id": "fail-fresh",
+            "command": "echo fresh",
+            "status": "exited",
+            "exit_code": 4,
+            "completion_reason": "exited",
+        },
+        {
+            "session_id": "fail-old",
+            "command": "echo settled",
+            "status": "exited",
+            "exit_code": 2,
+            "completion_reason": "exited",
+        },
+        {
+            "session_id": "stopped-old",
+            "command": "sleep 30",
+            "status": "exited",
+            "exit_code": 0,
+            "attention": "ready",
+            "service_mode": "await",
+            "completion_reason": "killed",
+            "admission_pending": True,
+        },
+        {
+            "session_id": "fail-orphan",
+            "command": "echo orphan",
+            "status": "exited",
+            "exit_code": 1,
+            "attention": "failed",
+            "completion_reason": "exited",
+            "exited_at": old,
+        },
+    ]
+    procs = {
+        "fail-mem": _Proc(
+            id="fail-mem",
+            command="fail-live",
+            exit_code=7,
+            started_at=old - 10,
+            exited_at=old,
+            output="boom-live\n",
+        ),
+        "fail-fresh": _Proc(
+            id="fail-fresh",
+            command="echo fresh",
+            exit_code=4,
+            started_at=now - 8,
+            exited_at=now - 5,
+        ),
+        "fail-old": _Proc(
+            id="fail-old",
+            command="echo settled",
+            exit_code=2,
+            started_at=old - 8,
+            exited_at=old,
+        ),
+        "stopped-old": _Proc(
+            id="stopped-old",
+            command="sleep 30",
+            exit_code=0,
+            started_at=old - 9,
+            exited_at=old,
+            reason="killed",
+        ),
+    }
+    registry = _bind(monkeypatch, entries, procs)
+    rows = {row["id"]: row for row in dock.process_rows(now)}
+    assert registry.include_service_receipts is True
+    assert set(rows) == {"fail-disk", "lost-disk", "fail-mem", "fail-fresh"}
+    assert rows["fail-disk"]["status"] == "failed"
+    assert rows["fail-disk"]["exit_code"] == 1
+    assert rows["fail-disk"]["detail"] == "boom"
+    assert rows["fail-disk"]["since_exit"] == 0
+    assert rows["lost-disk"]["status"] == "lost"
+    assert rows["lost-disk"]["exit_code"] == 0
+    assert rows["fail-mem"]["status"] == "failed"
+    assert rows["fail-mem"]["since_exit"] > dock.RETAIN_SECONDS
+    assert rows["fail-fresh"]["status"] == "failed"
+    assert dock.process_is_open("failed") is False
+    assert dock.process_is_open("lost") is False
+    assert dock.process_glyph(rows["fail-disk"]) == "✘"
+    assert dock.process_glyph(rows["lost-disk"]) == "?"
+    assert dock.process_glyph(rows["fail-disk"]) != "⚙"
+    assert dock.process_glyph(rows["lost-disk"]) != "◆"
+    assert dock.process_activity(rows["fail-disk"]) != "result ready"
+    assert dock.process_activity(rows["lost-disk"]) != "result ready"
+    assert dock.process_status(entries[5]) == "killed"

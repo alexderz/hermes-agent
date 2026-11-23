@@ -44,6 +44,7 @@ class _Proc:
         self.exited = row.get("status") == "exited"
         self.attention = row.get("attention") or None
         self.service_mode = row.get("service_mode") or None
+        self.admission_pending = row.get("admission_pending") is True
 
 
 class GatewayProcessView:
@@ -71,12 +72,24 @@ class GatewayProcessView:
         self.dirty = True
 
     def _interesting(self, now):
-        return any(
-            getattr(p, "attention", None) in _OPEN_ATTENTION
-            or not p.exited
-            or (p.exited_at and now - p.exited_at <= _RETAIN_SECONDS)
-            for p in self.rows
-        )
+        return any(self._keeps_polling(proc, now) for proc in self.rows)
+
+    def _keeps_polling(self, proc, now) -> bool:
+        """Ask again while the row can still change the dock.
+
+        Killed is read before attention, so a stop is not refreshed forever
+        from a stale ready or failed attention. A pending failed or lost
+        receipt stays past the retain window. A settled failure does not.
+        """
+        if not proc.exited:
+            return True
+        if proc.completion_reason == "killed":
+            return bool(proc.exited_at) and now - proc.exited_at <= _RETAIN_SECONDS
+        if getattr(proc, "attention", None) in _OPEN_ATTENTION:
+            return True
+        if getattr(proc, "admission_pending", False) and proc.attention in {"failed", "lost"}:
+            return True
+        return bool(proc.exited_at) and now - proc.exited_at <= _RETAIN_SECONDS
 
     def refresh(self, *, force=False):
         now = time.time()
@@ -114,6 +127,8 @@ class GatewayProcessView:
                 row["attention"] = proc.attention
             if proc.service_mode:
                 row["service_mode"] = proc.service_mode
+            if proc.admission_pending:
+                row["admission_pending"] = True
             rows.append(row)
         return rows
 

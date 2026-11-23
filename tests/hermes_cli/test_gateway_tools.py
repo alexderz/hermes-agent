@@ -229,6 +229,120 @@ def test_ready_receipt_stays_refreshable_and_keeps_attention(gateway):
     assert len(client.calls) > before
 
 
+def test_pending_failed_and_lost_keep_the_flag_and_the_poll(gateway):
+    """process.list already carries admission_pending. The view must project it.
+
+    An old settled failure does not stay interesting. A killed row does not
+    either, even with a stale attention and the flag set.
+    """
+    from hermes_cli import cli_process_dock as dock
+
+    _agent, client = gateway
+    now = time.time()
+    old = now - 120
+    pending_fail = {
+        "session_id": "fail-pending",
+        "command": "fail-cold",
+        "status": "exited",
+        "exit_code": 1,
+        "started_epoch": old - 10,
+        "exited_at": old,
+        "completion_reason": "exited",
+        "output_tail": "boom\n",
+        "attention": "failed",
+        "service_mode": "notify",
+        "admission_pending": True,
+    }
+    pending_lost = {
+        "session_id": "lost-pending",
+        "command": "lost-cold",
+        "status": "exited",
+        "exit_code": 0,
+        "started_epoch": old - 5,
+        "exited_at": old,
+        "completion_reason": "lost",
+        "output_tail": "gone\n",
+        "attention": "lost",
+        "service_mode": "await",
+        "admission_pending": True,
+    }
+    settled_fail = {
+        "session_id": "fail-settled",
+        "command": "echo settled",
+        "status": "exited",
+        "exit_code": 2,
+        "started_epoch": old - 8,
+        "exited_at": old,
+        "completion_reason": "exited",
+        "output_tail": "settled\n",
+    }
+    stopped = {
+        "session_id": "stopped",
+        "command": "sleep 30",
+        "status": "exited",
+        "exit_code": 0,
+        "started_epoch": old - 9,
+        "exited_at": old,
+        "completion_reason": "killed",
+        "output_tail": "stopped\n",
+        "attention": "ready",
+        "service_mode": "await",
+        "admission_pending": True,
+    }
+    client.processes = [pending_fail, pending_lost, settled_fail, stopped]
+    view = gateway_tools.process_registry()
+    view.dirty = True
+    view._polled = 0
+    listed = {row["session_id"]: row for row in view.list_sessions(include_service_receipts=True)}
+    assert listed["fail-pending"]["attention"] == "failed"
+    assert listed["fail-pending"]["service_mode"] == "notify"
+    assert listed["fail-pending"]["admission_pending"] is True
+    assert listed["lost-pending"]["attention"] == "lost"
+    assert listed["lost-pending"]["admission_pending"] is True
+    assert "admission_pending" not in listed["fail-settled"]
+    assert listed["stopped"]["completion_reason"] == "killed"
+    assert listed["stopped"]["admission_pending"] is True
+
+    rows = {row["id"]: row for row in dock.process_rows(now)}
+    assert set(rows) == {"fail-pending", "lost-pending"}
+    assert rows["fail-pending"]["status"] == "failed"
+    assert rows["fail-pending"]["exit_code"] == 1
+    assert rows["lost-pending"]["status"] == "lost"
+    assert dock.process_is_open(rows["fail-pending"]["status"]) is False
+    assert dock.process_is_open(rows["lost-pending"]["status"]) is False
+    assert dock.process_glyph(rows["fail-pending"]) == "✘"
+    assert dock.process_glyph(rows["lost-pending"]) == "?"
+    assert dock.process_activity(rows["fail-pending"]) != "result ready"
+
+    view.dirty = False
+    view._polled = 0
+    before = len(client.calls)
+    view.refresh()
+    assert len(client.calls) > before
+
+    client.processes = [settled_fail]
+    view.dirty = True
+    view._polled = 0
+    view.refresh()
+    assert dock.process_rows(now) == []
+    view.dirty = False
+    view._polled = 0
+    before = len(client.calls)
+    view.refresh()
+    assert len(client.calls) == before
+
+    client.processes = [stopped]
+    view.dirty = True
+    view._polled = 0
+    view.refresh()
+    assert dock.process_rows(now) == []
+    view.dirty = False
+    view._polled = 0
+    before = len(client.calls)
+    view.refresh()
+    assert len(client.calls) == before
+
+
 def test_reload_skills_rescans_in_the_gateway_session_and_prints_main_lines(gateway, capsys, monkeypatch):
     """/reload-skills rescans where the turn runs; main's lines print from the gateway's diff."""
     from agent import skill_commands
