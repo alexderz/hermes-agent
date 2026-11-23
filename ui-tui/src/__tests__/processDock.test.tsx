@@ -5,7 +5,14 @@ import React from 'react'
 import stripAnsi from 'strip-ansi'
 import { expect, it } from 'vitest'
 
-import { buildProcessRows, PROCESS_RETAIN_SECONDS, type ProcessEntry } from '../app/processRoster.js'
+import {
+  $processSnapshot,
+  applyProcessSnapshot,
+  buildProcessRows,
+  PROCESS_RETAIN_SECONDS,
+  type ProcessEntry,
+  processIsOpen
+} from '../app/processRoster.js'
 import { AgentsPanelView, buildProcessBlock, processSummary, splitDockBudget } from '../components/agentsPanel.js'
 import { buildAgentRows, dockRowLimit } from '../lib/agentRows.js'
 import { DEFAULT_THEME } from '../theme.js'
@@ -179,4 +186,165 @@ it('keeps waiting and ready off the success path and holds ready past the retain
   expect(painted).toContain('waiting')
   expect(painted).not.toContain('✔')
   expect(painted.toLowerCase()).not.toContain('continuation queued')
+})
+
+it('holds a pending failed or lost receipt until the snapshot settles, and reads killed before stale attention', () => {
+  // Frontend process.list input only. This does not prove the server's admission settlement.
+  const old = PROCESS_RETAIN_SECONDS + 30
+
+  const receipt = (
+    id: string,
+    attention: 'failed' | 'lost',
+    exitedAt: number | null,
+    pending?: boolean
+  ): ProcessEntry => ({
+    session_id: id,
+    command: id,
+    status: 'exited',
+    exit_code: attention === 'failed' ? 1 : 0,
+    attention,
+    service_mode: attention === 'lost' ? 'await' : 'notify',
+    completion_reason: attention === 'lost' ? 'lost' : 'exited',
+    ...(pending === undefined ? {} : { admission_pending: pending }),
+    uptime_seconds: 12,
+    exited_at: exitedAt,
+    output_preview: 'boom\n'
+  })
+
+  const rowsOf = (entries: readonly ProcessEntry[]) => buildProcessRows(entries, NOW * 1000)
+
+  const ids = (entries: readonly ProcessEntry[]) =>
+    rowsOf(entries)
+      .map(row => row.id)
+      .sort()
+
+  const pending = [
+    receipt('fail-null', 'failed', null, true),
+    receipt('fail-zero', 'failed', 0, true),
+    receipt('fail-old', 'failed', NOW - old, true),
+    receipt('lost-null', 'lost', null, true),
+    receipt('lost-zero', 'lost', 0, true),
+    receipt('lost-old', 'lost', NOW - old, true)
+  ]
+
+  const held = rowsOf(pending)
+
+  expect(ids(pending)).toEqual(['fail-null', 'fail-old', 'fail-zero', 'lost-null', 'lost-old', 'lost-zero'])
+  expect(held.find(row => row.id === 'fail-old')).toMatchObject({
+    status: 'failed',
+    detail: `exit 1 · ${old}s ago`,
+    sinceExitSeconds: old
+  })
+  expect(held.find(row => row.id === 'fail-zero')).toMatchObject({
+    status: 'failed',
+    detail: 'exit 1 · 0s ago',
+    sinceExitSeconds: 0
+  })
+  expect(held.find(row => row.id === 'lost-null')).toMatchObject({
+    status: 'lost',
+    detail: 'lost · 0s ago',
+    sinceExitSeconds: 0
+  })
+  expect(held.every(row => row.status === 'failed' || row.status === 'lost')).toBe(true)
+  expect(held.every(row => !processIsOpen(row.status))).toBe(true)
+  expect(buildProcessBlock(held, 10)).toMatchObject({ running: 0, total: held.length })
+  expect(processIsOpen('running')).toBe(true)
+  expect(processIsOpen('waiting')).toBe(true)
+  expect(processIsOpen('ready')).toBe(true)
+  expect(processIsOpen('failed')).toBe(false)
+  expect(processIsOpen('lost')).toBe(false)
+  expect(processIsOpen('killed')).toBe(false)
+  expect(processIsOpen('done')).toBe(false)
+
+  const legacyFresh: ProcessEntry = {
+    session_id: 'fail-fresh',
+    command: 'echo fresh',
+    status: 'exited',
+    exit_code: 4,
+    completion_reason: 'exited',
+    uptime_seconds: 8,
+    exited_at: NOW - 5
+  }
+
+  const legacyOld: ProcessEntry = {
+    session_id: 'fail-old-settled',
+    command: 'echo settled',
+    status: 'exited',
+    exit_code: 2,
+    completion_reason: 'exited',
+    uptime_seconds: 8,
+    exited_at: NOW - old
+  }
+
+  const legacyAbsent: ProcessEntry = {
+    session_id: 'fail-absent',
+    command: 'echo phantom',
+    status: 'exited',
+    exit_code: 3,
+    completion_reason: 'exited',
+    uptime_seconds: 8,
+    exited_at: null
+  }
+
+  const settled: ProcessEntry[] = [
+    legacyFresh,
+    legacyOld,
+    legacyAbsent,
+    receipt('fail-false', 'failed', NOW - old, false),
+    receipt('fail-omit', 'failed', NOW - old)
+  ]
+
+  const donePending: ProcessEntry = {
+    session_id: 'done-pending',
+    command: 'echo ok',
+    status: 'exited',
+    exit_code: 0,
+    completion_reason: 'exited',
+    admission_pending: true,
+    uptime_seconds: 4,
+    exited_at: NOW - old
+  }
+
+  expect(ids(settled)).toEqual(['fail-fresh'])
+  expect(rowsOf([legacyFresh])[0]).toMatchObject({ status: 'failed', detail: 'exit 4 · 5s ago' })
+  expect(ids([receipt('fail-false-fresh', 'failed', NOW - 5, false)])).toEqual(['fail-false-fresh'])
+  expect(ids([donePending])).toEqual([])
+
+  const killed = (exitedAt: number | null): ProcessEntry => ({
+    session_id: 'stopped',
+    command: 'sleep 30',
+    status: 'exited',
+    exit_code: 0,
+    attention: 'ready',
+    service_mode: 'await',
+    completion_reason: 'killed',
+    admission_pending: true,
+    uptime_seconds: 9,
+    exited_at: exitedAt
+  })
+
+  expect(rowsOf([killed(NOW - old), killed(0), killed(null)])).toEqual([])
+  expect(rowsOf([killed(NOW - 2)])).toMatchObject([
+    { id: 'stopped', status: 'killed', detail: 'killed · 2s ago', sinceExitSeconds: 2 }
+  ])
+
+  applyProcessSnapshot(null)
+  applyProcessSnapshot('dock', [
+    receipt('fail-settle', 'failed', NOW - old, true),
+    receipt('lost-settle', 'lost', 0, true)
+  ])
+  expect(ids($processSnapshot.get().processes)).toEqual(['fail-settle', 'lost-settle'])
+
+  applyProcessSnapshot('dock', [receipt('fail-settle', 'failed', NOW - old, false)])
+  expect($processSnapshot.get().processes.map(entry => entry.session_id)).toEqual(['fail-settle'])
+  expect(ids($processSnapshot.get().processes)).toEqual([])
+
+  applyProcessSnapshot('dock', [receipt('fail-settle', 'failed', NOW - 5, false)])
+  expect(ids($processSnapshot.get().processes)).toEqual(['fail-settle'])
+  expect(rowsOf($processSnapshot.get().processes)[0]?.status).toBe('failed')
+
+  applyProcessSnapshot('dock', [])
+  expect($processSnapshot.get().processes).toEqual([])
+  expect(ids($processSnapshot.get().processes)).toEqual([])
+  applyProcessSnapshot(null)
 })

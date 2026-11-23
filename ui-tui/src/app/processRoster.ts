@@ -20,6 +20,8 @@ export interface ProcessEntry {
   attention?: string | null
   /** Optional until process.list publishes it on the shared contract. */
   service_mode?: string | null
+  /** Strict wire flag. Omitted on a settled or legacy row. */
+  admission_pending?: boolean | null
 }
 
 export interface ProcessRow {
@@ -73,7 +75,19 @@ const unsettledService = (entry: ProcessEntry): boolean => {
 export const processIsOpen = (status: ProcessRow['status']): boolean =>
   status === 'running' || status === 'waiting' || status === 'ready'
 
+const PENDING_OUTCOMES = new Set<ProcessRow['status']>(['failed', 'lost'])
+
+/** A failed or lost receipt stays until admission settles. Omitted and false keep the retain window. */
+const pendingOutcome = (entry: ProcessEntry, status: ProcessRow['status']): boolean =>
+  entry.admission_pending === true && PENDING_OUTCOMES.has(status)
+
 export const processStatus = (entry: ProcessEntry): ProcessRow['status'] => {
+  // Killed is not an attention value. Read it before attention so a stop is
+  // not painted ready, waiting, or failed from a stale attention field.
+  if ((entry.completion_reason ?? '') === 'killed') {
+    return 'killed'
+  }
+
   const attention = namedAttention(entry.attention)
 
   if (attention) {
@@ -123,7 +137,8 @@ export const processVerdict = (row: ProcessRow, exitCode: number | null | undefi
 }
 
 /** Running processes first (longest running first), then recently exited ones
- * newest-exit first; exits older than the retention window are dropped. */
+ * newest-exit first. Exits older than the retention window are dropped, except a
+ * failed or lost row that is still admission-pending. */
 export const buildProcessRows = (processes: readonly ProcessEntry[], nowMs: number): ProcessRow[] => {
   const nowS = nowMs / 1000
   const rows: ProcessRow[] = []
@@ -131,10 +146,11 @@ export const buildProcessRows = (processes: readonly ProcessEntry[], nowMs: numb
   for (const entry of processes) {
     const status = processStatus(entry)
     const open = processIsOpen(status)
+    const pending = pendingOutcome(entry, status)
     const exitedAt = open ? 0 : (entry.exited_at ?? 0)
     const sinceExitSeconds = exitedAt ? Math.max(0, Math.floor(nowS - exitedAt)) : 0
 
-    if (!open && (!exitedAt || sinceExitSeconds > PROCESS_RETAIN_SECONDS)) {
+    if (!open && !pending && (!exitedAt || sinceExitSeconds > PROCESS_RETAIN_SECONDS)) {
       continue
     }
 
