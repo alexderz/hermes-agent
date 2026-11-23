@@ -150,3 +150,178 @@ it('shows zero only for exhausted quota and keeps tiny or unknown amounts distin
     }
   }
 })
+
+const agyGroups = [
+  {
+    name: 'Gemini Models', tag: 'G',
+    buckets: [
+      { id: 'gemini-weekly', window: 'weekly', remaining_percent: 42, reset_label: 'Fri 12:00 PM' },
+      { id: 'gemini-5h', window: '5h', remaining_percent: 90, reset_label: 'Sun 4:00 PM' }
+    ]
+  },
+  {
+    name: 'Claude and GPT models', tag: 'CG',
+    buckets: [
+      { id: '3p-weekly', window: 'weekly', remaining_percent: 15, reset_label: 'Thu 6:00 AM' },
+      { id: '3p-5h', window: '5h', remaining_percent: 0, reset_label: 'Sun 2:00 PM' }
+    ]
+  },
+  {
+    name: 'Gemini 4 Argon', tag: 'Ar',
+    buckets: [
+      { id: 'gemini-argon-wtu-weekly', window: 'weekly', remaining_percent: 0.4, reset_label: 'Sat 6:00 PM' }
+    ]
+  }
+]
+
+function showAgy(card: Record<string, unknown>) {
+  const cards = fixture.data.cards as Array<Record<string, unknown>>
+  fixture.data.cards = [...cards.filter(item => item.id !== 'agy'), card] as typeof fixture.data.cards
+}
+
+function agyCard(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'agy', name: 'Antigravity', display_only: true, fresh: true, eligible: false,
+    plan: null, used_percent: null, pace_delta: null, pace_used_percent: null,
+    summary: { group_name: 'Gemini 4 Argon', tag: 'Ar', window: 'weekly', remaining_percent: 0.4 },
+    groups: agyGroups,
+    ...overrides
+  }
+}
+
+afterEach(() => {
+  fixture.data.cards = fixture.data.cards.filter(item => item.id !== 'agy')
+})
+
+it('identifies the lowest weekly Antigravity group in both bars without pace', () => {
+  showAgy(agyCard())
+  const { container } = render(meter())
+  const compact = container.querySelector('[data-usage-compact]')!
+  const full = container.querySelector('[data-usage-full]')!
+  const compactChip = compact.querySelector('[data-agy-chip]')!
+  const fullChip = full.querySelector('[data-agy-chip]')!
+
+  expect(compact.querySelectorAll('[data-agy-chip]')).toHaveLength(1)
+  expect(full.querySelectorAll('[data-agy-chip]')).toHaveLength(1)
+  expect(compactChip.textContent).toBe('Ag Ar <1%')
+  expect(fullChip.textContent).toBe('AGY Ar <1%')
+  expect(compactChip.textContent).not.toMatch(/P/)
+  expect(fullChip.textContent).not.toMatch(/P/)
+  for (const chip of [compactChip, fullChip]) {
+    const label = chip.getAttribute('aria-label') || ''
+    expect(label).toContain('Gemini 4 Argon')
+    expect(label).toContain('weekly')
+    expect(label).toContain('<1% remaining')
+    expect(label.toLowerCase()).toContain('other model groups are separate')
+    expect(chip.getAttribute('title')).toBe(label)
+  }
+  expect(compact.textContent).toContain('Cl 60%')
+  expect(compact.textContent).toContain('GPT 30%')
+  expect(compact.textContent).toContain('Gr 85%')
+  expect(compact.textContent).toContain('OR W$12.34 D$1.23')
+  expect(full.textContent).toContain('P+2pp')
+})
+
+it('treats 0% as that named weekly group being exhausted and keeps the others', () => {
+  fixture.showPanel = true
+  const groups = structuredClone(agyGroups)
+  groups[0].buckets[0].remaining_percent = 0
+  groups[2].buckets[0].remaining_percent = 50
+  showAgy(agyCard({
+    summary: { group_name: 'Gemini Models', tag: 'G', window: 'weekly', remaining_percent: 0 },
+    groups
+  }))
+  const { container, getByTestId } = render(meter())
+  const panel = getByTestId('usage-panel')
+  const details = panel.querySelector('[data-agy-details]')!
+
+  for (const row of container.querySelectorAll('[data-usage-compact], [data-usage-full]')) {
+    const chip = row.querySelector('[data-agy-chip]')!
+    const label = chip.getAttribute('aria-label') || ''
+    expect(chip.textContent).toMatch(/Ag|AGY/)
+    expect(chip.textContent).toContain('G 0%')
+    expect(label).toContain('Gemini Models')
+    expect(label).toContain('weekly')
+    expect(label).toContain('exhausted')
+    expect(label).toContain('0% remaining')
+    expect(label.toLowerCase()).toContain('other model groups are separate')
+    expect(label.toLowerCase()).not.toMatch(/all (agy|models|antigravity)/)
+  }
+  expect(details.textContent).toContain('Claude and GPT models')
+  expect(details.textContent).toContain('15%')
+  expect(details.textContent).toContain('Gemini 4 Argon')
+  expect(details.textContent).toContain('50%')
+  expect(panel.querySelector('[data-agy-group="Gemini 4 Argon"]')?.textContent).not.toContain('5-hour')
+})
+
+it('shows every Antigravity group and bucket with its own reset and no pace', () => {
+  fixture.showPanel = true
+  showAgy(agyCard())
+  const { getByTestId } = render(meter())
+  const panel = getByTestId('usage-panel')
+  const details = panel.querySelector('[data-agy-details]')!
+  const claude = within(panel).getByText('Claude').parentElement!
+
+  expect(panel.textContent).toContain('Weekly quota remaining')
+  expect(panel.textContent).toContain('percentage points')
+  expect(panel.textContent?.toLowerCase()).toContain('not paced')
+  expect(claude.children[1].textContent).toBe('60%  P: +2pp')
+  expect(details.textContent).toContain('Antigravity')
+  expect(details.textContent).not.toMatch(/Max|Pro Lite|Heavy|plan/i)
+  expect(details.textContent?.toLowerCase()).not.toContain('pace')
+  expect(details.textContent).not.toContain('P:')
+  for (const group of agyGroups) {
+    const block = details.querySelector(`[data-agy-group="${group.name}"]`)
+    expect(block).not.toBeNull()
+    for (const bucket of group.buckets) {
+      expect(block!.textContent).toContain(bucket.window === '5h' ? '5-hour' : 'weekly')
+      expect(block!.textContent).toContain('resets ' + bucket.reset_label)
+    }
+  }
+  const argon = details.querySelector('[data-agy-group="Gemini 4 Argon"]')
+  expect(argon?.textContent).toContain('<1%')
+  expect(argon?.textContent).not.toContain('5-hour')
+  expect(argon?.textContent).not.toContain('5h')
+  expect(details.textContent).toContain('resets Sun 4:00 PM')
+  expect(details.textContent).toContain('resets Sun 2:00 PM')
+  expect(details.textContent).toContain('0%')
+})
+
+it('keeps Antigravity unknown, full, tiny and zero distinct', () => {
+  fixture.showPanel = true
+  const { container, getByTestId, rerender } = render(meter())
+
+  showAgy(agyCard({ fresh: false, reason: 'no reading', summary: null, groups: [] }))
+  rerender(meter())
+  for (const row of container.querySelectorAll('[data-usage-compact], [data-usage-full]')) {
+    const chip = row.querySelector('[data-agy-chip]')!
+    expect(chip.textContent).toMatch(/^(Ag|AGY) –$/)
+    expect(chip.getAttribute('aria-label')).toContain('unavailable')
+  }
+  expect(getByTestId('usage-panel').querySelector('[data-agy-details]')?.textContent).toContain('no reading')
+  expect(getByTestId('usage-panel').textContent).not.toContain('Gemini 4 Argon')
+
+  showAgy(agyCard({
+    summary: { group_name: 'Gemini Models', tag: 'G', window: 'weekly', remaining_percent: 100 },
+    groups: [{ name: 'Gemini Models', tag: 'G', buckets: [
+      { id: 'gemini-weekly', window: 'weekly', remaining_percent: 100, reset_label: 'Fri 12:00 PM' }
+    ] }]
+  }))
+  rerender(meter())
+  expect(container.querySelector('[data-usage-compact] [data-agy-chip]')?.textContent).toBe('Ag G 100%')
+  expect(getByTestId('usage-panel').textContent).toContain('100%')
+
+  showAgy(agyCard())
+  rerender(meter())
+  expect(container.querySelector('[data-usage-full] [data-agy-chip]')?.textContent).toBe('AGY Ar <1%')
+
+  showAgy(agyCard({
+    summary: { group_name: 'Gemini Models', tag: 'G', window: 'weekly', remaining_percent: 0 },
+    groups: [{ name: 'Gemini Models', tag: 'G', buckets: [
+      { id: 'gemini-weekly', window: 'weekly', remaining_percent: 0, reset_label: 'Fri 12:00 PM' }
+    ] }]
+  }))
+  rerender(meter())
+  expect(container.querySelector('[data-usage-compact] [data-agy-chip]')?.textContent).toBe('Ag G 0%')
+  expect(getByTestId('usage-panel').querySelector('[data-agy-group="Gemini Models"]')?.textContent).toContain('0%')
+})

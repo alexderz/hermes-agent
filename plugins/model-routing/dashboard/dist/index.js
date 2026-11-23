@@ -10,6 +10,49 @@
 
   function fmtPct(v) { return v == null ? "–" : Math.round(v) + "%"; }
 
+  function agyPercent(value) {
+    if (typeof value !== "number" || !isFinite(value)) return "–";
+    if (value > 0 && value < 1) return "<1%";
+    return Math.round(value) + "%";
+  }
+
+  function agyTitle(c) {
+    var summary = c.fresh ? c.summary : null;
+    if (!c.fresh || !summary || typeof summary.remaining_percent !== "number" || !isFinite(summary.remaining_percent)) {
+      return c.fresh
+        ? "Antigravity has no weekly group reading. Other model groups are separate."
+        : "Antigravity quota unavailable. Other model groups are separate.";
+    }
+    if (summary.remaining_percent === 0) {
+      return "Antigravity " + summary.group_name + " weekly allowance is exhausted, 0% remaining. Other model groups are separate.";
+    }
+    var word = summary.window === "5h" ? "5-hour" : (summary.window || "weekly");
+    return "Antigravity " + summary.group_name + " " + word + " " + agyPercent(summary.remaining_percent) +
+      " remaining. Other model groups are separate.";
+  }
+
+  function agyChip(c) {
+    var summary = c.fresh ? c.summary : null;
+    var tag = summary && summary.tag ? " " + summary.tag : "";
+    return h("span", { key: c.id, className: "mr-hchip mr-stale", title: agyTitle(c) },
+      "Ag" + tag + " " + agyPercent(summary && summary.remaining_percent));
+  }
+
+  function DisplayCard(props) {
+    var c = props.card;
+    var groups = c.fresh && c.groups ? c.groups : [];
+    var lines = groups.map(function (group) {
+      var bits = (group.buckets || []).map(function (bucket) {
+        var word = bucket.window === "5h" ? "5-hour" : (bucket.window || "window");
+        return word + " " + agyPercent(bucket.remaining_percent) + " remaining, resets " + (bucket.reset_label || "?");
+      });
+      return group.name + (bits.length ? ": " + bits.join("; ") : "");
+    });
+    return h("div", { className: "mr-card mr-stale" },
+      h("div", { className: "mr-head" }, h("span", { className: "mr-name" }, "Antigravity")),
+      h("div", { className: "mr-sub" }, lines.length ? lines.join(" · ") : (c.reason || "quota unavailable")));
+  }
+
   function Card(props) {
     const c = props.card;
     const over = c.pace_delta != null && c.pace_delta < 0;
@@ -53,7 +96,9 @@
       data.warning && data.warning.active
         ? h("div", { className: "mr-warn" }, "Warning: usage data unavailable for " + data.warning.subscriptions.join(", "))
         : null,
-      h("div", { className: "mr-grid" }, (data.cards || []).map(function (c) { return h(Card, { key: c.id, card: c }); })),
+      h("div", { className: "mr-grid" }, (data.cards || []).map(function (c) {
+        return h(c.display_only ? DisplayCard : Card, { key: c.id, card: c });
+      })),
       h("div", { className: "mr-card mr-od" },
         h("div", { className: "mr-head" }, h("span", { className: "mr-name" }, "OpenRouter (pay per use)")),
         h("div", { className: "mr-main" }, h("span", { className: "mr-used" }, "$" + (o.week || 0).toFixed(2)),
@@ -85,6 +130,7 @@
     const SHORT = { claude: "Claude", codex: "GPT", supergrok: "Grok" };
     const o = data.openrouter || {};
     const items = data.cards.map(function (c) {
+      if (c.display_only) return agyChip(c);
       const over = c.pace_delta != null && c.pace_delta < 0;
       const tone = !c.fresh ? "mr-stale" : !c.eligible ? "mr-blocked" : over ? "mr-over" : "mr-under";
       const word = !c.fresh ? "no data" : !c.eligible ? "not eligible" : over ? "over pace" : "under pace";

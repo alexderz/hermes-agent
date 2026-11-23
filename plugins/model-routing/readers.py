@@ -3,21 +3,24 @@
 Claude, ChatGPT/Codex and OpenRouter go through Hermes's own ``agent.account_usage`` fetchers (the same
 path as ``hermes usage``). SuperGrok has no Hermes fetcher, so it is read from the Grok CLI billing
 endpoint with Hermes's own ``xai-oauth`` login, taken from the credential pool (which refreshes it
-under Hermes's lock), never from the Grok CLI's 12-hour token.
+under Hermes's lock), never from the Grok CLI's 12-hour token. Antigravity asks the official ``agy``
+CLI to run ``/usage``, which that CLI handles itself outside generation.
 """
 from __future__ import annotations
 
 import json
+import math
 import re
+import subprocess
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Callable, Optional
 
 SUPERGROK_BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _iso(dt: Optional[datetime]) -> Optional[str]:
@@ -142,6 +145,167 @@ def read_supergrok(token_fn: Callable[[], str] = _xai_token, timeout: float = 20
             "plan": None, **parsed}
 
 
+# ``/usage`` is handled by the agy CLI itself, outside model generation. Auth stays inside that CLI.
+AGY_TIMEOUT_S = 20.0
+_AGY_ARGV = ("--print", "/usage", "--output-format", "json")
+_AGY_MAX_BYTES = 262144
+_USAGE_COUNTERS = ("input_tokens", "output_tokens", "thinking_tokens", "cache_read_tokens", "total_tokens")
+_BUCKET_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,64}$")
+_WINDOW = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,15}$")
+_TEXT_LIMIT = 80
+
+
+def _agy_executable() -> Optional[str]:
+    from hermes_platform.resolver.core import locate_command
+    found = locate_command("agy")
+    if not found.found:
+        return None
+    command = found.command
+    return command[0] if command else None
+
+
+def _fraction(value: Any) -> Optional[float]:
+    """A quota fraction in ``[0, 1]``. Booleans and non-finite numbers stay unknown."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, int) and not 0 <= value <= 1:
+        return None
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
+    if not math.isfinite(number) or number < 0 or number > 1:
+        return None
+    return number
+
+
+def _short_text(value: Any, limit: int = _TEXT_LIMIT) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    text = " ".join(value.split())
+    if not text:
+        return None
+    return text[:limit]
+
+
+def _reset_at(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return text
+
+
+def _zero_inference(payload: dict[str, Any]) -> bool:
+    if payload.get("status") != "SUCCESS" or payload.get("conversation_id") != "":
+        return False
+    turns = payload.get("num_turns")
+    if isinstance(turns, bool) or turns != 0:
+        return False
+    usage = payload.get("usage")
+    if not isinstance(usage, dict):
+        return False
+    for key in _USAGE_COUNTERS:
+        value = usage.get(key)
+        if isinstance(value, bool) or value != 0:
+            return False
+    command = payload.get("command")
+    return isinstance(command, dict) and command.get("name") == "usage"
+
+
+def _bucket(item: Any) -> Optional[dict[str, Any]]:
+    if not isinstance(item, dict):
+        return None
+    ident = item.get("id")
+    if not isinstance(ident, str) or _BUCKET_ID.fullmatch(ident) is None:
+        return None
+    window = item.get("window")
+    if not isinstance(window, str) or _WINDOW.fullmatch(window) is None:
+        window = None
+    return {"id": ident, "name": _short_text(item.get("name")), "window": window,
+            "remaining_fraction": _fraction(item.get("remaining_fraction")),
+            "reset_at": _reset_at(item.get("reset_time"))}
+
+
+def _group(item: Any) -> Optional[dict[str, Any]]:
+    if not isinstance(item, dict):
+        return None
+    name = _short_text(item.get("name"))
+    buckets = item.get("buckets")
+    if not name or not isinstance(buckets, list):
+        return None
+    return {"name": name, "buckets": [bucket for item in buckets if (bucket := _bucket(item))]}
+
+
+def parse_agy_usage(payload: Any) -> dict[str, Any]:
+    """Normalize one ``/usage`` payload. The error string never includes the body."""
+    if not isinstance(payload, dict):
+        return {"ok": False, "error": "agy usage returned malformed data"}
+    if not _zero_inference(payload):
+        return {"ok": False, "error": "agy usage did not return a quota result"}
+    command = payload.get("command")
+    data = command.get("data") if isinstance(command, dict) else None
+    raw_groups = data.get("groups") if isinstance(data, dict) else None
+    if not isinstance(raw_groups, list):
+        return {"ok": False, "error": "agy usage returned malformed data"}
+    if not raw_groups:
+        return {"ok": False, "error": "agy usage returned no quota data"}
+    parsed = [group for item in raw_groups if (group := _group(item))]
+    if not parsed:
+        return {"ok": False, "error": "agy usage returned no quota data"}
+    return {"ok": True, "groups": parsed}
+
+
+def _stdout_bytes(completed: Any) -> Optional[bytes]:
+    stdout = getattr(completed, "stdout", None)
+    if isinstance(stdout, str):
+        return stdout.encode("utf-8", "replace")
+    if isinstance(stdout, bytes):
+        return stdout
+    return None
+
+
+def read_agy() -> dict[str, Any]:
+    """Read Antigravity quota. A failure carries a fixed reason, never command output."""
+    try:
+        executable = _agy_executable()
+    except Exception:
+        return _failed("agy", "agy not found")
+    if not executable:
+        return _failed("agy", "agy not found")
+    try:
+        completed = subprocess.run(  # noqa: UP022 - stdin stays closed while both streams are captured
+            [executable, *_AGY_ARGV], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, timeout=AGY_TIMEOUT_S, check=False)
+    except subprocess.TimeoutExpired:
+        return _failed("agy", "agy usage timed out")
+    except OSError:
+        return _failed("agy", "agy usage unavailable")
+    except Exception:
+        return _failed("agy", "agy usage unavailable")
+    if getattr(completed, "returncode", None) != 0:
+        return _failed("agy", "agy usage failed")
+    raw = _stdout_bytes(completed)
+    if not raw or len(raw) > _AGY_MAX_BYTES:
+        return _failed("agy", "agy usage returned malformed data")
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return _failed("agy", "agy usage returned malformed data")
+    parsed = parse_agy_usage(payload)
+    if not parsed["ok"]:
+        return _failed("agy", str(parsed["error"]))
+    return {"id": "agy", "status": "ok", "attempted_at": _now_iso(), "observed_at": _now_iso(),
+            "groups": parsed["groups"]}
+
+
 READERS: dict[str, Callable[[], dict[str, Any]]] = {
-    "claude": read_claude, "codex": read_codex, "supergrok": read_supergrok,
+    "claude": read_claude, "codex": read_codex, "supergrok": read_supergrok, "agy": read_agy,
 }

@@ -25,6 +25,41 @@ const signed = v => (v == null ? '' : `${v > 0 ? '+' : ''}${Math.round(v)}pp`)
 const money = v => Number.isFinite(v) ? `$${v.toFixed(2)}` : '–'
 const compactMoney = v => money(v).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')
 const remaining = v => Number.isFinite(v) ? Math.max(0, Math.min(100, 100 - v)) : null
+const isAgy = c => c.id === 'agy' || c.display_only
+
+function windowWord(windowKind) {
+  if (windowKind === 'weekly') return 'weekly'
+  if (windowKind === '5h') return '5-hour'
+  return windowKind || 'window'
+}
+
+function agySummary(c) {
+  const summary = c.fresh ? c.summary : null
+  return summary && Number.isFinite(summary.remaining_percent) ? summary : null
+}
+
+function agyAccess(c) {
+  const summary = agySummary(c)
+  if (!c.fresh) return 'Antigravity quota unavailable. Other model groups are separate.'
+  if (!summary) return 'Antigravity has no weekly group reading. Other model groups are separate.'
+  const windowKind = windowWord(summary.window)
+  if (summary.remaining_percent === 0) {
+    return `Antigravity ${summary.group_name} ${windowKind} allowance is exhausted, 0% remaining. Other model groups are separate.`
+  }
+  return `Antigravity ${summary.group_name} ${windowKind} ${pct(summary.remaining_percent)} remaining. Other model groups are separate.`
+}
+
+function agyChipText(c, compact) {
+  const provider = compact ? 'Ag' : 'AGY'
+  const summary = agySummary(c)
+  if (!summary) return `${provider} ${pct(null)}`
+  return `${provider} ${summary.tag} ${pct(summary.remaining_percent)}`
+}
+
+function agyTone(c) {
+  const summary = agySummary(c)
+  return summary && summary.remaining_percent === 0 ? 'bad' : 'muted'
+}
 
 // A single status-bar row, not another mobile toolbar. Reserve enough of the
 // right cluster for the compact meter; the other status items can still clip.
@@ -36,6 +71,18 @@ const METER_CSS = `
     [data-slot="statusbar"] > :last-child:has([data-subscription-meter]) {
       flex-shrink: 0;
       max-width: calc(100% - 2.5rem);
+    }
+  }
+  @media (max-width: 400px) {
+    [data-usage-compact] {
+      gap: 2px !important;
+      font-size: 10px !important;
+      letter-spacing: -0.03em;
+    }
+    [data-usage-compact] > span { gap: 1px !important; }
+    [data-usage-compact] span[aria-hidden="true"] {
+      width: 4px !important;
+      height: 4px !important;
     }
   }
 `
@@ -60,6 +107,33 @@ function Row({ c }) {
   })
 }
 
+function AgyDetails({ c }) {
+  const groups = c.fresh ? (c.groups || []) : []
+  return jsxs('div', {
+    'data-agy-details': '',
+    style: { padding: '6px 0', borderBottom: '1px solid var(--ui-stroke-secondary)' },
+    children: [
+      jsxs('div', { style: { display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600 }, children: [
+        jsx(StatusDot, { tone: agyTone(c) }), 'Antigravity'
+      ] }),
+      groups.length ? groups.map(group => jsxs('div', {
+        'data-agy-group': group.name,
+        children: [
+          jsx('div', { style: { fontWeight: 600, marginTop: 4 }, children: group.name }),
+          ...(group.buckets || []).map(bucket => jsx('div', {
+            'data-agy-bucket': bucket.id,
+            style: { color: 'var(--ui-text-tertiary)', fontSize: 11 },
+            children: `${windowWord(bucket.window)} ${pct(bucket.remaining_percent)} remaining, resets ${bucket.reset_label || '?'}`
+          }, bucket.id))
+        ]
+      }, group.name)) : jsx('div', {
+        style: { color: 'var(--ui-text-tertiary)', fontSize: 11 },
+        children: c.reason || 'quota unavailable'
+      })
+    ]
+  })
+}
+
 function Panel({ data, ctx }) {
   const [busy, setBusy] = useState(false)
   const o = data.openrouter || {}
@@ -76,12 +150,14 @@ function Panel({ data, ctx }) {
   }
   const pick = data.pick
   return jsxs('div', { style: { fontSize: 12, padding: 4 }, children: [
-    jsx('div', { style: { fontWeight: 600, marginBottom: 4 }, children: 'Weekly quota remaining, most over pace first' }),
+    jsx('div', { style: { fontWeight: 600, marginBottom: 4 }, children:
+      'Weekly quota remaining, most over pace first. Antigravity groups are separate allowances and are not paced.' }),
     data.warning && data.warning.active
       ? jsx('div', { style: { color: 'var(--ui-text-secondary)', marginBottom: 4 },
           children: `Warning: usage data unavailable for ${data.warning.subscriptions.join(', ')}` })
       : null,
-    ...(data.cards || []).map(c => jsx(Row, { c }, c.id)),
+    ...(data.cards || []).filter(c => !isAgy(c)).map(c => jsx(Row, { c }, c.id)),
+    (data.cards || []).some(isAgy) ? jsx(AgyDetails, { c: (data.cards || []).find(isAgy) }, 'agy') : null,
     jsxs('div', { style: { display: 'grid', gridTemplateColumns: '1fr auto', padding: '6px 0' }, children: [
       jsxs('div', { style: { display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600 }, children: [
         jsx(StatusDot, { tone: 'muted' }), 'OpenRouter (pay per use)'] }),
@@ -92,7 +168,7 @@ function Panel({ data, ctx }) {
     jsx('div', { style: { color: 'var(--ui-text-tertiary)', fontSize: 11, margin: '4px 0 8px' }, children:
       (data.on_demand && data.on_demand.active ? 'Routing would use on-demand OpenRouter. '
         : pick ? `Routing would pick ${SHORT[pick.subscription] || pick.subscription} (${pick.model}). ` : 'No routing pick. ') +
-      'Advisory only for now. Percentages are quota remaining. P is pace headroom in percentage points; minus means over pace.' }),
+      'Advisory only for now. Percentages are quota remaining. P is pace headroom in percentage points; minus means over pace. Antigravity shows each model group\'s own remaining allowance.' }),
     jsxs('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' }, children: [
       jsx('span', { style: { color: 'var(--ui-text-quaternary)', fontSize: 11 },
         children: data.written_at ? `Read ${new Date(data.written_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'Not read yet' }),
@@ -116,6 +192,14 @@ function Meter({ ctx }) {
   if (!data) return null
   const o = data.openrouter || {}
   const chips = (compact) => (data.cards || []).map(c => {
+    if (isAgy(c)) {
+      const label = agyAccess(c)
+      return jsxs('span', {
+        key: c.id, 'data-agy-chip': '', 'aria-label': label, title: label,
+        style: { display: 'inline-flex', alignItems: 'center', gap: 4 },
+        children: [jsx(StatusDot, { tone: agyTone(c) }), agyChipText(c, compact)]
+      })
+    }
     const [t, word] = tone(c)
     return jsxs('span', { key: c.id, 'aria-label': `${c.name} ${pct(remaining(c.used_percent))} remaining, ${word}`,
       style: { display: 'inline-flex', alignItems: 'center', gap: 4 }, children: [
@@ -131,8 +215,8 @@ function Meter({ ctx }) {
       variant: 'ghost', size: 'micro', 'aria-label': 'Subscription usage',
       'data-subscription-meter': '',
       children: [
-        jsxs('span', { key: 'full', 'data-usage-full': '', style: { display: 'inline-flex', gap: 10, fontSize: 11, color: 'var(--ui-text-secondary)' }, children: [...chips(false), cost] }),
-        jsxs('span', { key: 'compact', 'data-usage-compact': '', style: { alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--ui-text-secondary)' }, children: [...chips(true), cost] })
+        jsxs('span', { key: 'full', 'data-usage-full': '', style: { display: 'inline-flex', flexWrap: 'nowrap', whiteSpace: 'nowrap', gap: 10, fontSize: 11, color: 'var(--ui-text-secondary)' }, children: [...chips(false), cost] }),
+        jsxs('span', { key: 'compact', 'data-usage-compact': '', style: { alignItems: 'center', flexWrap: 'nowrap', whiteSpace: 'nowrap', gap: 6, fontSize: 11, color: 'var(--ui-text-secondary)' }, children: [...chips(true), cost] })
       ]
     }) }),
     jsx(PopoverContent, { side: 'top', align: 'end', style: { width: 'min(360px, calc(100vw - 16px))' }, children: jsx(Panel, { data, ctx }) })

@@ -18,6 +18,7 @@ Limit-aware model routing for Alex's subscriptions: Claude Max 20x, ChatGPT Pro 
   - **Desktop app:** a status-bar meter with a detail popover (`desktop/plugin.js`).
   - `/routing` in any session, or `hermes model-routing status`.
 - The meter shows `Claude 16% P+7`: the percent of the weekly quota used, then the headroom against the weekly pace line. Minus means over pace. The dot colour always comes with this text.
+- Antigravity is display-only. The official `agy --print /usage` command reports each model group's own remaining fraction. The chip is the lowest weekly group, labeled with that group, not an account total. It has no pace and does not change the latch or on-demand routing.
 - `POST /api/plugins/model-routing/refresh` reads every provider immediately. It runs at most once a minute.
 - Nothing changes which model a session uses yet.
 

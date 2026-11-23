@@ -6,9 +6,11 @@ small ``history.jsonl`` beside it (one line per sample, no prompt text, capped a
 from __future__ import annotations
 
 import json
+import math
 import os
+import re
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -27,6 +29,11 @@ SUBSCRIPTIONS: dict[str, dict[str, str]] = {
     "codex": {"name": "ChatGPT", "plan": "Pro Lite", "provider": "openai-codex", "model": "gpt-6.1-sol"},
     "supergrok": {"name": "SuperGrok", "plan": "Heavy", "provider": "xai-oauth", "model": "grok-4.7"},
 }
+
+# Antigravity reset times move forward even when a bucket is unused, so a pace line would be
+# invented. The meter shows the reading; the latch, pick and on-demand tier never see it.
+DISPLAY_ONLY = frozenset({"agy"})
+DISPLAY_NAMES = {"agy": "Antigravity"}
 
 
 def data_dir() -> Path:
@@ -93,9 +100,10 @@ def collect(*, now: Optional[datetime] = None, read: Optional[dict[str, Callable
     orr = (read_openrouter or readers.read_openrouter)()
     if orr.get("status") != "ok" and (prev.get("openrouter") or {}).get("observed_at"):
         orr = {**prev["openrouter"], "status": "failed", "error": orr.get("error")}
-    now = now or datetime.now(timezone.utc)
-    scores = {k: pace.assess(v, now, cfg) for k, v in subs.items()}
-    observed = {k: v.get("observed_at") for k, v in subs.items() if v.get("status") == "ok"}
+    now = now or datetime.now(UTC)
+    scored = {k: v for k, v in subs.items() if k not in DISPLAY_ONLY}
+    scores = {k: pace.assess(v, now, cfg) for k, v in scored.items()}
+    observed = {k: v.get("observed_at") for k, v in scored.items() if v.get("status") == "ok"}
     latch = pace.update_latch(prev.get("latch") or {}, scores, observed, cfg)
     on_demand, od_reason = pace.update_on_demand(bool((prev.get("on_demand") or {}).get("active")), scores, cfg)
     unavailable = sorted(k for k, s in scores.items() if not s["fresh"])
@@ -153,10 +161,146 @@ def _fmt_reset(iso: Optional[str]) -> str:
     return dt.strftime("%a %-I:%M %p")
 
 
-def cards(state: dict[str, Any]) -> list[dict[str, Any]]:
-    """One card per subscription, most over pace first (sorted by used minus pace)."""
+def _remaining_percent(fraction: Any) -> Optional[float]:
+    """Percent remaining. Rounding must not turn a positive fraction into zero."""
+    if isinstance(fraction, bool) or not isinstance(fraction, (int, float)):
+        return None
+    # 2**1024 and larger cannot become a finite float. Reject them before conversion.
+    if isinstance(fraction, int) and fraction.bit_length() > 1024:
+        return None
+    try:
+        number = float(fraction)
+    except OverflowError:
+        return None
+    if not math.isfinite(number):
+        return None
+    percent = number * 100.0
+    if not math.isfinite(percent):
+        return None
+    if percent > 0.0 and round(percent, 6) == 0.0:
+        return percent
+    return round(percent, 6)
+
+
+def agy_group_tag(name: str) -> str:
+    """Compact chip tag for one model group. Argon is checked before Gemini."""
+    low = name.casefold()
+    if "argon" in low:
+        return "Ar"
+    if "claude" in low or "gpt" in low:
+        return "CG"
+    if "gemini" in low:
+        return "G"
+    parts = [part for part in re.split(r"[^A-Za-z0-9]+", name) if part]
+    if len(parts) >= 2:
+        return "".join(part[0] for part in parts[:3]).upper()
+    if parts:
+        return parts[0][:2]
+    return "?"
+
+
+def _window_word(window: Any) -> str:
+    if window == "weekly":
+        return "weekly"
+    if window == "5h":
+        return "5-hour"
+    if isinstance(window, str) and window:
+        return window
+    return "window"
+
+
+def format_remaining(percent: Any) -> str:
+    if isinstance(percent, bool) or not isinstance(percent, (int, float)):
+        return "–"
+    number = float(percent)
+    if not math.isfinite(number):
+        return "–"
+    if 0 < number < 1:
+        return "<1%"
+    return f"{round(number):.0f}%"
+
+
+def _agy_bucket_card(bucket: dict[str, Any]) -> dict[str, Any]:
+    reset_at = bucket.get("reset_at")
+    return {"id": bucket.get("id"), "name": bucket.get("name"), "window": bucket.get("window"),
+            "remaining_percent": _remaining_percent(bucket.get("remaining_fraction")),
+            "reset_at": reset_at, "reset_label": _fmt_reset(reset_at) if reset_at else "?"}
+
+
+def _agy_group_cards(sub: dict[str, Any]) -> list[dict[str, Any]]:
+    out = []
+    for group in sub.get("groups") or []:
+        if not isinstance(group, dict) or not group.get("name"):
+            continue
+        buckets = [_agy_bucket_card(bucket) for bucket in group.get("buckets") or [] if isinstance(bucket, dict)]
+        out.append({"name": group["name"], "tag": agy_group_tag(str(group["name"])), "buckets": buckets})
+    return out
+
+
+def _lowest_weekly(groups: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    best: Optional[dict[str, Any]] = None
+    for group in groups:
+        for bucket in group["buckets"]:
+            if bucket.get("window") != "weekly":
+                continue
+            percent = bucket.get("remaining_percent")
+            if percent is None:
+                continue
+            if best is None or percent < best["remaining_percent"]:
+                best = {"group_name": group["name"], "tag": group["tag"], "window": "weekly",
+                        "bucket_id": bucket.get("id"), "remaining_percent": percent,
+                        "reset_at": bucket.get("reset_at"), "reset_label": bucket.get("reset_label")}
+    return best
+
+
+def _agy_fresh(sub: Optional[dict[str, Any]], now: datetime, cfg: dict[str, Any]) -> tuple[bool, str]:
+    if not sub:
+        return False, "no reading"
+    observed = pace.parse_ts(sub.get("observed_at"))
+    if observed is None:
+        return False, "no reading"
+    if sub.get("status") != "ok":
+        return False, "reading failed"
+    if (now - observed).total_seconds() > cfg["stale_after_s"]:
+        return False, "reading stale"
+    return True, ""
+
+
+def agy_view(sub: Optional[dict[str, Any]], now: datetime, cfg: dict[str, Any]) -> dict[str, Any]:
+    """One display card. Stale and failed readings keep no percentage on the card."""
+    fresh, reason = _agy_fresh(sub, now, cfg)
+    groups = _agy_group_cards(sub) if fresh and sub else []
+    return {"id": "agy", "name": DISPLAY_NAMES["agy"], "plan": None, "display_only": True,
+            "used_percent": None, "pace_delta": None, "pace_used_percent": None, "reset_at": None,
+            "reset_label": None, "eligible": False, "fresh": fresh, "reason": reason,
+            "short_used_percent": None, "observed_at": sub.get("observed_at") if sub else None,
+            "picked": False, "summary": _lowest_weekly(groups) if groups else None, "groups": groups}
+
+
+def _render_agy(card: dict[str, Any]) -> list[str]:
+    if not card.get("fresh") or not card.get("groups"):
+        return [f"  Antigravity: {card.get('reason') or 'no reading'}"]
+    lines = ["  Antigravity (separate model groups, not paced):"]
+    for group in card["groups"]:
+        for bucket in group.get("buckets") or []:
+            lines.append(f"    {group['name']} {_window_word(bucket.get('window'))}: "
+                         f"{format_remaining(bucket.get('remaining_percent'))} remaining, "
+                         f"resets {bucket.get('reset_label') or '?'}")
+    summary = card.get("summary")
+    if summary:
+        lines.append(f"    Lowest weekly: {summary['group_name']} ({summary['tag']}) "
+                     f"{format_remaining(summary['remaining_percent'])} remaining. Other groups are separate.")
+    else:
+        lines.append("    No weekly group reading. Other groups are separate.")
+    return lines
+
+
+def cards(state: dict[str, Any], now: Optional[datetime] = None) -> list[dict[str, Any]]:
+    """Paced subscriptions first, then the display-only Antigravity card when state has readings."""
     out = []
     for sub_id, s in (state.get("scores") or {}).items():
+        if sub_id in DISPLAY_ONLY:
+            continue
         meta = SUBSCRIPTIONS.get(sub_id, {"name": sub_id, "plan": ""})
         reading = (state.get("subscriptions") or {}).get(sub_id) or {}
         short = next((w for w in reading.get("windows", []) if w.get("kind") == "short"), None)
@@ -172,14 +316,20 @@ def cards(state: dict[str, Any]) -> list[dict[str, Any]]:
             "picked": (state.get("pick") or {}).get("subscription") == sub_id,
         })
     out.sort(key=lambda c: (c["pace_delta"] is None, c["pace_delta"] or 0))
+    if "scores" in state or "subscriptions" in state:
+        moment = now or datetime.now(UTC)
+        out.append(agy_view((state.get("subscriptions") or {}).get("agy"), moment, pace.DEFAULTS))
     return out
 
 
-def render_text(state: dict[str, Any]) -> str:
+def render_text(state: dict[str, Any], now: Optional[datetime] = None) -> str:
     if not state:
         return "Model routing: no usage collected yet (the collector runs every 15 minutes)."
     lines = ["Subscription usage (weekly), most over pace first:"]
-    for c in cards(state):
+    for c in cards(state, now):
+        if c.get("display_only"):
+            lines.extend(_render_agy(c))
+            continue
         if c["used_percent"] is None:
             lines.append(f"  {c['name']} {c['plan']}: no reading ({c['reason']})")
             continue
