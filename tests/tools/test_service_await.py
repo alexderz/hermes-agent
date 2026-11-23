@@ -815,9 +815,19 @@ def test_notify_exit_is_admitted_once_and_hidden_when_the_owner_is_empty(request
         monkeypatch.delenv("HERMES_SESSION_ID", raising=False)
         hidden = _list_entry(session.id)
         from hermes_constants import get_hermes_home
+        from tools.process_registry_results import load_completed_results
 
         receipt = get_hermes_home() / "logs" / "process-results" / f"{session.id}.json"
-        assert hidden is None
+        # The internal list still shows the pending row. Ordinary ownerless reads do not.
+        assert hidden is not None and hidden.get("attention") == "ready", hidden
+        assert hidden.get("admission_pending") is True
+        assert hidden.get("exit_code") == 0
+        assert load_completed_results() == {}
+        assert all(row["session_id"] != session.id for row in process_registry.list_sessions())
+        assert all(
+            row["session_id"] != session.id
+            for row in process_registry.list_sessions(include_retained=True)
+        )
         assert receipt.exists()
         stored = json.loads(receipt.read_text(encoding="utf-8-sig"))
         assert stored.get("exit_code") == 0

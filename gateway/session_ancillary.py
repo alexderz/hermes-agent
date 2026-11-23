@@ -655,6 +655,13 @@ def _owned_locked(registry, keys, owners):
             if p.session_key in keys and (p.owner_task_id or p.task_id) in owners]
 
 
+def _authority_profile_dir(authority):
+    """Profile directory of the authority store, or None when the handle has none."""
+    store = getattr(authority, "persistence", None)
+    scope = getattr(store, "scope", None)
+    return getattr(scope, "profile_dir", None)
+
+
 def process_snapshot(authority, ref, agent, records):
     module = sys.modules.get('tools.process_registry')
     if module is None:
@@ -662,6 +669,7 @@ def process_snapshot(authority, ref, agent, records):
     registry = module.process_registry
     from tools.process_registry_service import (
         reconcile_service_admissions, refresh_service_sessions, service_projection,
+        snapshot_pending_services,
     )
     # Show refresh stays outside the lock. systemctl must not run while it is held.
     refresh_service_sessions(registry)
@@ -671,14 +679,11 @@ def process_snapshot(authority, ref, agent, records):
         owned = list(_owned_locked(registry, keys, owners))
     seen = {p.id for p in owned}
     try:
-        from tools.process_registry_results import load_completed_results
-        for session in load_completed_results().values():
-            if session.id in seen or not getattr(session, "admission_pending", False):
-                continue
-            if not getattr(session, "service_unit", ""):
-                continue
-            if session.session_key in keys and (session.owner_task_id or session.task_id) in owners:
-                owned.append(session)
+        target = physical_target(authority, ref)
+        targets = {item for item in (target, ref.session_id) if isinstance(item, str) and item}
+        owned.extend(snapshot_pending_services(
+            _authority_profile_dir(authority), keys, targets, seen,
+        ))
     except Exception:  # health: allow BLE001 -- a receipt scan must not hide the live processes already collected
         logger.warning("Could not merge pending service receipts", exc_info=True)
     rows = []
