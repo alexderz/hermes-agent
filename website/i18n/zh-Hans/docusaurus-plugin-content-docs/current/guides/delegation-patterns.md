@@ -25,7 +25,7 @@ Hermes 可以生成隔离的子代理来并行处理任务。每个子代理拥�
 - 步骤间有逻辑的机械性多步骤工作 → `execute_code`
 - 需要用户交互的任务 → 子代理无法使用 `clarify`
 - 快速文件编辑 → 直接操作
-- 必须在会话关闭或进程重启后继续运行的持久性长任务 → `cronjob` 或 `terminal(background=True, notify_on_complete=True)`。顶层委派是异步的，但仍依赖当前进程。
+- 必须在会话关闭或 Hermes 进程重启后继续的定时工作 → `cronjob`。普通的 `terminal(background=True, notify_on_complete=True)` 是本进程的原生子进程，不能作为进程重启后的持久手段。用户服务是另一种生命周期：`service="await"` 等待一个必需结果，`service="notify"` 独立运行。顶层委派是异步的，但仍依赖当前进程。
 
 ---
 
@@ -220,7 +220,7 @@ delegation:
 - **独立终端** — 每个子代理拥有独立的终端会话，具有独立的工作目录和状态
 - **无对话历史** — 子代理只能看到父代理调用 `delegate_task` 时传入的 `goal` 和 `context`
 - **默认 50 次迭代** — 对简单任务设置较低的 `max_iterations` 以节省成本
-- **非持久性** — 顶层委派会在后台运行并稍后发送结果，但仍依赖所属会话和 Hermes 进程。会话关闭、`/stop`、`/new` 或进程重启都可能取消或遗留正在执行的工作。对于必须跨越这些边界继续运行的任务，请使用 `cronjob` 或 `terminal(background=True, notify_on_complete=True)`。
+- **非持久性** — 顶层委派会在后台运行并稍后发送结果，但仍依赖所属会话和 Hermes 进程。会话关闭、`/stop`、`/new` 或进程重启都可能取消或遗留正在执行的工作。必须跨越这些边界继续的定时工作使用 `cronjob`。普通后台终端不会。`service="await"` 等待一个必需结果；`service="notify"` 在单元被接受后返回，并在之后交付一次结果。两者都是 Linux 本地用户总线上的一个临时用户单元，超时、转向或中断不会重启 worker，停止和恢复只核对已记录的 invocation。
 
 ---
 

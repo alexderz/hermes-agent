@@ -260,6 +260,12 @@ wrappers, command substitutions (`$(...)`, backticks, `<(...)`) and commands
 whose approval category would change without the `&` are still refused with
 guidance, because Hermes cannot safely tell which part should keep running.
 
+### User service
+
+`terminal(service="await")` blocks for one required result from a transient systemd user unit. `terminal(service="notify")` is independent: it returns after the unit is accepted and delivers that result once later. Omit `service` for an ordinary process. An ordinary `background=true` command, including `notify_on_complete`, is a native child and is not durable across a Hermes process restart. `persist_on_release` can outlive session end, `/new`, and cleanup, not host exit. Scheduled work that must survive a process restart is `cronjob_manage`.
+
+The service path is Linux, the local terminal backend, and a local user bus. It is not a hosted scope, and it cannot be combined with `pty` or passed through `execute_code`. A timeout, steer, or interrupt of `await` returns unresolved, keeps the same invocation, and does not restart the worker. Stop signals the unit only when the live invocation and boot id match the recorded ones. An empty or mismatched invocation is not a stop. Recovery reattaches that invocation and does not run the command again. A host reboot does not restart the worker.
+
 ### Repeated waits on a quiet process
 
 When the agent calls `process(action="wait")` or `process(action="poll")` twice in a row on a

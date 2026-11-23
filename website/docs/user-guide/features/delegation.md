@@ -733,10 +733,11 @@ Top-level model-facing `delegate_task` calls run in the background automatically
 - A child that completed before restart but whose result was not delivered is restored and routed back through the owning session's normal checks.
 - Stopped children return a structured result (`status="interrupted"`, `exit_reason="interrupted"`) whose `summary` is the last text the child produced before the stop (the interrupt placeholder moves to `error`). The stop recurses down the spawn tree — an orchestrator child's synchronous workers are interrupted first and their partial results roll up into the child's own interrupted result — and each background unit's result re-enters the conversation right away as its normal completion notice (`Subagent Task Interrupted: …`), so nothing waits for the child to exhaust its budget.
 
-For **durable execution** that must survive session closure or process restart, use:
+For **scheduled work** that must survive session closure or a Hermes process restart, use `cronjob` (action=`create`). It schedules a separate agent run and is immune to parent-turn interrupts.
 
-- `cronjob` (action=`create`) — schedules a separate agent run; immune to parent-turn interrupts.
-- `terminal(background=True, notify_on_complete=True)` — long-running shell commands that keep running while the agent does other things.
+An ordinary `terminal(background=True, notify_on_complete=True)` is a native child. It keeps running while the agent does other work in this process. It is not durable across a Hermes process restart. `persist_on_release` can outlive session end, `/new`, and cleanup, not host exit.
+
+`terminal(service="await")` blocks for one required result from a transient Linux user service. `terminal(service="notify")` is the independent form: it returns after the unit is accepted, and the result is delivered once. A timeout, steer, or interrupt leaves an await unresolved and does not restart the worker. Stop and recovery match the recorded invocation and do not run the command again. See [User services](../../guides/delegation-patterns.md#user-services).
 :::
 
 ## Key Properties

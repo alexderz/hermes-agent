@@ -25,7 +25,7 @@ For the full feature reference, see [Subagent Delegation](../user-guide/features
 - Mechanical multi-step work with logic between steps → `execute_code`
 - Tasks needing user interaction → subagents can't use `clarify`
 - Quick file edits → do them directly
-- Durable long-running work that must survive session closure or process restart → `cronjob_manage` or `terminal(background=True, notify_on_complete=True)`. Top-level delegation is asynchronous but still process-local.
+- Scheduled work that must survive session closure or a Hermes process restart → `cronjob_manage`. An ordinary `terminal(background=True, notify_on_complete=True)` is a native child of this process and is not durable across a process restart. A user service is a different lifecycle: `service="await"` waits for one required result, and `service="notify"` runs independently. Top-level delegation is asynchronous but still process-local.
 
 ---
 
@@ -221,9 +221,17 @@ delegation:
 - **Separate terminals** — each subagent gets its own terminal session with separate working directory and state
 - **No conversation history** — subagents see only the `goal` and `context` the parent agent passes when calling `delegate_task`
 - **Default 250 iterations** — set `delegation.max_iterations` lower in `config.yaml` for fleets of simple tasks to save cost
-- **Not durable** — top-level delegation runs in the background and posts its result back later, but it remains tied to the owning session and Hermes process. Session closure, `/stop`, `/new`, or a process restart can cancel or strand in-progress work. Use `cronjob_manage` or `terminal(background=True, notify_on_complete=True)` for work that must survive those boundaries.
+- **Not durable** — top-level delegation runs in the background and posts its result back later, but it remains tied to the owning session and Hermes process. Session closure, `/stop`, `/new`, or a process restart can cancel or strand in-progress work. Scheduled work that must survive those boundaries is `cronjob_manage`. An ordinary background terminal does not. See [User services](#user-services).
 
 ---
+
+## User services {#user-services}
+
+`terminal(service="await")` and `terminal(service="notify")` each start one transient systemd user unit. Omit `service` for an ordinary process. `await` is a required-result dependency: the call blocks until the worker exits. `notify` is independent: the call returns after the unit is accepted, and that result is delivered once later.
+
+This path is Linux, the local terminal backend, and a local user bus. It is not a hosted scope, and it cannot be combined with `pty` or passed through `execute_code`. `persist_on_release` on an ordinary background process can outlive session end, `/new`, and other cleanup. It does not survive host exit, and `notify_on_complete` is not durable across a Hermes process restart.
+
+A timeout, steer, or interrupt of `await` returns unresolved. The same invocation keeps running, and the worker is not restarted. Stop signals the unit only when the live invocation and boot id match the recorded ones. An empty or mismatched live invocation is not a stop. Recovery reattaches that invocation and does not start another unit or run the command again. A host reboot does not restart the worker. A session-owned service outlives gateway shutdown, a turn timeout, and kill-all. A delegated child that still owns the service is stopped when that child ends. An explicit stop still reaches a matching invocation.
 
 ## Tips
 

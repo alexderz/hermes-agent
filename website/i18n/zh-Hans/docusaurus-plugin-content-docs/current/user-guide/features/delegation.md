@@ -297,10 +297,11 @@ delegate_task(
 - 如果子智能体在重启前已经完成、但结果尚未交付，该完成事件会被恢复，并重新经过所属会话的正常路由检查。
 - 被取消的子智能体会返回结构化结果（`status="interrupted"`，`exit_reason="interrupted"`），但由于父智能体也被中断，该结果通常不会出现在用户可见的回复中。
 
-对于必须在会话关闭或进程重启后继续的**持久执行**，请使用：
+必须在会话关闭或 Hermes 进程重启后继续的**定时工作**，使用 `cronjob`（action=`create`）。它调度独立的智能体运行，不受父智能体轮次中断影响。
 
-- `cronjob`（action=`create`）——调度独立的智能体运行；不受父智能体轮次中断影响。
-- `terminal(background=True, notify_on_complete=True)`——长时间运行的 shell 命令，在智能体执行其他操作时持续运行。
+普通的 `terminal(background=True, notify_on_complete=True)` 是原生子进程。它可以在智能体执行其他操作时继续运行，但不能作为 Hermes 进程重启后的持久手段。
+
+`terminal(service="await")` 会阻塞等待一个临时 Linux 用户服务的必需结果。`terminal(service="notify")` 是独立形式：单元被接受后即返回，结果稍后交付一次。超时、转向或中断会使 await 保持未完成，并且不会重启 worker。停止和恢复只匹配已记录的 invocation，不会再次运行命令。
 :::
 
 ## 关键特性

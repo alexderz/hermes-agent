@@ -901,10 +901,18 @@ The gateway runs as a long-lived process, managed via:
 ## Background process notifications
 
 `terminal(background=true, notify_on_complete=true)` starts a gateway watcher that detects
-completion and triggers a new agent turn. Verbosity: `display.background_process_notifications`
+completion and triggers a new agent turn. That process is a native child. It is not durable
+across a Hermes process restart. Verbosity: `display.background_process_notifications`
 (or `HERMES_BACKGROUND_NOTIFICATIONS`): `concise` (default; one line, failures append an output
 tail), `all` (running updates + final raw output), `result` (final raw output only), `error`
 (final raw output only on non-zero exit), `off`.
+
+`terminal(service="notify")` delivers its one result through this same completion path after
+its transient user unit exits. `service="await"` does not arm that notification: the call itself
+waits for the required result. Both modes are one Linux local-user-bus unit, not a native child.
+The unit outlives gateway shutdown. A timeout, steer, or interrupt of an await leaves that
+invocation unresolved and does not restart the worker. Stop and recovery act only when the live
+invocation and boot id match the recorded ones, and recovery does not run the command again.
 
 The watcher is armed on the gateway loop at registration time (`terminal_tool_background.py::
 _register_completion_watcher` → `run_notifications.py::arm_process_watcher`); `pending_watchers`
