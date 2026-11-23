@@ -82,11 +82,19 @@ def _live_work_owners():
     with _active_subagents_lock:
         owners = [("subagents", (str(r.get("owner_agent_session_id") or ""), ""))
                   for r in _active_subagents.values() if not r.get("depth")]
-    for entry in process_registry.list_sessions():
+    for entry in process_registry.list_sessions(include_service_receipts=True):
         proc = process_registry.get(entry.get("session_id"))
-        if proc is not None and not getattr(proc, "exited", True):
-            owners.append(("background", (str(getattr(proc, "parent_session_id", "") or ""),
-                                          str(getattr(proc, "session_key", "") or ""))))
+        running = proc is not None and not getattr(proc, "exited", True)
+        ready = entry.get("attention") == "ready"
+        if not running and not ready:
+            continue
+        if proc is not None:
+            parent = str(getattr(proc, "parent_session_id", "") or "")
+            route = str(getattr(proc, "session_key", "") or "")
+        else:
+            parent = str(entry.get("parent_session_id") or "")
+            route = str(entry.get("session_key") or "")
+        owners.append(("background", (parent, route)))
     return owners
 
 

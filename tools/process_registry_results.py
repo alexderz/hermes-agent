@@ -24,38 +24,71 @@ _RESULT_FIELDS = (
     "parent_session_id", "started_at", "exit_code", "completion_reason",
     "termination_source", "notify_on_complete",
 )
+# Extras. Old receipts omit them; load uses these defaults and must not KeyError.
+_OPTIONAL_RESULT_FIELDS = {
+    "service_unit": "",
+    "service_invocation_id": "",
+    "service_boot_id": "",
+    "service_mode": "",
+    "tool_call_id": "",
+    "service_stop_intent": False,
+    "admission_pending": False,
+    "watcher_platform": "",
+    "watcher_chat_id": "",
+    "watcher_user_id": "",
+    "watcher_user_name": "",
+    "watcher_thread_id": "",
+    "watcher_message_id": "",
+    "watcher_interval": 0,
+}
+
+
+def _receipt_pending(path) -> bool:
+    try:
+        record = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return False
+    return record.get("admission_pending") is True
 
 
 def _result_paths():
-    """Prune by completion time, not start time (jobs can take days)."""
+    """Prune settled receipts by completion time. Pending service receipts stay extra."""
     directory = get_hermes_home() / "logs" / "process-results"
     cutoff = time.time() - RESULT_RETENTION_SECONDS
+    pending = []
     retained = []
     for path in directory.glob("proc_*.json"):
         try:
             modified = path.stat().st_mtime
-            if modified < cutoff:
-                path.unlink(missing_ok=True)
-            else:
-                retained.append((modified, path))
         except FileNotFoundError:
             continue  # Another producer pruned it.
+        if _receipt_pending(path):
+            pending.append(path)
+            continue
+        if modified < cutoff:
+            path.unlink(missing_ok=True)
+            continue
+        retained.append((modified, path))
     retained.sort(key=lambda item: (item[0], item[1].name), reverse=True)
     for _, path in retained[MAX_RETAINED_RESULTS:]:
         path.unlink(missing_ok=True)
-    return [path for _, path in retained[:MAX_RETAINED_RESULTS]]
+    settled = [path for _, path in retained[:MAX_RETAINED_RESULTS]]
+    return pending + settled
 
 
-def save_completed_result(session) -> None:
+def save_completed_result(session, *, strict: bool = False):
     """Retain *session*'s completion receipt under this profile's logs. A hosted agent's process
     has none on this host: its command and output are the tenant's, kept in the live registry only."""
     if session.sandbox_key:
-        return
+        return False if strict else None
     from agent.redact import redact_sensitive_text, redact_terminal_output
     from tools.process_registry import MAX_OUTPUT_CHARS
 
     with session._lock:
         record = {key: getattr(session, key) for key in _RESULT_FIELDS}
+        record.update({
+            key: getattr(session, key, default) for key, default in _OPTIONAL_RESULT_FIELDS.items()
+        })
         record["output"] = session.output_buffer[-MAX_OUTPUT_CHARS:]
     # Live-output opt-out must not persist raw credentials in durable receipts.
     record["output"] = redact_terminal_output(record["output"], record["command"], force=True)
@@ -70,6 +103,8 @@ def save_completed_result(session) -> None:
     except OSError:
         # Preserve live delivery on disk failure, but never silently claim durability.
         logger.warning("Could not retain completed process result %s", session.id, exc_info=True)
+        return False if strict else None
+    return True if strict else None
 
 
 def _owns_result(owner: str, parent: str | None) -> bool:
@@ -111,8 +146,10 @@ def load_completed_results(prefix: str = "") -> dict:
                 continue
             if not _owns_result(owner, record.get("parent_session_id")):
                 continue
+            optional = {key: record.get(key, default) for key, default in _OPTIONAL_RESULT_FIELDS.items()}
             session = ProcessSession(
                 **{key: record[key] for key in _RESULT_FIELDS},
+                **optional,
                 # Receipts written before processes carried a sandbox are a local activity's.
                 sandbox_key=record.get("sandbox_key", ""), exited=True, output_buffer=record["output"],
             )
@@ -121,3 +158,35 @@ def load_completed_results(prefix: str = "") -> dict:
         except (OSError, ValueError, KeyError, TypeError, *STORE_FAILURES):
             logger.debug("Skipping unreadable process result %s", path.name, exc_info=True)
     return results
+
+
+def read_session_log(registry, session_id: str, offset: int | None = None, limit: int = 200) -> dict:
+    """Read the full output log with optional pagination by lines."""
+    from tools.ansi_strip import strip_ansi
+    from tools.process_registry import _not_found
+
+    session = registry.get(session_id)
+    if session is None:
+        return _not_found(session_id)
+    with session._lock:
+        full_output = strip_ansi(session.output_buffer)
+        exited, finalizing = session.exited, registry._reader_finalizing(session)
+    lines = full_output.splitlines()
+    total_lines = len(lines)
+    # An explicit offset=0 means "start from the first line" — previously it was conflated with the
+    # default and silently returned the TAIL instead of the head (same falsy-coercion class as the
+    # wait() timeout guard; salvaged from PR #60004, credit @isheng-eqi).
+    if offset is None and limit > 0:
+        selected = lines[-limit:]
+        observed_completion_output = bool(selected) or total_lines == 0
+    else:
+        offset = offset or 0
+        selected = lines[offset:offset + limit]
+        stop = slice(offset, offset + limit).indices(total_lines)[1]
+        observed_completion_output = total_lines == 0 or (bool(selected) and stop == total_lines)
+    result = {
+        **registry._status_head(session), "output": "\n".join(selected),
+        "total_lines": total_lines, "showing": f"{len(selected)} lines"}
+    if exited and observed_completion_output and not finalizing:
+        registry._completion_consumed.add(session.id)
+    return result

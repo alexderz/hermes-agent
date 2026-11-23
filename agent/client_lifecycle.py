@@ -117,6 +117,11 @@ class ClientLifecycleMixin:
                     # user can still stop it on purpose via process_manage kill.
                     if process.get("persist_on_release"):
                         continue
+                    if process.get("service_unit") or process.get("service_mode"):
+                        from tools.process_registry_service import service_survives_stop
+                        session = process_registry.get(process["session_id"])
+                        if session is not None and service_survives_stop(session, "agent_close"):
+                            continue
                     process_registry.kill_process(
                         process["session_id"], source="agent_close", consume_output=True,
                     )

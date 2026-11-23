@@ -41,6 +41,14 @@
         "description": "With background=true: pseudo-terminal for interactive CLIs (REPLs, coding agents); drive it with process_manage write/submit. Local backend only.",
         "type": "boolean"
       },
+      "service": {
+        "description": "Run one transient user service. await blocks for the worker result. notify returns after the unit is accepted and delivers that result once later. Omit for an ordinary process.",
+        "enum": [
+          "await",
+          "notify"
+        ],
+        "type": "string"
+      },
       "timeout": {
         "description": "Max seconds (default 180, foreground max 600). Finishing early returns at once, so set it generously. Above 600s the command runs as a tracked background process with notify_on_complete=true (the result says so; do not re-run it).",
         "minimum": 1,

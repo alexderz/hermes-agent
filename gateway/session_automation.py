@@ -94,6 +94,12 @@ async def admit_process_notice(runner, authority, adapter, event, evt):
                                             'omitted': int(evt.get('omitted') or 0)}
         if evt.get('_replaces'):
             return await authority.admit_automation(adapter, event, identity, replaces=evt['_replaces'])
+    # A later recovery pass for the same completion must not schedule again, and must not
+    # conflict when the receipt text drifts. Heartbeat admission is unchanged.
+    if evt.get('type') == 'completion':
+        existing = completion_admission(runner, evt)
+        if existing is not None:
+            return existing
     if evt.get('type') != 'completion':
         return await authority.admit_automation(adapter, event, identity)
     async with _heartbeat_lock(runner):

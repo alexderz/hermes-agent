@@ -157,6 +157,10 @@ def apply_wait_poll_policy(action: str, session_id: str, result: dict) -> dict:
     session = process_registry.get(session_id)
     if session is None:
         return result
+    # Required-result waits already returned unresolved. Do not rewrite that note
+    # into "do more work" and do not promote notify_on_complete for this mode.
+    if getattr(session, "service_mode", "") == "await":
+        return result
     if action == "wait":
         running = result.get("status") == "timeout"
     elif action == "poll":

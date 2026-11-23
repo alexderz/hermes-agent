@@ -78,6 +78,28 @@ def _orphan_recovery(name: str, notices: tuple) -> tuple:
     return "none", notices[1]
 
 
+def _service_terminal_content(tool_call_id: str) -> Optional[str]:
+    """Registered service outcome for this id, or None. Does not start a unit."""
+    if not tool_call_id:
+        return None
+    from tools.process_registry_service import service_outcome_content
+    return service_outcome_content(tool_call_id)
+
+
+def _rewritten_interrupted_result(tool_result: dict[str, Any], call_names: dict[str, str]) -> dict[str, Any]:
+    """Real service outcome when this terminal id has one; otherwise the orphan notice."""
+    if not is_interrupted_tool_result(tool_result.get("content", "")):
+        return tool_result
+    name = call_names.get(str(tool_result.get("tool_call_id") or ""), "")
+    call_id = str(tool_result.get("tool_call_id") or "")
+    service_content = _service_terminal_content(call_id) if name == "terminal" else None
+    if service_content is not None:
+        kept = {key: value for key, value in tool_result.items() if key != "effect_disposition"}
+        return {**kept, "content": service_content}
+    disposition, content = _orphan_recovery(name, _INTERRUPTED_NOTICES)
+    return {**tool_result, "effect_disposition": disposition, "content": content}
+
+
 def strip_interrupted_tool_tails(agent_history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Strip interrupted assistant→tool blocks anywhere in history (a queued user message may follow one).
     Read-only blocks are dropped; blocks with a side-effecting call are KEPT with the interrupted results
@@ -98,12 +120,9 @@ def strip_interrupted_tool_tails(agent_history: list[dict[str, Any]]) -> list[di
                 if _any_side_effecting(calls):
                     call_names = {_call_id(call): _call_name(call) for call in calls}
                     cleaned.append(msg)
-                    for tool_result in tool_results:
-                        if is_interrupted_tool_result(tool_result.get("content", "")):
-                            name = call_names.get(str(tool_result.get("tool_call_id") or ""), "")
-                            disposition, content = _orphan_recovery(name, _INTERRUPTED_NOTICES)
-                            tool_result = {**tool_result, "effect_disposition": disposition, "content": content}
-                        cleaned.append(tool_result)
+                    cleaned.extend(
+                        _rewritten_interrupted_result(tool_result, call_names) for tool_result in tool_results
+                    )
                 else:
                     logger.debug("Stripping interrupted read-only assistant→tool replay block (indices %d–%d, tool_results=%d)",
                                  i, j - 1, len(tool_results))
@@ -134,11 +153,19 @@ def strip_dangling_tool_call_tail(agent_history: list[dict[str, Any]]) -> list[d
     tool_calls = last.get("tool_calls") or []
     if _any_side_effecting(tool_calls):
         recovered = list(agent_history)
+        unknown = False
         for call in tool_calls:
             name = _call_name(call) or "unknown"
+            call_id = _call_id(call)
+            service_content = _service_terminal_content(call_id) if name == "terminal" else None
+            if service_content is not None:
+                recovered.append(make_tool_result_message(name, service_content, call_id, effect_disposition=None))
+                continue
+            unknown = True
             disposition, content = _orphan_recovery(name, _DANGLING_NOTICES)
-            recovered.append(make_tool_result_message(name, content, _call_id(call), effect_disposition=disposition))
-        logger.warning("Recovered dangling side-effecting tool call(s) as UNKNOWN instead of erasing them")
+            recovered.append(make_tool_result_message(name, content, call_id, effect_disposition=disposition))
+        if unknown:
+            logger.warning("Recovered dangling side-effecting tool call(s) as UNKNOWN instead of erasing them")
         return recovered
     logger.debug("Stripping dangling unanswered read-only assistant(tool_calls) tail (%d call(s))", len(tool_calls))
     return agent_history[:-1]
