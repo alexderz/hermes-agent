@@ -1888,22 +1888,28 @@ def _start_usage_ticker(sid: str, agent, interval: float = 1.0) -> tuple[threadi
 
 
 def _session_processes(session: dict) -> list:
-    """Background processes owned by this session (registry session_key match)."""
-    # Drain completion notifications that arrived during this turn. The background poller handles
-    # between-turn delivery; this is the safety net for events that arrived mid-turn. Ownership filter
-    # (#42674, #35652): a turn finishing in session B must not consume an event that belongs to session A.
-    # The registry requeues every addressed event this session cannot positively claim; the poller then
-    # delivers it to a live owner or drops an orphan.
+    """Background processes owned by this session (registry session_key match).
+
+    Live rows come from the registry. Disk-only pending service receipts are read
+    from this session's profile home, or the process home when that is unset.
+    Another profile that reuses the same route is not scanned.
+    """
+    from hermes_constants import get_hermes_home
     from tools.process_registry import process_registry
+    from tools.process_registry_service import session_pending_entries
+
     key = str(session.get("session_key") or "")
     owned = []
-    for entry in process_registry.list_sessions(include_service_receipts=True):
+    seen = set()
+    for entry in process_registry.list_sessions():
         proc = process_registry.get(entry["session_id"])
         if proc is not None and str(getattr(proc, "session_key", "") or "") == key:
             entry["output_tail"] = (proc.output_buffer or "")[-4000:]  # the 200-char list preview is too thin for the viewer
             owned.append(entry)
-        elif entry.get("admission_pending") and str(entry.get("session_key") or "") == key:
-            entry["output_tail"] = entry.get("output_preview") or ""
+            seen.add(entry["session_id"])
+    home = session.get("profile_home") or get_hermes_home()
+    for entry in session_pending_entries(home, key):
+        if entry["session_id"] not in seen:
             owned.append(entry)
     return owned
 

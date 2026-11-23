@@ -154,7 +154,9 @@ def prepare_listed_sessions(registry, include_retained: bool, include_service_re
 
     Pending service receipts are extra. Settled receipts stay behind ``include_retained``.
     An empty owner makes ``load_completed_results`` return nothing; that is intentional.
-    The offscreen roster reads one profile's pending receipts on its own.
+    ``include_service_receipts`` is the internal process-home projection. It also
+    merges this home's pending service receipts without an owner check. It does
+    not scan other profiles, and it does not admit or enqueue.
     """
     refresh_service_sessions(registry)
     reconcile_from_registry(registry)
@@ -167,10 +169,29 @@ def prepare_listed_sessions(registry, include_retained: bool, include_service_re
     if include_retained:
         sessions.update(loaded)
     if include_service_receipts:
-        for sid, loaded_session in loaded.items():
-            if getattr(loaded_session, "admission_pending", False) and getattr(loaded_session, "service_unit", ""):
-                sessions.setdefault(sid, loaded_session)
+        _merge_service_receipt_rows(sessions, loaded)
     return sessions
+
+
+def _merge_service_receipt_rows(sessions: dict, loaded: dict) -> None:
+    """Owner-loaded pending rows, then this process home's pending receipts.
+
+    Rows already chosen for an owner win. A hosted scope adds nothing here.
+    """
+    for sid, loaded_session in loaded.items():
+        pending = getattr(loaded_session, "admission_pending", False)
+        if pending and getattr(loaded_session, "service_unit", ""):
+            sessions.setdefault(sid, loaded_session)
+    from hermes_constants import get_hermes_home
+
+    for record in load_pending_service_receipts(get_hermes_home()):
+        sid = record.get("id")
+        if not isinstance(sid, str) or sid in sessions:
+            continue
+        try:
+            sessions[sid] = _session_from_receipt(record)
+        except (KeyError, TypeError, ValueError):
+            logger.debug("Skipping unreadable pending service receipt %s", sid, exc_info=True)
 
 
 def attention_for(session) -> Optional[str]:
@@ -214,10 +235,12 @@ def service_projection(session) -> dict:
     started = getattr(session, "started_at", None)
     if started:
         fields["started_epoch"] = started
-    if getattr(session, "parent_session_id", ""):
-        fields["parent_session_id"] = session.parent_session_id
-    if getattr(session, "session_key", ""):
-        fields["session_key"] = session.session_key
+    parent = getattr(session, "parent_session_id", "")
+    if isinstance(parent, str) and parent:
+        fields["parent_session_id"] = parent
+    route = getattr(session, "session_key", "")
+    if isinstance(route, str) and route:
+        fields["session_key"] = route
     return fields
 
 
@@ -1007,22 +1030,103 @@ def _receipt_attention(record: dict) -> Optional[str]:
     ))
 
 
-def ready_pending_service_owners(profile_home) -> list[tuple[str, str, str]]:
-    """(session id, parent id, route) for ready pending receipts in one home.
+# Unconsumed service outcomes. ``killed`` has no attention value and is not an obligation.
+_OBLIGATION_ATTENTION = frozenset({"ready", "failed", "lost"})
 
-    A missing or non-string parent stays unresolved. The route is not copied
-    into the parent.
+
+def pending_service_obligation_owners(profile_home) -> list[tuple[str, str, str]]:
+    """(session id, parent id, route) for pending receipts that still need attention.
+
+    Ready, failed, and lost stay distinct. A missing or non-string parent stays
+    unresolved. The route is not copied into the parent. A hosted scope sees none.
     """
     owners = []
     for record in load_pending_service_receipts(profile_home):
         parent = record.get("parent_session_id")
         if not isinstance(parent, str) or not parent.strip():
             continue
-        if _receipt_attention(record) != "ready":
+        if _receipt_attention(record) not in _OBLIGATION_ATTENTION:
             continue
         route = record.get("session_key")
         owners.append((record["id"], parent, route if isinstance(route, str) else ""))
     return owners
+
+
+def _receipt_bound_to_session(record: dict, keys, targets) -> bool:
+    """True when the stored route or a real parent names this conversation."""
+    route = record.get("session_key")
+    if isinstance(route, str) and route in keys:
+        return True
+    parent = record.get("parent_session_id")
+    return isinstance(parent, str) and bool(parent.strip()) and parent in targets
+
+
+def snapshot_pending_services(profile_home, keys, targets, seen) -> list:
+    """Pending service sessions for one profile that belong to this conversation.
+
+    The objects are not registered. This read does not admit or enqueue. A
+    missing or non-string parent is not invented from the route.
+    """
+    found = []
+    for record in load_pending_service_receipts(profile_home):
+        sid = record.get("id")
+        if sid in seen or not _receipt_bound_to_session(record, keys, targets):
+            continue
+        try:
+            found.append(_session_from_receipt(record))
+        except (KeyError, TypeError, ValueError):
+            logger.debug("Skipping unreadable pending service receipt %s", sid, exc_info=True)
+    return found
+
+
+def session_pending_entries(profile_home, session_key: str) -> list[dict]:
+    """List rows for pending service receipts in one home with this route.
+
+    Another profile's directory is not read. The sessions are not registered.
+    """
+    if not isinstance(session_key, str) or not session_key:
+        return []
+    rows = []
+    for record in load_pending_service_receipts(profile_home):
+        if record.get("session_key") != session_key:
+            continue
+        try:
+            rows.append(_listed_receipt_entry(record))
+        except (KeyError, TypeError, ValueError):
+            logger.debug(
+                "Skipping unreadable pending service receipt %s",
+                record.get("id"), exc_info=True,
+            )
+    return rows
+
+
+def _listed_receipt_entry(record: dict) -> dict:
+    """One ``list_sessions``-shaped row. Does not register the session."""
+    import time
+
+    session = _session_from_receipt(record)
+    started = session.started_at or 0
+    preview = session.output_buffer or ""
+    entry = {
+        "session_id": session.id,
+        "command": (session.command or "")[:200],
+        "cwd": session.cwd,
+        "pid": session.pid,
+        "owner_task_id": session.owner_task_id,
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(started)) if started else "",
+        "uptime_seconds": int(time.time() - started) if started else 0,
+        "status": "exited" if session.exited else "running",
+        "output_preview": preview[-200:],
+        "output_tail": preview[-4000:],
+    }
+    if session.exited:
+        entry["exit_code"] = session.exit_code
+        entry["exited_at"] = session.exited_at or None
+        entry["completion_reason"] = session.completion_reason
+    if session.notify_on_complete:
+        entry["notify_on_complete"] = True
+    entry.update(service_projection(session))
+    return entry
 
 
 def pending_service_events() -> list[dict]:

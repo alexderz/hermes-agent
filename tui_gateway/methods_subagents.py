@@ -70,6 +70,37 @@ def _child_session_id(record):
     return child if isinstance(child, str) and child else None
 
 
+def _roster_owner(entry, proc):
+    """Parent and route for one background row.
+
+    A live process keeps the route fallback. A disk receipt with a missing or
+    non-string parent stays unresolved, so the route is not copied into it.
+    """
+    if proc is not None:
+        parent = str(getattr(proc, "parent_session_id", "") or "")
+        route = str(getattr(proc, "session_key", "") or "")
+        return parent, route
+    parent = entry.get("parent_session_id")
+    if not isinstance(parent, str) or not parent.strip():
+        return None
+    route = entry.get("session_key")
+    return parent, route if isinstance(route, str) else ""
+
+
+def _reads_process_home(profile_home) -> bool:
+    """True when ``profile_home`` is this process's home, so its disk rows are that home."""
+    from pathlib import Path
+
+    from hermes_constants import get_hermes_home
+
+    if profile_home is None:
+        return True
+    try:
+        return Path(profile_home).resolve() == Path(get_hermes_home()).resolve()
+    except OSError:
+        return False
+
+
 def _live_work_owners(profile_home=None):
     """``(kind, owner candidates)`` for every live top-level child and running background process in this
     process. A child names its durable conversation (``owner_agent_session_id``, the spine completion delivery
@@ -78,35 +109,37 @@ def _live_work_owners(profile_home=None):
     (``agent:main:local:dm:...``), never a stored id.
 
     ``profile_home`` is the requested profile directory. Omitted, it is this process's home.
-    Pending service receipts are read from that directory only. A receipt with no parent id
-    is not given one from its route."""
+    Pending service receipts are read from that directory only. Disk rows from the process
+    home are ignored when the requested profile is a different directory. A receipt with no
+    parent id is not given one from its route. Ready, failed, and lost stay distinct."""
     from hermes_constants import get_hermes_home
     from tools.delegate_tool_registry import _active_subagents, _active_subagents_lock
     from tools.process_registry import process_registry
-    from tools.process_registry_service import ready_pending_service_owners
+    from tools.process_registry_service import (
+        _OBLIGATION_ATTENTION, pending_service_obligation_owners,
+    )
 
     with _active_subagents_lock:
         owners = [("subagents", (str(r.get("owner_agent_session_id") or ""), ""))
                   for r in _active_subagents.values() if not r.get("depth")]
     seen = set()
+    process_home = _reads_process_home(profile_home)
     for entry in process_registry.list_sessions(include_service_receipts=True):
         session_id = entry.get("session_id")
+        proc = process_registry.get(session_id) if session_id else None
+        if proc is None and not process_home:
+            continue
         if session_id:
             seen.add(session_id)
-        proc = process_registry.get(session_id)
         running = proc is not None and not getattr(proc, "exited", True)
-        ready = entry.get("attention") == "ready"
-        if not running and not ready:
+        if not running and entry.get("attention") not in _OBLIGATION_ATTENTION:
             continue
-        if proc is not None:
-            parent = str(getattr(proc, "parent_session_id", "") or "")
-            route = str(getattr(proc, "session_key", "") or "")
-        else:
-            parent = str(entry.get("parent_session_id") or "")
-            route = str(entry.get("session_key") or "")
-        owners.append(("background", (parent, route)))
+        owner = _roster_owner(entry, proc)
+        if owner is None:
+            continue
+        owners.append(("background", owner))
     home = profile_home if profile_home is not None else get_hermes_home()
-    for session_id, parent, route in ready_pending_service_owners(home):
+    for session_id, parent, route in pending_service_obligation_owners(home):
         if session_id in seen:
             continue
         seen.add(session_id)
