@@ -1066,7 +1066,21 @@ def test_empty_invocation_recovery_does_not_arm_notify(request, monkeypatch):
         session.service_invocation_id = ""
         session.notify_on_complete = False
         session.watcher_interval = 0
+        # Launch already stored an invocation. A blank row must not replace
+        # that complete identity, so remove it and let the strict checkpoint
+        # write the pre-invocation memory this recovery reads.
+        path = _checkpoint_path()
+        prior = json.loads(path.read_text(encoding="utf-8-sig"))
+        path.write_text(
+            json.dumps([item for item in prior if item.get("session_id") != session.id]),
+            encoding="utf-8",
+        )
         assert process_registry._write_checkpoint(strict=True) is True
+        written = next(
+            item for item in json.loads(path.read_text(encoding="utf-8-sig"))
+            if item.get("session_id") == session.id
+        )
+        assert written.get("service_invocation_id") == ""
         process_registry._running.pop(session.id, None)
         fresh = ProcessRegistry()
         import tools.process_registry_service as service_mod
@@ -1732,6 +1746,130 @@ def test_two_registries_adopt_the_shared_stop_outcome(monkeypatch):
             worker_a.join(8)
         if worker_b.is_alive() or worker_b.ident is not None:
             worker_b.join(8)
+        receipt_path.unlink(missing_ok=True)
+        if original is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_bytes(original)
+
+
+@pytest.mark.parametrize("boundary", ["durable_stop", "removed_row"])
+def test_blank_invocation_checkpoint_keeps_a_later_identity(monkeypatch, boundary):
+    """One interpreter, two registries, one pre-invocation launch row.
+
+    Not two OS processes and not an exactly-once claim. The row is the
+    strict checkpoint a launch writes before the unit has an invocation.
+    B recovers while the live InvocationID is empty and stays running with
+    that empty stored invocation. A then adopts the live invocation through
+    refresh. ``durable_stop`` checks B's checkpoint after A's stop bit is
+    stored. ``removed_row`` checks B's checkpoint after A's real stop has
+    committed killed and removed the row. Show and signal are stubs.
+    """
+    import tools.process_registry_service as service_mod
+    from hermes_constants import get_hermes_home
+    from tools.process_registry import ProcessRegistry, ProcessSession, _checkpoint_path
+    from tools.process_registry_service import (
+        _checkpoint_rows, read_boot_id, refresh_service_session,
+    )
+
+    session_id = "proc_incstop1" if boundary == "durable_stop" else "proc_incrow1"
+    unit = f"hermes-bg-{session_id}.service"
+    invocation = "inv-inc-preserve"
+    boot = read_boot_id()
+    path = _checkpoint_path()
+    original = path.read_bytes() if path.exists() else None
+    phase = {"live": "", "exited": False}
+    durable = threading.Event()
+    allow_stop = threading.Event()
+    paused = {"stop": False}
+    errors = []
+
+    def show(queried):
+        if queried != unit:
+            return None
+        exited = phase["exited"]
+        return {
+            "LoadState": "loaded", "Id": unit, "InvocationID": phase["live"],
+            "SubState": "exited" if exited else "running",
+            "Result": "success", "ExecMainCode": "1" if exited else "0",
+            "ExecMainStatus": "0",
+            "ActiveState": "inactive" if exited else "active", "NRestarts": "0",
+        }
+
+    def run(argv, **_kwargs):
+        if unit in argv and any(part == "stop" for part in argv):
+            phase["exited"] = True
+            if boundary == "durable_stop" and not paused["stop"]:
+                paused["stop"] = True
+                durable.set()
+                assert allow_stop.wait(8), "stop was not released"
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(service_mod, "systemctl_show", show)
+    monkeypatch.setattr(service_mod, "_run", run)
+    setup = ProcessRegistry()
+    session = ProcessSession(
+        id=session_id, command="printf marker", task_id="task-inc",
+        owner_task_id="task-inc", session_key="agent:main:local:dm:inc",
+        started_at=1700000000.0, service_unit=unit, service_invocation_id="",
+        service_boot_id=boot, service_mode="notify", tool_call_id="call-inc-preserve",
+        notify_on_complete=True, service_stop_intent=False, parent_session_id="parent-inc",
+    )
+    setup._running[session.id] = session
+    assert setup._write_checkpoint(strict=True) is True
+    registry_a = ProcessRegistry()
+    registry_b = ProcessRegistry()
+    receipt_path = get_hermes_home() / "logs" / "process-results" / f"{session_id}.json"
+    worker = None
+
+    def run_stop():
+        try:
+            errors.append(("a", registry_a.kill_process(session_id)))
+        except Exception as exc:
+            errors.append(("a-exc", exc))
+
+    try:
+        assert registry_a.recover_from_checkpoint() >= 1
+        assert registry_b.recover_from_checkpoint() >= 1
+        recovered = registry_b.get(session_id)
+        assert recovered is not None
+        assert session_id in registry_b._running
+        assert recovered.service_invocation_id == ""
+        assert recovered.exited is False
+        phase["live"] = invocation
+        refresh_service_session(registry_a, registry_a.get(session_id))
+        upgraded = _checkpoint_rows()[session_id]
+        assert registry_a.get(session_id).service_invocation_id == invocation
+        assert upgraded["service_invocation_id"] == invocation, upgraded
+        assert upgraded["service_stop_intent"] is False, upgraded
+        assert registry_b.get(session_id).service_invocation_id == ""
+        if boundary == "durable_stop":
+            worker = threading.Thread(target=run_stop, name="registry-a-stop")
+            worker.start()
+            assert durable.wait(8), errors
+            stored = _checkpoint_rows()[session_id]
+            assert stored["service_invocation_id"] == invocation, stored
+            assert stored["service_stop_intent"] is True, stored
+            assert registry_b._write_checkpoint(strict=True) is True
+            kept = _checkpoint_rows()[session_id]
+            assert kept["service_invocation_id"] == invocation, kept
+            assert kept["service_stop_intent"] is True, kept
+        else:
+            result = registry_a.kill_process(session_id)
+            assert result.get("status") == "killed", result
+            assert result.get("exit_code") == -15, result
+            committed = json.loads(receipt_path.read_text(encoding="utf-8-sig"))
+            assert committed["exit_code"] == -15, committed
+            assert committed["completion_reason"] == "killed", committed
+            assert session_id not in _checkpoint_rows(), _checkpoint_rows()
+            assert registry_b._write_checkpoint(strict=True) is True
+            assert session_id not in _checkpoint_rows(), _checkpoint_rows()
+            kept = json.loads(receipt_path.read_text(encoding="utf-8-sig"))
+            assert kept["exit_code"] == -15 and kept["completion_reason"] == "killed", kept
+    finally:
+        allow_stop.set()
+        if worker is not None:
+            worker.join(8)
         receipt_path.unlink(missing_ok=True)
         if original is None:
             path.unlink(missing_ok=True)

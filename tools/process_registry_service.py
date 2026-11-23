@@ -744,13 +744,18 @@ def _preserve_one_service_row(entry, disk_by_id: dict):
             kept = dict(entry)
             kept["service_stop_intent"] = True
             return kept
+        # A blank invocation is not an identity. It must not replace a stored
+        # launch or a durable stop. An incomplete disk row with stop false is
+        # still the pre-invocation handshake, so a complete memory entry upgrades it.
+        if relation == "incomplete" and (
+            service_identity(disk) is not None or disk.get("service_stop_intent") is True
+        ):
+            return disk
         return entry
     session_id = entry.get("session_id")
     receipt = _read_receipt(session_id) if isinstance(session_id, str) else None
-    if (
-        isinstance(receipt, dict)
-        and _identity_relation(entry, receipt) == "match"
-        and _has_outcome(receipt)
+    if isinstance(receipt, dict) and _has_outcome(receipt) and (
+        _identity_relation(entry, receipt) == "match" or service_identity(entry) is None
     ):
         return None
     return entry
