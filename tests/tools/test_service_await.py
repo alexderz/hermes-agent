@@ -1442,15 +1442,17 @@ def test_lagging_checkpoint_without_stop_intent_does_not_drop_the_receipt(monkey
 
 
 def test_stale_exit0_writer_cannot_regress_a_committed_stop(monkeypatch):
-    """Two finishers, one Stop. The exit-0 writer pauses before its disk write.
+    """One writer thread and one Stop thread share one session lock.
 
-    Stop checkpoints intent, and a second matching show commits killed/-15 and
-    drops the checkpoint row. Releasing the stale writer must not leave a
-    success receipt or a pending success event.
+    The spy may set an event. It must not call Stop. A non-blocking acquire
+    tells which arm this build is in. The wait, when there is one, stays
+    outside the lock. A timeout means the fixture is wedged.
 
-    UNFIXED PRODUCT DEFECT if this fails: ``_finish_exit`` writes the frozen
-    receipt after releasing the session condition, then returns when it sees
-    ``session.exited`` without restoring the killed receipt.
+    section_owned: the exit-0 write already holds the session condition, so
+    completion marks exit 0 and releases before Stop's first wait. Stop does
+    not signal. outside: today's write is outside the condition. Stop may
+    return killed, and the joined receipt must still be killed after the
+    stale exit-0 write. Either arm, memory and the receipt match.
     """
     import tools.process_registry_results as results
     import tools.process_registry_service as service_mod
@@ -1475,28 +1477,43 @@ def test_stale_exit0_writer_cannot_regress_a_committed_stop(monkeypatch):
         "ActiveState": "inactive", "NRestarts": "0",
     }
     monkeypatch.setattr(service_mod, "systemctl_show", lambda queried: show if queried == unit else None)
+    stops = []
 
     def _no_systemctl(argv, **_kwargs):
         assert unit in argv, argv
+        if any(part == "stop" for part in argv):
+            stops.append(list(argv))
         return subprocess.CompletedProcess(argv, 0, "", "")
 
     monkeypatch.setattr(service_mod, "_run", _no_systemctl)
     real_write = results.write_frozen_result
     entered = threading.Event()
     release = threading.Event()
-    seen = {"exit0": 0}
+    arm = {"decided": False, "section_owned": False, "outside": False}
 
     def paused(session_id_arg, record, *, strict=False):
-        if record.get("exit_code") == 0 and record.get("completion_reason") != "killed":
-            seen["exit0"] += 1
-            if seen["exit0"] == 1:
+        if (
+            not arm["decided"]
+            and record.get("exit_code") == 0
+            and record.get("completion_reason") != "killed"
+        ):
+            arm["decided"] = True
+            # Same thread already inside the condition: Lock.acquire is false.
+            if not session._lock.acquire(blocking=False):
+                arm["section_owned"] = True
                 entered.set()
-                if not release.wait(8):
-                    raise TimeoutError("stale exit-0 writer was not released")
+                return real_write(session_id_arg, record, strict=strict)
+            session._lock.release()
+            arm["outside"] = True
+            entered.set()
+            if not release.wait(8):
+                raise TimeoutError("stale exit-0 writer was not released")
         return real_write(session_id_arg, record, strict=strict)
 
     monkeypatch.setattr(results, "write_frozen_result", paused)
     errors = []
+    observed_stop = {}
+    stop_done = threading.Event()
 
     def finish():
         try:
@@ -1504,41 +1521,219 @@ def test_stale_exit0_writer_cannot_regress_a_committed_stop(monkeypatch):
         except Exception as exc:
             errors.append(("finish-exc", exc))
 
+    def stop():
+        try:
+            observed_stop["result"] = registry.kill_process(session.id)
+        except Exception as exc:
+            errors.append(("stop-exc", exc))
+        finally:
+            stop_done.set()
+
     worker = threading.Thread(target=finish, name="stale-exit0-writer")
+    stopper = threading.Thread(target=stop, name="stale-exit0-stop")
     worker.start()
     try:
         assert entered.wait(5), errors
-        stopped = registry.kill_process(session.id)
-        assert stopped.get("status") == "killed", stopped
-        assert session.exit_code == -15, (session.exit_code, session.completion_reason, errors)
-        assert session.completion_reason == "killed"
-        from tools.process_registry_service import _checkpoint_rows
-        assert session.id not in _checkpoint_rows(), _checkpoint_rows()
+        stopper.start()
+        assert stop_done.wait(8), (errors, arm)
     finally:
         release.set()
+        stopper.join(8)
         worker.join(8)
-    assert not worker.is_alive()
+    assert not worker.is_alive() and not stopper.is_alive()
     assert not any(isinstance(item[1], Exception) for item in errors), errors
+    stopped = observed_stop.get("result") or {}
     from hermes_constants import get_hermes_home
     receipt_path = get_hermes_home() / "logs" / "process-results" / f"{session.id}.json"
     stored = json.loads(receipt_path.read_text(encoding="utf-8-sig"))
     events = [item for item in pending_service_events() if item.get("session_id") == session.id]
     observed = {
+        "arm": dict(arm),
+        "stop": stopped.get("status"),
+        "memory_exit": session.exit_code,
+        "memory_reason": session.completion_reason,
         "receipt_exit": stored.get("exit_code"),
         "receipt_reason": stored.get("completion_reason"),
-        "receipt_pending": stored.get("admission_pending"),
+        "stops": stops,
         "events": [
-            {
-                "exit_code": item.get("exit_code"),
-                "completion_reason": item.get("completion_reason"),
-            }
+            {"exit_code": item.get("exit_code"), "completion_reason": item.get("completion_reason")}
             for item in events
         ],
     }
-    assert stored["exit_code"] == -15, observed
-    assert stored["completion_reason"] == "killed", observed
-    assert events, observed
-    assert all(
-        item.get("exit_code") == -15 and item.get("completion_reason") == "killed" for item in events
-    ), observed
-    receipt_path.unlink(missing_ok=True)
+    assert session.exit_code == stored["exit_code"], observed
+    assert session.completion_reason == stored["completion_reason"], observed
+    try:
+        if arm["section_owned"]:
+            assert stops == [], observed
+            assert stopped.get("status") == "already_exited", observed
+            assert stored["exit_code"] == 0, observed
+            assert stored["completion_reason"] == "exited", observed
+            assert events, observed
+            assert all(
+                item.get("exit_code") == 0 and item.get("completion_reason") == "exited"
+                for item in events
+            ), observed
+        else:
+            assert arm["outside"], observed
+            assert stored["exit_code"] == -15, observed
+            assert stored["completion_reason"] == "killed", observed
+            assert events, observed
+            assert all(
+                item.get("exit_code") == -15 and item.get("completion_reason") == "killed"
+                for item in events
+            ), observed
+    finally:
+        receipt_path.unlink(missing_ok=True)
+
+
+def test_two_registries_adopt_the_shared_stop_outcome(monkeypatch):
+    """One interpreter, two ProcessRegistry objects, one profile's files.
+
+    Not two OS processes and not an exactly-once crash claim. B is paused
+    after classify returns matching exit 0 and before its commit. A's real
+    kill writes killed/-15 and removes the row. B's stale checkpoint cannot
+    clear that stop bit, and after the commit it cannot put the running row
+    back. B then adopts killed. Show and signal are stubs for this fake name.
+    """
+    import tools.process_registry_service as service_mod
+    from hermes_constants import get_hermes_home
+    from tools.process_registry import ProcessRegistry, ProcessSession, _checkpoint_path
+    from tools.process_registry_service import (
+        _checkpoint_rows, pending_service_events, read_boot_id, refresh_service_session,
+    )
+
+    session_id = "proc_shareauth01"
+    unit = f"hermes-bg-{session_id}.service"
+    invocation = "inv-share-auth"
+    boot = read_boot_id()
+    path = _checkpoint_path()
+    original = path.read_bytes() if path.exists() else None
+    phase = {"exit0": False}
+    classified = threading.Event()
+    release_b = threading.Event()
+    durable = threading.Event()
+    allow_stop = threading.Event()
+    paused = {"finish": False, "stop": False}
+    errors = []
+
+    def show(queried):
+        if queried != unit:
+            return None
+        sub = "exited" if phase["exit0"] else "running"
+        active = "inactive" if phase["exit0"] else "active"
+        code = "1" if phase["exit0"] else "0"
+        return {
+            "LoadState": "loaded", "Id": unit, "InvocationID": invocation, "SubState": sub,
+            "Result": "success", "ExecMainCode": code, "ExecMainStatus": "0",
+            "ActiveState": active, "NRestarts": "0",
+        }
+
+    def run(argv, **_kwargs):
+        if unit in argv and any(part == "stop" for part in argv) and not paused["stop"]:
+            paused["stop"] = True
+            durable.set()
+            assert allow_stop.wait(8), "stop was not released"
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(service_mod, "systemctl_show", show)
+    monkeypatch.setattr(service_mod, "_run", run)
+    real_finish = service_mod._finish_exit
+
+    def wrapped_finish(registry, session, code, reason, source, *, publish=True):
+        if (
+            registry is registry_b
+            and code == 0
+            and reason == "exited"
+            and not paused["finish"]
+        ):
+            paused["finish"] = True
+            classified.set()
+            assert release_b.wait(8), "registry B was not released"
+        return real_finish(registry, session, code, reason, source, publish=publish)
+
+    monkeypatch.setattr(service_mod, "_finish_exit", wrapped_finish)
+    setup = ProcessRegistry()
+    session = ProcessSession(
+        id=session_id, command="printf marker", task_id="task-share",
+        owner_task_id="task-share", session_key="agent:main:local:dm:share",
+        started_at=1700000000.0, service_unit=unit, service_invocation_id=invocation,
+        service_boot_id=boot, service_mode="notify", tool_call_id="call-share-auth",
+        notify_on_complete=True, output_buffer="marker\n", parent_session_id="parent-share",
+    )
+    setup._running[session.id] = session
+    assert setup._write_checkpoint(strict=True) is True
+    registry_a = ProcessRegistry()
+    registry_b = ProcessRegistry()
+    receipt_path = get_hermes_home() / "logs" / "process-results" / f"{session_id}.json"
+
+    def run_b():
+        try:
+            refresh_service_session(registry_b, registry_b.get(session_id))
+        except Exception as exc:
+            errors.append(("b-exc", exc))
+
+    def run_a():
+        try:
+            errors.append(("a", registry_a.kill_process(session_id)))
+        except Exception as exc:
+            errors.append(("a-exc", exc))
+
+    worker_b = threading.Thread(target=run_b, name="registry-b-refresh")
+    worker_a = threading.Thread(target=run_a, name="registry-a-stop")
+    try:
+        assert registry_a.recover_from_checkpoint() >= 1
+        assert registry_b.recover_from_checkpoint() >= 1
+        assert registry_a.get(session_id).service_stop_intent is False
+        assert registry_b.get(session_id).exited is False
+        phase["exit0"] = True
+        worker_b.start()
+        assert classified.wait(8), errors
+        worker_a.start()
+        assert durable.wait(8), errors
+        assert _checkpoint_rows()[session_id]["service_stop_intent"] is True
+        assert registry_b._write_checkpoint(strict=True) is True
+        assert _checkpoint_rows()[session_id]["service_stop_intent"] is True
+        allow_stop.set()
+        worker_a.join(15)
+        stored = json.loads(receipt_path.read_text(encoding="utf-8-sig"))
+        assert stored["exit_code"] == -15, stored
+        assert stored["completion_reason"] == "killed", stored
+        assert session_id not in _checkpoint_rows(), _checkpoint_rows()
+        assert registry_b._write_checkpoint(strict=True) is True
+        assert session_id not in _checkpoint_rows(), _checkpoint_rows()
+        kept = json.loads(receipt_path.read_text(encoding="utf-8-sig"))
+        assert kept["exit_code"] == -15 and kept["completion_reason"] == "killed", kept
+        release_b.set()
+        worker_b.join(8)
+        assert not worker_a.is_alive() and not worker_b.is_alive()
+        assert not any(isinstance(item[1], Exception) for item in errors), errors
+        adopted = registry_b.get(session_id)
+        final = json.loads(receipt_path.read_text(encoding="utf-8-sig"))
+        events = [item for item in pending_service_events() if item.get("session_id") == session_id]
+        observed = {
+            "memory_exit": adopted.exit_code,
+            "memory_reason": adopted.completion_reason,
+            "receipt_exit": final.get("exit_code"),
+            "receipt_reason": final.get("completion_reason"),
+            "events": [
+                {"exit_code": item.get("exit_code"), "completion_reason": item.get("completion_reason")}
+                for item in events
+            ],
+        }
+        assert adopted.exit_code == -15, observed
+        assert adopted.completion_reason == "killed", observed
+        assert final["exit_code"] == -15 and final["completion_reason"] == "killed", observed
+        assert all(item.get("exit_code") != 0 for item in events), observed
+        assert session_id not in _checkpoint_rows()
+    finally:
+        allow_stop.set()
+        release_b.set()
+        if worker_a.is_alive() or worker_a.ident is not None:
+            worker_a.join(8)
+        if worker_b.is_alive() or worker_b.ident is not None:
+            worker_b.join(8)
+        receipt_path.unlink(missing_ok=True)
+        if original is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_bytes(original)

@@ -81,6 +81,30 @@ class TestCompletionQueue:
         completion = registry.completion_queue.get_nowait()
         assert completion["exit_code"] == -15  # from the first (kill) call
 
+    def test_completion_event_copies_parent_session_id(self, registry):
+        """The queued completion carries the session's parent, not a parent inferred from the route."""
+        s = _make_session(notify_on_complete=True, output="done", exit_code=0)
+        s.exited = True
+        s.exit_code = 0
+        s.completion_reason = "exited"
+        s.parent_session_id = "parent-owner-1"
+        s.session_key = "agent:main:discord:dm:42"
+        s.owner_task_id = "task-owner"
+        registry._running[s.id] = s
+        with patch.object(registry, "_write_checkpoint"):
+            registry._move_to_finished(s)
+        event = registry.completion_queue.get_nowait()
+        assert event["type"] == "completion"
+        assert event["session_id"] == s.id
+        assert event["parent_session_id"] == "parent-owner-1"
+        assert event["session_key"] == "agent:main:discord:dm:42"
+        assert event["owner_task_id"] == "task-owner"
+        assert event["command"] == s.command
+        assert event["exit_code"] == 0
+        assert event["started_at"] == s.started_at
+        assert "platform" not in event
+        assert "chat_id" not in event
+
 
     def test_output_truncated_to_2000(self, registry):
         """Long output is truncated to last 2000 chars."""

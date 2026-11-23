@@ -485,8 +485,302 @@ def _restore_undecided(session) -> None:
     session.termination_source = ""
 
 
+def service_identity(record: dict) -> Optional[tuple]:
+    """Unit, boot, invocation, and tool id. An empty invocation is not an identity."""
+    if not isinstance(record, dict):
+        return None
+    unit = str(record.get("service_unit") or "")
+    invocation = str(record.get("service_invocation_id") or "")
+    if not unit or not invocation:
+        return None
+    return (
+        unit,
+        str(record.get("service_boot_id") or ""),
+        invocation,
+        str(record.get("tool_call_id") or ""),
+    )
+
+
+def _field_conflict(left: dict, right: dict, key: str) -> bool:
+    """Both sides recorded a value and they differ. A blank does not conflict."""
+    owned = str(left.get(key) or "")
+    other = str(right.get(key) or "")
+    return bool(owned and other and owned != other)
+
+
+def _identity_relation(left: dict, right: dict) -> str:
+    """Match unit and invocation. Boot and tool conflict only when both are set.
+
+    An empty invocation is not an identity. A memory invocation patched away
+    from the checkpoint row is a different launch: do not adopt that row.
+    """
+    if not isinstance(left, dict) or not isinstance(right, dict):
+        return "incomplete"
+    if service_identity(left) is None or service_identity(right) is None:
+        return "incomplete"
+    if str(left.get("service_unit") or "") != str(right.get("service_unit") or ""):
+        return "different"
+    if str(left.get("service_invocation_id") or "") != str(right.get("service_invocation_id") or ""):
+        return "different"
+    if _field_conflict(left, right, "service_boot_id") or _field_conflict(left, right, "tool_call_id"):
+        return "different"
+    return "match"
+
+
+def _has_outcome(record: dict) -> bool:
+    if not isinstance(record, dict) or "exit_code" not in record:
+        return False
+    if record.get("exit_code") is not None:
+        return True
+    return record.get("completion_reason") in {"lost", "killed", "exited"}
+
+
+def _outcome_tuple(record: dict) -> tuple:
+    return (
+        record.get("exit_code"),
+        record.get("completion_reason") or "",
+        record.get("termination_source") or "",
+    )
+
+
+def _read_json_list(path: Path) -> list:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return []
+    return data if isinstance(data, list) else []
+
+
+def _read_receipt(session_id: str, home=None) -> Optional[dict]:
+    from hermes_constants import get_hermes_home
+
+    root = get_hermes_home() if home is None else Path(home)
+    path = Path(root) / "logs" / "process-results" / f"{session_id}.json"
+    try:
+        record = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(record, dict) or record.get("id") != session_id:
+        return None
+    return record
+
+
+def _profile_file_lock():
+    """The existing processes.json lock. A second open of it deadlocks flock."""
+    from hermes_cli.active_sessions import _FileLock
+    from tools.process_registry import _checkpoint_path
+
+    path = _checkpoint_path()
+    return path, _FileLock(path.with_name(path.name + ".lock"))
+
+
+def decide_service_commit(proposed: dict, *, row, receipt) -> tuple:
+    """Adopt one outcome. Pure: no locks and no writes.
+
+    A matching stop row overrides a stale show of 0. A matching receipt with no
+    row is already the commit. A killed receipt cannot become success. A
+    different complete identity is not this service.
+    """
+    if isinstance(receipt, dict) and _identity_relation(proposed, receipt) == "different":
+        return ("refuse", proposed)
+    # A non-matching row is not adopted and is not a reason to drop our own write.
+    if not isinstance(row, dict) or _identity_relation(proposed, row) != "match":
+        row = None
+    row_rel = "match" if isinstance(row, dict) else "absent"
+    rec_rel = _identity_relation(proposed, receipt) if isinstance(receipt, dict) else "absent"
+    matched_row = row if row_rel == "match" else None
+    matched_receipt = receipt if rec_rel == "match" else None
+    if isinstance(matched_row, dict) and matched_row.get("service_stop_intent") is True:
+        killed = dict(proposed)
+        killed["exit_code"] = -15
+        killed["completion_reason"] = "killed"
+        killed["termination_source"] = "unit_stopped"
+        killed["service_stop_intent"] = True
+        if (
+            isinstance(matched_receipt, dict)
+            and matched_receipt.get("completion_reason") == "killed"
+            and matched_receipt.get("admission_pending") is False
+        ):
+            killed["admission_pending"] = False
+        return ("write", killed)
+    if isinstance(matched_receipt, dict) and _has_outcome(matched_receipt):
+        authoritative = matched_row is None or matched_receipt.get("completion_reason") == "killed"
+        same = _outcome_tuple(matched_receipt) == _outcome_tuple(proposed)
+        settled = matched_receipt.get("admission_pending") is False and proposed.get("admission_pending") is True
+        if authoritative or not same or settled:
+            return ("keep", matched_receipt)
+    return ("write", proposed)
+
+
+def commit_service_receipt(session, record: dict) -> Optional[dict]:
+    """Re-read, adopt, and write under processes.json.lock.
+
+    Caller may already hold the session condition. This does not take it, the
+    registry lock, or systemctl, and it does not call ``_write_checkpoint``
+    (that opens this same lock again). None means nothing was committed.
+    """
+    from tools.process_registry_results import write_frozen_result
+    from utils import atomic_json_write
+
+    if service_identity(record) is None:
+        if write_frozen_result(session.id, record, strict=True) is False:
+            return None
+        return record
+    path, lock = _profile_file_lock()
+    try:
+        with lock:
+            entries = _read_json_list(path)
+            row = next(
+                (item for item in entries if isinstance(item, dict) and item.get("session_id") == session.id),
+                None,
+            )
+            receipt = _read_receipt(session.id)
+            action, adopted = decide_service_commit(record, row=row, receipt=receipt)
+            if action == "refuse":
+                return None
+            if action == "write" and write_frozen_result(session.id, adopted, strict=True) is False:
+                return None
+            row_rel = _identity_relation(record, row) if isinstance(row, dict) else "absent"
+            drop = (action == "write" and row_rel in {"match", "absent"}) or (
+                action == "keep" and row_rel == "match"
+            )
+            if drop and isinstance(row, dict):
+                remaining = [
+                    item for item in entries
+                    if not (isinstance(item, dict) and item.get("session_id") == session.id)
+                ]
+                atomic_json_write(path, remaining)
+            return adopted
+    except (OSError, RuntimeError):
+        logger.warning("service outcome commit failed for %s", session.id, exc_info=True)
+        return None
+
+
+def peek_service_authority(session) -> dict:
+    """Re-read the checkpoint row and receipt. Does not write or take the session lock."""
+    ident = {
+        "service_unit": getattr(session, "service_unit", ""),
+        "service_boot_id": getattr(session, "service_boot_id", ""),
+        "service_invocation_id": getattr(session, "service_invocation_id", ""),
+        "tool_call_id": getattr(session, "tool_call_id", ""),
+    }
+    if service_identity(ident) is None:
+        return {"kind": "none"}
+    path, lock = _profile_file_lock()
+    try:
+        with lock:
+            entries = _read_json_list(path)
+            row = next(
+                (item for item in entries if isinstance(item, dict) and item.get("session_id") == session.id),
+                None,
+            )
+            receipt = _read_receipt(session.id)
+    except (OSError, RuntimeError):
+        return {"kind": "error"}
+    row_rel = _identity_relation(ident, row) if isinstance(row, dict) else "absent"
+    rec_rel = _identity_relation(ident, receipt) if isinstance(receipt, dict) else "absent"
+    if row_rel == "different" or rec_rel == "different":
+        return {"kind": "unrelated"}
+    matched_row = row if row_rel == "match" else None
+    matched_receipt = receipt if rec_rel == "match" and _has_outcome(receipt) else None
+    if isinstance(matched_row, dict) and matched_row.get("service_stop_intent") is True:
+        if not (isinstance(matched_receipt, dict) and matched_receipt.get("completion_reason") == "killed"):
+            return {"kind": "stop"}
+    if isinstance(matched_receipt, dict) and (
+        matched_row is None or matched_receipt.get("completion_reason") == "killed"
+    ):
+        return {
+            "kind": "committed",
+            "outcome": _outcome_tuple(matched_receipt),
+            "admission_pending": matched_receipt.get("admission_pending"),
+        }
+    if isinstance(matched_row, dict) and matched_row.get("service_stop_intent") is True:
+        return {"kind": "stop"}
+    return {"kind": "none"}
+
+
+def _phase_after_durable_attempt(session, cv, authority: dict):
+    """Caller holds the session condition. True: do not signal. None: intent did not land."""
+    if session.exited or authority.get("kind") == "committed":
+        if not session.exited:
+            _apply_adopted_outcome(session, authority)
+        if getattr(session, "_stop_phase", None) == "inflight":
+            session._stop_phase = None
+            cv.notify_all()
+        return True
+    if authority.get("kind") not in {"stop", "error"}:
+        if getattr(session, "_stop_phase", None) == "inflight":
+            session.service_stop_intent = False
+            session._stop_phase = None
+            cv.notify_all()
+        return None
+    session._stop_phase = "durable"
+    cv.notify_all()
+    return False
+
+
+def _apply_adopted_outcome(session, authority: dict) -> None:
+    """Caller holds the session lock. Memory records the adopted outcome."""
+    code, reason, source = authority["outcome"]
+    session.exit_code = code
+    session.completion_reason = reason or "exited"
+    session.termination_source = source or ""
+    if "admission_pending" in authority and authority["admission_pending"] is not None:
+        session.admission_pending = bool(authority["admission_pending"])
+    if session.completion_reason != "killed":
+        session.service_stop_intent = False
+    session.mark_exited(session.exit_code, session.completion_reason, session.termination_source)
+
+
+def _preserve_one_service_row(entry, disk_by_id: dict):
+    if not isinstance(entry, dict) or not entry.get("service_unit"):
+        return entry
+    disk = disk_by_id.get(entry.get("session_id"))
+    if isinstance(disk, dict):
+        relation = _identity_relation(entry, disk)
+        if relation == "different":
+            return disk
+        if relation == "match" and disk.get("service_stop_intent") is True:
+            kept = dict(entry)
+            kept["service_stop_intent"] = True
+            return kept
+        return entry
+    session_id = entry.get("session_id")
+    receipt = _read_receipt(session_id) if isinstance(session_id, str) else None
+    if (
+        isinstance(receipt, dict)
+        and _identity_relation(entry, receipt) == "match"
+        and _has_outcome(receipt)
+    ):
+        return None
+    return entry
+
+
+def preserve_service_checkpoint_rows(entries: list) -> list:
+    """Caller holds processes.json.lock. Keep a durable stop; do not put a removed row back.
+
+    Does not take the lock again and does not call ``_write_checkpoint``.
+    """
+    if not any(isinstance(item, dict) and item.get("service_unit") for item in entries):
+        return list(entries)
+    from tools.process_registry import _checkpoint_path
+
+    on_disk = _read_json_list(_checkpoint_path())
+    disk_by_id = {
+        item.get("session_id"): item
+        for item in on_disk
+        if isinstance(item, dict) and isinstance(item.get("session_id"), str)
+    }
+    kept = []
+    for entry in entries:
+        preserved = _preserve_one_service_row(entry, disk_by_id)
+        if preserved is not None:
+            kept.append(preserved)
+    return kept
+
+
 def _finish_exit(registry, session, code: int, reason: str, source: str, *, publish: bool = True) -> bool:
-    from tools.process_registry_results import frozen_result_record, save_completed_result, write_frozen_result
+    from tools.process_registry_results import frozen_result_record, save_completed_result
 
     # The show can flip to exited during the systemctl call that follows an empty tail.
     # Read the log again now, before the receipt snapshot, so the tool result has those bytes.
@@ -506,19 +800,23 @@ def _finish_exit(registry, session, code: int, reason: str, source: str, *, publ
         session.termination_source = source
         session.admission_pending = bool(session.notify_on_complete)
         record = frozen_result_record(session)
-    if not write_frozen_result(session.id, record, strict=True):
-        with cv:
+        adopted = commit_service_receipt(session, record)
+        if adopted is None:
             if not session.exited:
                 _restore_undecided(session)
-        return False
-    with cv:
-        while getattr(session, "_stop_phase", None) == "inflight":
-            cv.wait()
-        if session.exited:
-            return True
-        if session.service_stop_intent and source != "unit_stopped":
-            _restore_undecided(session)
             return False
+        code = adopted.get("exit_code", code)
+        reason = adopted.get("completion_reason") or reason
+        source = adopted.get("termination_source") or source
+        session.exit_code = code
+        session.completion_reason = reason
+        session.termination_source = source
+        if "admission_pending" in adopted:
+            session.admission_pending = bool(adopted.get("admission_pending"))
+        if "service_stop_intent" in adopted:
+            session.service_stop_intent = bool(adopted.get("service_stop_intent"))
+        elif reason == "killed" and source == "unit_stopped":
+            session.service_stop_intent = True
         session.mark_exited(code, reason, source)
     if publish:
         registry._move_to_finished(session)
@@ -658,16 +956,13 @@ def stop_owned_service(registry, session, *, source: str, consume_output: bool) 
                 session._stop_phase = None
                 cv.notify_all()
         return _unresolved_stop(session, "service stop intent could not be stored; it was not signalled")
+    # The checkpoint lock is released. Re-read before signal: another object may
+    # already have committed this identity. systemctl stays outside the lock.
+    authority = peek_service_authority(session)
     with cv:
-        if session.exited:
-            if getattr(session, "_stop_phase", None) == "inflight":
-                session._stop_phase = None
-                cv.notify_all()
-            lost = True
-        else:
-            session._stop_phase = "durable"
-            cv.notify_all()
-            lost = False
+        lost = _phase_after_durable_attempt(session, cv, authority)
+    if lost is None:
+        return _unresolved_stop(session, "service stop intent could not be stored; it was not signalled")
     if lost:
         # Drop the not-yet-exited checkpoint row now that completion won, so a
         # later admit is not blocked by a stop intent the signal never sent.
@@ -989,9 +1284,15 @@ def _handoff_pending(session) -> bool:
 
 
 def clear_service_admission(session_id: str, profile_home=None) -> bool:
-    """Drop a pending admission flag without changing the stored exit code."""
+    """Drop a pending admission flag without changing the stored exit code.
+
+    The read and the write share processes.json.lock with outcome commits, and
+    the record written is the one just read. A stale copy cannot put an old
+    exit or a pending flag back.
+    """
     if not session_id:
         return False
+    from hermes_cli.active_sessions import _FileLock
     from hermes_constants import get_hermes_home
     from tools.process_registry import process_registry
     from utils import atomic_json_write
@@ -1001,15 +1302,16 @@ def clear_service_admission(session_id: str, profile_home=None) -> bool:
     home = Path(profile_home) if profile_home is not None else get_hermes_home()
     path = home / "logs" / "process-results" / f"{session_id}.json"
     try:
-        record = json.loads(path.read_text(encoding="utf-8-sig"))
-    except (OSError, ValueError):
-        return session is not None
-    if "exit_code" not in record:
-        return False
-    record["admission_pending"] = False
-    try:
-        atomic_json_write(path, record, mode=0o600)
-    except OSError:
+        with _FileLock(home / "processes.json.lock"):
+            try:
+                record = json.loads(path.read_text(encoding="utf-8-sig"))
+            except (OSError, ValueError):
+                return session is not None
+            if not isinstance(record, dict) or "exit_code" not in record:
+                return False
+            record["admission_pending"] = False
+            atomic_json_write(path, record, mode=0o600)
+    except (OSError, RuntimeError):
         logger.warning("Could not clear service admission %s", session_id, exc_info=True)
         return False
     return True

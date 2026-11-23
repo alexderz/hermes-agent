@@ -110,11 +110,22 @@ def write_frozen_result(session_id: str, record: dict, *, strict: bool = False):
 
 def save_completed_result(session, *, strict: bool = False):
     """Retain *session*'s completion receipt under this profile's logs. A hosted agent's process
-    has none on this host: its command and output are the tenant's, kept in the live registry only."""
+    has none on this host: its command and output are the tenant's, kept in the live registry only.
+
+    A service receipt goes through the shared adopt path. This snapshot releases
+    the session lock before that path takes the profile file lock, and it does
+    not replace an outcome another writer already committed.
+    """
     if session.sandbox_key:
         return False if strict else None
     with session._lock:
         record = frozen_result_record(session)
+    if getattr(session, "service_unit", ""):
+        from tools.process_registry_service import commit_service_receipt
+        adopted = commit_service_receipt(session, record)
+        if adopted is None:
+            return False if strict else None
+        return True if strict else None
     return write_frozen_result(session.id, record, strict=strict)
 
 

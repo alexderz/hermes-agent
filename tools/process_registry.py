@@ -1586,22 +1586,12 @@ class ProcessRegistry(ProcessTerminationMixin, ProcessCheckpointMixin, ProcessOu
         self._release_finished_handles(session)
         self._write_checkpoint()
         if was_running and session.notify_on_complete:
-            notification = {
-                "type": "completion",
-                "session_id": session.id,
-                "session_key": session.session_key,
-                "task_id": session.task_id,
-                "owner_task_id": session.owner_task_id,
-                **producer_fields(session.sandbox_key),
-                "command": session.command,
-                **({"handoff_note": session.handoff_note} if session.handoff_note else {}),
-                **self._exit_fields(session),
-                # A consumer that relays the output (a bot DM's reply) must know it is not whole.
-                **_completion_output(session),
-                # Stable producer identity across checkpoint recovery (unlike a
-                # consumer-observed completion timestamp).
-                "started_at": session.started_at,
-            }
+            from tools.process_registry_notifications import completion_queue_event
+            notification = completion_queue_event(
+                session,
+                exit_fields=self._exit_fields(session),
+                output=_completion_output(session),
+            )
             _redact_process_result(notification)
             self.completion_queue.put(notification)
 

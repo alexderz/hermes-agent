@@ -542,6 +542,33 @@ def _completion_status(evt: dict) -> str:
     return _REASON_STATUS.get(reason) or ("completed normally" if evt.get("exit_code", "?") == 0 else "exited")
 
 
+def completion_queue_event(session, *, exit_fields: dict, output: dict) -> dict:
+    """One completion for the existing queue. Parent is the session field, not the route.
+
+    ``exit_fields`` and ``output`` are the registry's own snapshots. This does
+    not build a second watcher event and does not add platform or chat keys.
+    """
+    from tools.environments.sandbox_scope import producer_fields
+
+    note = {"handoff_note": session.handoff_note} if session.handoff_note else {}
+    return {
+        "type": "completion",
+        "session_id": session.id,
+        "session_key": session.session_key,
+        "task_id": session.task_id,
+        "owner_task_id": session.owner_task_id,
+        "parent_session_id": session.parent_session_id,
+        **producer_fields(session.sandbox_key),
+        "command": session.command,
+        **note,
+        **exit_fields,
+        **output,
+        # Stable producer identity across checkpoint recovery (unlike a
+        # consumer-observed completion timestamp).
+        "started_at": session.started_at,
+    }
+
+
 def format_process_notification(evt: dict) -> str | None:
     """Format a completion_queue event into an ``[IMPORTANT: ...]`` message."""
     evt_type = evt.get("type", "completion")

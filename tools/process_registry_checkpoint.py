@@ -66,7 +66,11 @@ class ProcessCheckpointMixin:
             # Every interpreter of the profile (owner, each managed worker) rewrites this file from
             # its own table; a worker's output-log handoff is its only path to the next one, so a
             # writer keeps the handoffs it does not track (read-merge-write under one file lock).
+            # Registry lock is already released. Do not call _write_checkpoint
+            # again from here: a second open of this same lock deadlocks flock.
             with _FileLock(path.with_name(path.name + ".lock")):
+                from tools.process_registry_service import preserve_service_checkpoint_rows
+                entries = preserve_service_checkpoint_rows(entries)
                 entries.extend(self._foreign_handoffs(path, known))
                 atomic_json_write(path, entries)
         except Exception as e:
