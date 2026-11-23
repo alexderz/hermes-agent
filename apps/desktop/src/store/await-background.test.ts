@@ -183,8 +183,12 @@ describe('required-result background rows', () => {
     ] as never)
 
     resetSessionBackground(SID)
+    await request.mock.results[0]!.value
+    await Promise.resolve()
 
     expect(request).toHaveBeenCalledWith('process.kill', { process_id: 'wait', session_id: SID })
-    expect(items()).toEqual([])
+    // `{}` is a resolved RPC with no killed/already_exited snapshot, so the
+    // waiting row stays. A confirmed kill is covered in composer-status.test.ts.
+    expect(items()).toEqual([expect.objectContaining({ id: 'wait', state: 'waiting' })])
   })
 })

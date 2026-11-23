@@ -591,49 +591,120 @@ export function dismissBackgroundProcess(sid: string, id: string) {
   )
 }
 
-/** X on a running row: kill the process for real, THEN drop the row. Only drop
- *  on a confirmed kill — dismissing unconditionally (the old behavior) hid the
- *  row while the process lived on, stranding rogue tasks. On failure the row
- *  stays so the user can retry / see it didn't die. */
-export async function stopBackgroundProcess(sid: string, id: string): Promise<void> {
-  const gateway = $gateway.get()
+// kill_all's own confirmed-stop predicate: status killed or already_exited, and
+// no scope_stop_failed. A service stop confirms only by returning that killed
+// snapshot. running, unresolved, error, not_found, and unknown are not a stop.
+const CONFIRMED_STOP_STATUSES = new Set(['already_exited', 'killed'])
+const STOP_FAILED = 'Could not stop the process'
 
-  if (isSessionGone(sid)) {
-    // The backend has already declared this runtime gone, so there is no
-    // authoritative process left to kill through this session. Remove the
-    // stale local row instead of leaving the Stop button permanently inert.
+function killConfirmed(result: unknown): boolean {
+  if (!result || typeof result !== 'object') {
+    return false
+  }
+
+  const status = (result as { status?: unknown }).status
+
+  if (typeof status !== 'string' || !CONFIRMED_STOP_STATUSES.has(status)) {
+    return false
+  }
+
+  return !Object.prototype.hasOwnProperty.call(result, 'scope_stop_failed')
+}
+
+function stopFailure(result: unknown): Error {
+  if (result && typeof result === 'object') {
+    const row = result as { error?: unknown; note?: unknown }
+    const detail = typeof row.error === 'string' ? row.error : typeof row.note === 'string' ? row.note : ''
+
+    if (detail) {
+      return new Error(detail)
+    }
+  }
+
+  return new Error('Stop was not confirmed')
+}
+
+function paintUnknown(sid: string, id: string): void {
+  const list = $backgroundStatusBySession.get()[sid] ?? []
+  let changed = false
+
+  const next = list.map(item => {
+    if (item.id !== id || item.state === 'unknown') {
+      return item
+    }
+
+    changed = true
+
+    return { ...item, state: 'unknown' as const }
+  })
+
+  if (!changed) {
+    return
+  }
+
+  writeBackground(sid, next, backgroundWrittenAt.get(list))
+}
+
+function holdUnconfirmedStop(sid: string, id: string, error: unknown): void {
+  paintUnknown(sid, id)
+  notifyError(error, STOP_FAILED)
+}
+
+function applyKillOutcome(sid: string, id: string, result: unknown): void {
+  if (killConfirmed(result)) {
     dismissBackgroundProcess(sid, id)
 
     return
   }
 
-  if (!gateway) {
-    notifyError(new Error('Gateway is not connected'), 'Could not stop the process')
+  notifyError(stopFailure(result), STOP_FAILED)
+}
+
+function awaitsStopConfirmation(state: StatusItemState): boolean {
+  return state === 'running' || state === 'waiting' || state === 'unknown'
+}
+
+async function settleBackgroundStop(sid: string, id: string): Promise<void> {
+  const gateway = $gateway.get()
+
+  if (isSessionGone(sid) || !gateway) {
+    holdUnconfirmedStop(sid, id, new Error(isSessionGone(sid) ? 'Gateway session is gone' : 'Gateway is not connected'))
 
     return
   }
 
   try {
-    await requestForOwnedSession(sid, ambientRequestFor(gateway), 'process.kill', { process_id: id, session_id: sid })
-    dismissBackgroundProcess(sid, id)
+    applyKillOutcome(
+      sid,
+      id,
+      await requestForOwnedSession(sid, ambientRequestFor(gateway), 'process.kill', {
+        process_id: id,
+        session_id: sid
+      })
+    )
   } catch (err) {
     if (isSessionGoneForBackgroundPolling(err)) {
-      dismissBackgroundProcess(sid, id)
       markSessionGone(sid)
+      holdUnconfirmedStop(sid, id, err)
 
       return
     }
 
-    notifyError(err, 'Could not stop the process')
+    notifyError(err, STOP_FAILED)
   }
 }
 
+/** X on a waiting or running row. Drop it only after process.kill returns a
+ *  confirmed terminal snapshot. A resolved running/unresolved/error result, a
+ *  disconnected gateway, or a gone runtime leaves the row up. */
+export async function stopBackgroundProcess(sid: string, id: string): Promise<void> {
+  await settleBackgroundStop(sid, id)
+}
+
 /**
- * Rewind cleanup: a restore/edit discards the turns that spawned these
- * processes, so they belong to an abandoned timeline. Kill the live ones and
- * drop every row. Ids are marked dismissed so an in-flight `process.list` poll
- * (kill is async) can't resurrect them; reconcile garbage-collects those once
- * the registry stops reporting them.
+ * Rewind cleanup. Settled rows leave with the discarded turns. A waiting,
+ * running, or unknown row stays until its own process.kill confirms a stop
+ * or a later snapshot drops it. Rewind itself does not wait on that kill.
  */
 export function resetSessionBackground(sid: string) {
   if (!sid) {
@@ -642,27 +713,24 @@ export function resetSessionBackground(sid: string) {
 
   cancelAllAutoDismiss(sid)
 
-  const gateway = $gateway.get()
   const list = $backgroundStatusBySession.get()[sid] ?? []
   const dismissed = dismissedBySession.get(sid) ?? new Set<string>()
+  const kept: ComposerStatusItem[] = []
 
   for (const item of list) {
-    dismissed.add(item.id)
+    if (!awaitsStopConfirmation(item.state)) {
+      dismissed.add(item.id)
 
-    if (item.state === 'running' || item.state === 'waiting') {
-      if (gateway && !isSessionGone(sid)) {
-        void requestForOwnedSession(sid, ambientRequestFor(gateway), 'process.kill', {
-          process_id: item.id,
-          session_id: sid
-        }).catch(error => {
-          if (isSessionGoneForBackgroundPolling(error)) {
-            markSessionGone(sid)
-          }
-        })
-      }
+      continue
     }
+
+    kept.push(item)
   }
 
   dismissedBySession.set(sid, dismissed)
-  writeBackground(sid, [], undefined)
+  writeBackground(sid, kept, backgroundWrittenAt.get(list))
+
+  for (const item of kept) {
+    void settleBackgroundStop(sid, item.id)
+  }
 }
