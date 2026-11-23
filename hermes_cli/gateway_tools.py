@@ -86,7 +86,13 @@ class GatewayProcessView:
             self._lock.release()
 
     # -- the tools.process_registry surface main's CLI calls ---------------------------------
-    def list_sessions(self):
+    def list_sessions(self, include_service_receipts: bool = False):
+        """The dock passes ``include_service_receipts`` for the local registry.
+
+        This view cannot drop rows the server already sent. The argument is
+        accepted so that same call does not raise here.
+        """
+        del include_service_receipts
         self.refresh()
         now = time.time()
         return [{"session_id": p.id, "command": p.command[:200],

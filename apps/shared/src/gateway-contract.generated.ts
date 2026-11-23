@@ -3907,6 +3907,9 @@ export interface ProcessEntry {
   started_epoch?: number | null
   completion_reason?: string | null
   detached?: boolean | null
+  service_mode?: string | null
+  attention?: string | null
+  admission_pending?: boolean | null
   [key: string]: unknown
 }
 export interface ProcessKillParams {

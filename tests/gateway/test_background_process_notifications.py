@@ -879,3 +879,46 @@ async def test_raw_output_modes_are_human_facing(monkeypatch, tmp_path):
         assert "proc_deadbeef" not in text and "[Background process" not in text and "~" not in text
         assert "\x1b[" not in text
         assert "make -j8 all" in text
+
+
+@pytest.mark.asyncio
+async def test_service_watcher_refreshes_without_building_a_completion_event(monkeypatch, tmp_path):
+    """A service row's watcher only refreshes the show. It does not build a second event."""
+    import tools.process_registry as pr_module
+    import tools.process_registry_service as service_mod
+
+    session = SimpleNamespace(
+        service_unit="hermes-bg-proc_seam0001.service", exited=False, exit_code=None,
+        output_buffer="", command="sleep 30", owner_task_id="", task_id="", started_at=None,
+    )
+    calls = {"get": 0, "refresh": 0, "built": 0}
+
+    class _Registry:
+        def get(self, _session_id):
+            calls["get"] += 1
+            if calls["get"] > 3:
+                return None
+            return session
+
+    def _refresh(_registry, row, publish=True):
+        calls["refresh"] += 1
+        row.exited = True
+
+    def _built(*_args, **_kwargs):
+        calls["built"] += 1
+        raise AssertionError("service watcher built a completion event")
+
+    monkeypatch.setattr(pr_module, "process_registry", _Registry())
+    monkeypatch.setattr(service_mod, "refresh_service_session", _refresh)
+
+    async def _instant_sleep(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", _instant_sleep)
+    runner = _build_runner(monkeypatch, tmp_path, "all")
+    monkeypatch.setattr(runner, "_build_process_completion_event", _built)
+    watcher = _watcher_dict(session_id="proc_seam0001")
+    watcher["notify_on_complete"] = True
+    await runner._watch_process(watcher)
+    assert calls["refresh"] >= 1
+    assert calls["built"] == 0

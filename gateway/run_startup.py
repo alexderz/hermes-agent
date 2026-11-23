@@ -1153,6 +1153,44 @@ class GatewayStartupMixin:
         except Exception:
             logger.log(level, fail_fmt, *fail_args, exc_info=True)
 
+    async def _admit_pending_service_receipts(self) -> None:
+        """Admit service receipts that were durable before this process could drain them.
+
+        Recovery itself does not publish a second completion. This is the one startup pass.
+        """
+        from tools.process_registry_notifications import format_process_notification
+        from tools.process_registry_service import pending_service_events
+        for evt in pending_service_events():
+            text = format_process_notification(evt)
+            if not text:
+                continue
+            try:
+                await self._inject_watch_notification(text, evt)
+            except Exception:
+                logger.warning(
+                    "Pending service receipt %s was not admitted", evt.get("session_id"), exc_info=True,
+                )
+
+    async def _recover_secondary_service_profiles(self, process_registry) -> int:
+        """Recover each served secondary profile, then admit its pending service receipts."""
+        if not getattr(self.config, "multiplex_profiles", False):
+            return 0
+        from gateway.run import _multiplex_profile_homes, _profile_runtime_scope
+        from hermes_constants import get_hermes_home
+        launch_home = get_hermes_home().resolve()
+        recovered = 0
+        for profile_name, profile_home in _multiplex_profile_homes(self.config):
+            resolved_home = await asyncio.to_thread(Path(profile_home).resolve)
+            if resolved_home == launch_home:
+                continue
+            try:
+                with _profile_runtime_scope(resolved_home, {}):
+                    recovered += process_registry.recover_from_checkpoint()
+                    await self._admit_pending_service_receipts()
+            except Exception:
+                logger.warning("Process checkpoint recovery for profile %r failed", profile_name, exc_info=True)
+        return recovered
+
     def _recover_secondary_process_checkpoints(self, process_registry) -> int:
         """Replay every SERVED secondary profile's ``processes.json`` under its own scope.
         The launch profile's file was already read by ``recover_from_checkpoint`` above."""
@@ -1187,8 +1225,11 @@ class GatewayStartupMixin:
         # served profile's file under its scope or those processes are never re-adopted.
         with _log_suppressed(logging.WARNING, "Process checkpoint recovery: %s"):
             from tools.process_registry import process_registry
+            from gateway.session_authorities import active_authority
+            process_registry._service_authority_lookup = lambda: active_authority(self)
             recovered = process_registry.recover_from_checkpoint()
-            recovered += self._recover_secondary_process_checkpoints(process_registry)
+            await self._admit_pending_service_receipts()
+            recovered += await self._recover_secondary_service_profiles(process_registry)
             if recovered:
                 logger.info("Recovered %s background process(es) from previous run", recovered)
         # The gateway owns delegation state: replay durable completions the previous

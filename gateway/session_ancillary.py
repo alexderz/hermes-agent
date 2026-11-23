@@ -6,8 +6,11 @@ reconciles only the requesting profile's MCP servers; ``file.attach`` stages for
 """
 import asyncio
 from functools import partial
+import logging
 from pathlib import Path
 import sys
+
+logger = logging.getLogger(__name__)
 
 from gateway.session_busy_controls import authorize
 from persistence.core.errors import AuthorityRefusal
@@ -657,12 +660,35 @@ def process_snapshot(authority, ref, agent, records):
     if module is None:
         return []
     registry = module.process_registry
+    from tools.process_registry_service import (
+        reconcile_service_admissions, refresh_service_sessions, service_projection,
+    )
+    # Show refresh stays outside the lock. systemctl must not run while it is held.
+    refresh_service_sessions(registry)
+    reconcile_service_admissions(authority)
     keys, owners = _ownership(authority, ref, agent, records)
-    # Keep ownership and output together.
     with registry._lock:
-        return [{'session_id': p.id, 'command': p.command[:200],
-                 'status': 'exited' if p.exited else 'running', 'exit_code': p.exit_code,
-                 # The classic CLI dock's elapsed / exit-age / verdict and its 32k tail view.
-                 'started_epoch': p.started_at, 'exited_at': p.exited_at or None,
-                 'completion_reason': p.completion_reason if p.exited else None,
-                 'output_tail': p.output_buffer[-_PROCESS_TAIL_CHARS:]} for p in _owned_locked(registry, keys, owners)]
+        owned = list(_owned_locked(registry, keys, owners))
+    seen = {p.id for p in owned}
+    try:
+        from tools.process_registry_results import load_completed_results
+        for session in load_completed_results().values():
+            if session.id in seen or not getattr(session, "admission_pending", False):
+                continue
+            if not getattr(session, "service_unit", ""):
+                continue
+            if session.session_key in keys and (session.owner_task_id or session.task_id) in owners:
+                owned.append(session)
+    except Exception:  # health: allow BLE001 -- a receipt scan must not hide the live processes already collected
+        logger.warning("Could not merge pending service receipts", exc_info=True)
+    rows = []
+    for p in owned:
+        row = {'session_id': p.id, 'command': p.command[:200],
+               'status': 'exited' if p.exited else 'running', 'exit_code': p.exit_code,
+               # The classic CLI dock's elapsed / exit-age / verdict and its 32k tail view.
+               'started_epoch': p.started_at, 'exited_at': p.exited_at or None,
+               'completion_reason': p.completion_reason if p.exited else None,
+               'output_tail': p.output_buffer[-_PROCESS_TAIL_CHARS:]}
+        row.update(service_projection(p))
+        rows.append(row)
+    return rows

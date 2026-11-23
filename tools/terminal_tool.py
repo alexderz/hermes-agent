@@ -1254,7 +1254,7 @@ _PROMOTED_NOTE = (
 
 def _plan_execution(
     command: Any, *, task_id: Optional[str], timeout: Optional[int],
-    background: bool, _host_local: bool,
+    background: bool, _host_local: bool, service: bool = False,
 ) -> _ExecPlan:
     """Resolve backend, env-cache key, image, cwd and timeout for one call.
 
@@ -1316,7 +1316,9 @@ def _plan_execution(
     if timeout is not None and timeout <= 0:
         raise _Rejected(tool_error(f"timeout must be a positive number of seconds (got {timeout})."))
     promoted = None
-    if not background:
+    # service=await|notify is one user unit. Do not promote it into a foreground
+    # child or rewrite a trailing & into a second native process.
+    if not background and not service:
         # An over-cap foreground timeout is a bounded job the caller wants to wait for (test suites,
         # builds). Refusing it only bought a mechanical retry: 454 refusals in one run, every one
         # re-sent lower/split/background. Promote to a tracked background process instead; the
@@ -1581,6 +1583,7 @@ def terminal_tool(
     _completion_output_chars: int = 0,
     heartbeat: int = 0,
     persist_on_release: bool = False,
+    service: Optional[str] = None,
 ) -> str:
     """Execute *command* in the configured terminal environment; returns a JSON string.
 
@@ -1608,6 +1611,7 @@ def terminal_tool(
     try:
         plan = _plan_execution(
             command, task_id=task_id, timeout=timeout, background=background, _host_local=_host_local,
+            service=bool(service),
         )
         auto_bg = getattr(plan, "auto_background_command", None)
         if auto_bg is not None:
@@ -1670,6 +1674,18 @@ def terminal_tool(
             verdict = _run_approval_guards(command, env_type, plan.config, force=force)
 
             pty_disabled = pty and _command_requires_pipe_stdin(command)
+            if service:
+                from tools.process_registry_service import run_terminal_service
+                resolved_cwd = _resolve_command_cwd(
+                    workdir=workdir, default_cwd=cwd, session_key=cwd_key, env_type=env_type,
+                    mounted_host=getattr(env, "host_cwd", None) or plan.host_cwd, env=env,
+                )
+                result = run_terminal_service(
+                    command=command, mode=str(service), cwd=resolved_cwd, task_id=task_id or "",
+                    session_key=session_key, timeout=timeout, env_vars=None, pty=bool(pty),
+                    env_type=env_type,
+                )
+                return _metered(None if _host_local else plan, result)
             if plan.promoted_from_foreground_timeout is not None:
                 # Promotion implies notify_on_complete; watch_patterns is a background-only flag the
                 # caller could not have meant for a foreground call, and the two are exclusive anyway.
@@ -1762,6 +1778,11 @@ TERMINAL_SCHEMA = {
                 "type": "boolean",
                 "default": False,
                 "description": "With background=true: survive session end, /new, compression and other cleanup (not host exit). Only for jobs the user explicitly wants to outlive the conversation."
+            },
+            "service": {
+                "type": "string",
+                "enum": ["await", "notify"],
+                "description": "Run one transient user service. await blocks for the worker result. notify returns after the unit is accepted and delivers that result once later. Omit for an ordinary process."
             }
             # Legacy aliases (unadvertised, still accepted): notify_on_complete
             # (bool) and watch_patterns (list). notify=true|[...] maps onto
@@ -1792,6 +1813,11 @@ def _handle_terminal(args, **kw):
     # shape) send `heartbeat=60` on ordinary commands — refusing it produced
     # identical-call retry loops (46 subagent sessions, 4 refusals each, 38 of
     # which never ran a single command), so it is normalized away instead.
+    service = args.get("service")
+    if service in ("", None):
+        service = None
+    elif service not in ("await", "notify"):
+        return tool_error("service must be 'await' or 'notify'.")
     notify = args.get("notify")
     notify_on_complete = args.get("notify_on_complete", False)
     watch_patterns = args.get("watch_patterns")
@@ -1799,7 +1825,7 @@ def _handle_terminal(args, **kw):
     persist_on_release = bool(args.get("persist_on_release", False))
     if not isinstance(heartbeat, int) or isinstance(heartbeat, bool) or heartbeat < 0:
         return tool_error("heartbeat must be a whole number of seconds (0 disables; positive values are clamped to min 60).")
-    if not args.get("background", False):
+    if service is None and not args.get("background", False):
         if notify or watch_patterns or notify_on_complete:
             return tool_error(
                 "notify only applies to background commands (foreground "
@@ -1846,6 +1872,7 @@ def _handle_terminal(args, **kw):
         watch_patterns=watch_patterns,
         heartbeat=heartbeat,
         persist_on_release=persist_on_release,
+        service=service,
     )
 
 
@@ -1858,14 +1885,17 @@ def _terminal_deadline_floor(args: dict) -> float | None:
     call blocks for ``timeout or TERMINAL_TIMEOUT`` — which the schema tells the model to
     set high, promising "Returns INSTANTLY when command finishes".
     """
-    if args.get("background"):
+    service = args.get("service")
+    if service == "notify":
+        return None
+    if args.get("background") and service != "await":
         return None
     requested = args.get("timeout")
     try:
         requested = int(requested) if requested else 0
     except (TypeError, ValueError):
         requested = 0
-    if requested > FOREGROUND_MAX_TIMEOUT:
+    if service != "await" and requested > FOREGROUND_MAX_TIMEOUT:
         return None
     if requested > 0:
         return float(requested)

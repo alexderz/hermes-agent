@@ -569,6 +569,13 @@ class ProcessSession:
     handoff_note: str = ""                      # why a subagent handed this process to its parent (rides the notice)
     persist_on_release: bool = False           # opt out of agent-lifecycle cleanup (release()/turn-abandon kill
                                                 # sweeps), per terminal(background=true, persist_on_release=true) (#41225)
+    service_unit: str = ""                      # user service; systemd_unit stays a scope; no pid
+    service_invocation_id: str = ""
+    service_boot_id: str = ""
+    service_mode: str = ""                      # await | notify | ""
+    tool_call_id: str = ""
+    service_stop_intent: bool = False
+    admission_pending: bool = False             # receipt extra; not a checkpoint identity
     output_log: str = ""                        # file the process writes to (worker spawns; no pipe to lose)
     pty_fallback: str = ""                      # why a pty=true local spawn runs in pipe mode instead
     # Watcher/notification routing (persisted for crash recovery)
@@ -657,7 +664,9 @@ _CHECKPOINT_FIELDS = (
     "started_at", "task_id", "owner_task_id", "session_key",
     *(f"watcher_{k}" for k in _WATCHER_ROUTE_KEYS), "watcher_interval",
     "parent_session_id", "notify_on_complete", "completion_output_chars", "watch_patterns",
-    "heartbeat_seconds", "persist_on_release", "output_log")
+    "heartbeat_seconds", "persist_on_release", "output_log",
+    "service_unit", "service_invocation_id", "service_boot_id", "service_mode",
+    "tool_call_id", "service_stop_intent")
 _CHECKPOINT_DEFAULTS = {
     f.name: ([] if f.name == "watch_patterns" else f.default)
     for f in ProcessSession.__dataclass_fields__.values()
@@ -1005,6 +1014,8 @@ class ProcessRegistry(ProcessTerminationMixin, ProcessCheckpointMixin, ProcessOu
         A completion is not queued here: recovery has no waitable handle, so it
         never collected an exit status.
         """
+        if session is not None and getattr(session, "service_unit", ""):
+            return session  # a null pid is the systemd-run client, not a dead process
         if session is None or session.exited or not session.detached or session.pid_scope != "host" or session.output_log:
             return session  # a log-backed adoption's reader collects the recorded exit itself
         fate = self._detached_host_fate(session.pid, session.host_start_time)
@@ -1039,6 +1050,8 @@ class ProcessRegistry(ProcessTerminationMixin, ProcessCheckpointMixin, ProcessOu
         An owned systemd scope stays reachable so kill can still reap it. A
         scope-less entry is removed: poll/list must not report a collected exit.
         """
+        if getattr(session, "service_unit", ""):
+            return session
         with session._lock:
             session.exited = True
         with self._lock:
@@ -1053,9 +1066,10 @@ class ProcessRegistry(ProcessTerminationMixin, ProcessCheckpointMixin, ProcessOu
 
     def _uncollected_gone(self, session: Optional[ProcessSession]) -> bool:
         """True when a detached entry was closed without a collected exit status
-        and the PID is no longer alive. List/poll must not report that as exited."""
+        and the PID is no longer alive. A service row has no pid, so it is not gone."""
         return bool(
-            session is not None and session.exited and session.exit_code is None
+            session is not None and not getattr(session, "service_unit", "")
+            and session.exited and session.exit_code is None
             and session.detached and session.pid_scope == "host"
             and not self._is_host_pid_alive(session.pid))
 
@@ -1720,14 +1734,7 @@ class ProcessRegistry(ProcessTerminationMixin, ProcessCheckpointMixin, ProcessOu
                         break
                     # Reconcile first so orphaned-pipe and detached exits fire the event.
                     with suppress(Exception):
-                        # Reconcile first: catches direct-child exits whose reader is blocked on a pipe held
-                        # open by a descendant (#17327) and detached/env sessions, so the event actually
-                        # fires.
-                        # Reconcile against real child state before reading session.exited. Guards against
-                        # orphaned-pipe reader hangs (issue #17327).
-                        # Reconcile against real child state — guards against orphaned- pipe reader hangs
-                        # where the reader is blocked but the direct child has already exited (issue
-                        # #17327).
+                        # Reconcile before the exited read so an orphaned-pipe child still fires (#17327).
                         self._reconcile_local_exit(session)
                         if self._refresh_detached_session(session) is None:
                             break
@@ -1990,6 +1997,8 @@ class ProcessRegistry(ProcessTerminationMixin, ProcessCheckpointMixin, ProcessOu
         session = self.get(session_id)
         if session is None or self._uncollected_gone(session):
             return _not_found(session_id)
+        from tools.process_registry_service import refresh_polled_service
+        refresh_polled_service(self, session)
         self._reconcile_local_exit(session)  # orphaned-pipe reader guard
         # Read with the preview under the lock the reader appends and exits under, so the
         # finalization check describes the output actually returned.
@@ -2014,33 +2023,8 @@ class ProcessRegistry(ProcessTerminationMixin, ProcessCheckpointMixin, ProcessOu
 
     def read_log(self, session_id: str, offset: int | None = None, limit: int = 200) -> dict:
         """Read the full output log with optional pagination by lines."""
-        from tools.ansi_strip import strip_ansi
-
-        session = self.get(session_id)
-        if session is None:
-            return _not_found(session_id)
-        with session._lock:
-            full_output = strip_ansi(session.output_buffer)
-            exited, finalizing = session.exited, self._reader_finalizing(session)
-        lines = full_output.splitlines()
-        total_lines = len(lines)
-        # An explicit offset=0 means "start from the first line" — previously it was conflated with the
-        # default and silently returned the TAIL instead of the head (same falsy-coercion class as the
-        # wait() timeout guard; salvaged from PR #60004, credit @isheng-eqi).
-        if offset is None and limit > 0:
-            selected = lines[-limit:]
-            observed_completion_output = bool(selected) or total_lines == 0
-        else:
-            offset = offset or 0
-            selected = lines[offset:offset + limit]
-            stop = slice(offset, offset + limit).indices(total_lines)[1]
-            observed_completion_output = total_lines == 0 or (bool(selected) and stop == total_lines)
-        result = {
-            **self._status_head(session), "output": "\n".join(selected),
-            "total_lines": total_lines, "showing": f"{len(selected)} lines"}
-        if exited and observed_completion_output and not finalizing:
-            self._completion_consumed.add(session.id)
-        return result
+        from tools.process_registry_results import read_session_log
+        return read_session_log(self, session_id, offset, limit)
 
     def wait(self, session_id: str, timeout: int | None = None) -> dict:
         """Block until the process exits, the timeout elapses, the user interrupts, or a
@@ -2048,6 +2032,7 @@ class ProcessRegistry(ProcessTerminationMixin, ProcessCheckpointMixin, ProcessOu
         ``timeout`` defaults to (and is clamped by) TERMINAL_TIMEOUT. Returns a dict
         with status exited|timeout|interrupted|not_found|error and an output snapshot."""
         from tools.interrupt import consume_yield as _consume_yield, is_interrupted as _is_interrupted
+        from tools.process_registry_service import await_unresolved_result, finish_await_wait, refresh_wait_session
 
         max_timeout = max_wait_timeout()
         # The schema says minimum=1 but not every caller enforces it; timeout=0 is
@@ -2064,7 +2049,7 @@ class ProcessRegistry(ProcessTerminationMixin, ProcessCheckpointMixin, ProcessOu
             return _not_found(session_id)
         deadline = time.monotonic() + effective_timeout
         while time.monotonic() < deadline:
-            session = self._refresh_detached_session(session)
+            session = refresh_wait_session(self, session)
             if session is None:
                 return _not_found(session_id)
             self._reconcile_local_exit(session)  # orphaned-pipe reader guard
@@ -2072,6 +2057,10 @@ class ProcessRegistry(ProcessTerminationMixin, ProcessCheckpointMixin, ProcessOu
             if session.exited and not self._reader_finalizing(session):
                 self._completion_consumed.add(session.id)
                 result = self._exit_snapshot(session, "exited")
+            elif getattr(session, "service_mode", "") == "await" and (
+                _is_interrupted() or _consume_yield(threading.current_thread().ident)
+            ):
+                result = await_unresolved_result(self, session)
             elif _is_interrupted():
                 result = {
                     "status": "interrupted", "command": session.command, "output": _output_tail(session, 1000),
@@ -2094,6 +2083,9 @@ class ProcessRegistry(ProcessTerminationMixin, ProcessCheckpointMixin, ProcessOu
             if remaining <= 0:
                 break
             session._completion_event.wait(timeout=min(1.0, remaining))
+        finished = finish_await_wait(self, session, timeout_note)
+        if finished is not None:
+            return finished
         result = {
             "status": "timeout", "command": session.command, "output": _output_tail(session, 1000),
             # Not a failure — models re-issued identical waits after misreading this as an error.
@@ -2148,6 +2140,9 @@ class ProcessRegistry(ProcessTerminationMixin, ProcessCheckpointMixin, ProcessOu
             if consume_output and not finalizing:
                 self._completion_consumed.add(session.id)
             return result
+        if getattr(session, "service_unit", ""):
+            from tools.process_registry_service import stop_owned_service
+            return stop_owned_service(self, session, source=source, consume_output=consume_output)
         try:
             early = self._signal_kill(session, consume_output)
             if early is not None:
@@ -2348,7 +2343,7 @@ class ProcessRegistry(ProcessTerminationMixin, ProcessCheckpointMixin, ProcessOu
         """O(1) running count for status-bar polling; dict ``len()`` is atomic, no lock."""
         return len(self._running)
 
-    def list_sessions(self, task_id: str | None = None, session_key: str | None = None, *, include_retained: bool = False) -> list:
+    def list_sessions(self, task_id: str | None = None, session_key: str | None = None, *, include_retained: bool = False, include_service_receipts: bool = False) -> list:
         """Running and recently-finished processes for ``task_id`` and/or ``session_key``;
         cross-task entries sharing the gateway session (a forgotten preview server
         blocking session reset) are flagged ``"session_scoped": true``.
@@ -2360,7 +2355,9 @@ class ProcessRegistry(ProcessTerminationMixin, ProcessCheckpointMixin, ProcessOu
         """
         # Only an explicit tool query reads historical receipts. Status bars and
         # gateway liveness scans call this frequently and need the live registry.
-        sessions = load_completed_results() if include_retained else {}
+        # Show refresh stays outside this lock.
+        from tools.process_registry_service import prepare_listed_sessions, service_projection
+        sessions = prepare_listed_sessions(self, include_retained, include_service_receipts)
         with self._lock:
             sessions.update(self._finished)
             sessions.update(self._running)
@@ -2412,6 +2409,7 @@ class ProcessRegistry(ProcessTerminationMixin, ProcessCheckpointMixin, ProcessOu
                 entry["completion_reason"] = s.completion_reason
             if s.detached:
                 entry["detached"] = True
+            entry.update(service_projection(s))
             result.append(entry)
         return result
 
@@ -2514,6 +2512,7 @@ class ProcessRegistry(ProcessTerminationMixin, ProcessCheckpointMixin, ProcessOu
         (``process.kill`` via process_manage, CLI /stop) passes its own source and still
         reaches them, so the user can always stop a persisted process on purpose."""
         from tools.environments.sandbox_scope import sandbox_visible
+        from tools.process_registry_service import service_survives_stop
         lifecycle = source in self._LIFECYCLE_KILL_SOURCES
         # A sweep reaches only the current activity's own processes; a hosted agent's run in its
         # sandbox and end with it (its kill would go through that agent's scope anyway).
@@ -2523,6 +2522,7 @@ class ProcessRegistry(ProcessTerminationMixin, ProcessCheckpointMixin, ProcessOu
                 if (task_id is None or s.owner_task_id == task_id) and sandbox_visible(s.sandbox_key)
                 and s.id not in exclude_ids and (not s.exited or s._scope_stop_pending)
                 and not (lifecycle and s.persist_on_release)
+                and not service_survives_stop(s, source)
             ]
         results = [self.kill_process(s.id, source=source, consume_output=consume_output) for s in targets]
         return sum(

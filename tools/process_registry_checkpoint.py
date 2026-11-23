@@ -18,15 +18,19 @@ class ProcessCheckpointMixin:
 
     # ----- Checkpoint (crash recovery) -----
 
-    def _write_checkpoint(self, extra_entries: Optional[list[dict[str, Any]]] = None):
-        """Write running process metadata to the checkpoint file atomically."""
+    def _write_checkpoint(self, extra_entries: Optional[list[dict[str, Any]]] = None, *, strict: bool = False):
+        """Write running process metadata to the checkpoint file atomically.
+
+        ``strict`` is the service launch/stop path: it returns False when the write did not
+        land (including a hosted scope, which has no host file). Other callers keep the swallow.
+        """
         from tools.process_registry import _checkpoint_path, _CHECKPOINT_FIELDS
         from tools.environments.sandbox_scope import hosted_scope
 
         # A hosted caller only changes its own agent's records, which are never persisted here, so
         # it has no host change to write: it neither takes the lock nor rewrites this host's file.
         if hosted_scope() is not None:
-            return
+            return False if strict else None
         from agent.runtime_session_store import is_worker_process
         # Every interpreter on the home writes this file; ``hermes update --force`` sweeps only what
         # the gateway it killed owns (update_cmd_force_stop): a managed worker's jobs are its owner's.
@@ -67,6 +71,8 @@ class ProcessCheckpointMixin:
                 atomic_json_write(path, entries)
         except Exception as e:
             logger.debug("Failed to write checkpoint file: %s", e, exc_info=True)
+            return False if strict else None
+        return True if strict else None
 
     def _foreign_handoffs(self, path, known) -> list[dict[str, Any]]:
         """On-disk worker handoffs this registry never tracked whose log still decides an outcome:
@@ -77,10 +83,21 @@ class ProcessCheckpointMixin:
             on_disk = json.loads(path.read_text(encoding="utf-8-sig"))
         except (OSError, ValueError):
             return []
-        return [entry for entry in on_disk if isinstance(entry, dict) and entry.get("session_id") not in known
-                and (log := adoptable_log(entry.get("output_log"))) and Path(log).exists()
-                and (_exit_path(log).exists() or self._detached_host_fate(
-                    entry.get("pid"), entry.get("host_start_time")) == "running")]
+        kept = []
+        for entry in on_disk:
+            if not isinstance(entry, dict) or entry.get("session_id") in known:
+                continue
+            # A live service row has no pid and no exit file. Keep it anyway.
+            if entry.get("service_unit"):
+                kept.append(entry)
+                continue
+            log = adoptable_log(entry.get("output_log"))
+            if log and Path(log).exists() and (
+                _exit_path(log).exists() or self._detached_host_fate(
+                    entry.get("pid"), entry.get("host_start_time")) == "running"
+            ):
+                kept.append(entry)
+        return kept
 
     def recover_from_checkpoint(self) -> int:
         """On gateway startup, probe PIDs from the checkpoint file; returns how many
@@ -104,6 +121,11 @@ class ProcessCheckpointMixin:
         recovered = 0
         unresolved_scope_entries: list[dict[str, Any]] = []
         for entry in entries:
+            if entry.get("service_unit"):
+                from tools.process_registry_service import recover_service_entry
+                if recover_service_entry(self, entry):
+                    recovered += 1
+                continue
             pid, pid_scope = entry.get("pid"), entry.get("pid_scope", "host")
             if not pid:
                 continue

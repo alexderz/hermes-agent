@@ -28,11 +28,15 @@ def _last_output_line(buffer: str) -> str:
 
 
 def process_status(entry: dict) -> str:
-    if entry.get("status") != "exited":
-        return "running"
+    # killed/lost stay distinct from failed. attention is the service row's state.
     reason = _STATUS_BY_REASON.get(entry.get("completion_reason") or "")
     if reason:
         return reason
+    attention = entry.get("attention")
+    if attention in {"waiting", "ready", "failed", "lost"}:
+        return attention
+    if entry.get("status") != "exited":
+        return "running"
     return "done" if not entry.get("exit_code") else "failed"
 
 
@@ -48,13 +52,28 @@ def process_rows(now: float | None = None) -> list:
 
     now = time.time() if now is None else now
     rows = []
-    for entry in process_registry.list_sessions():
+    live = {"running", "waiting", "ready"}
+    for entry in process_registry.list_sessions(include_service_receipts=True):
         proc = process_registry.get(entry["session_id"])
-        if proc is None:
-            continue
         status = process_status(entry)
-        exited_at = proc.exited_at if status != "running" else 0.0
-        if status != "running" and now - exited_at > RETAIN_SECONDS:
+        if proc is None:
+            if status not in live:
+                continue
+            elapsed = int(entry.get("uptime_seconds") or 0)
+            rows.append({
+                "kind": "process",
+                "key": entry["session_id"],
+                "id": entry["session_id"],
+                "command": " ".join((entry.get("command") or "").split()) or t("cli.dock.process_goal_label"),
+                "status": status,
+                "exit_code": entry.get("exit_code"),
+                "elapsed": elapsed,
+                "since_exit": 0,
+                "detail": _last_output_line(entry.get("output_preview") or ""),
+            })
+            continue
+        exited_at = proc.exited_at if status not in live else 0.0
+        if status not in live and now - exited_at > RETAIN_SECONDS:
             continue
         end = exited_at or now
         rows.append({
@@ -68,11 +87,11 @@ def process_rows(now: float | None = None) -> list:
             "since_exit": max(0, int(now - exited_at)) if exited_at else 0,
             "detail": _last_output_line(proc.output_buffer),
         })
-    rows.sort(key=lambda r: (r["status"] != "running", -r["elapsed"] if r["status"] == "running" else r["since_exit"]))
+    rows.sort(key=lambda r: (r["status"] not in live, -r["elapsed"] if r["status"] in live else r["since_exit"]))
     return rows
 
 
-_GLYPH = {"running": "⚙", "done": "✔", "failed": "✘", "killed": "✘", "lost": "?"}
+_GLYPH = {"running": "⚙", "waiting": "⚙", "ready": "✔", "done": "✔", "failed": "✘", "killed": "✘", "lost": "?"}
 # Finished-status id → catalog key of the exit verdict (looked up at paint time).
 _VERDICT_KEYS = {"done": "cli.dock.exit_code", "failed": "cli.dock.exit_code",
                  "killed": "cli.dock.verdict_killed", "lost": "cli.dock.verdict_lost"}
@@ -81,9 +100,11 @@ _VERDICT_KEYS = {"done": "cli.dock.exit_code", "failed": "cli.dock.exit_code",
 def process_activity(row: dict) -> str:
     """The trailing ``· …`` part of a dock line: elapsed + latest output while running, the exit
     verdict + age once finished."""
-    if row["status"] == "running":
+    if row["status"] in {"running", "waiting"}:
         return f"{row['elapsed']}s · " + (
             t("cli.dock.last_output", detail=row["detail"]) if row["detail"] else t("cli.dock.starting"))
+    if row["status"] == "ready":
+        return f"{row['elapsed']}s · " + (row["detail"] or "ready")
     verdict = _VERDICT_KEYS[row["status"]]
     verdict = t(verdict, code=row["exit_code"])
     return t("cli.dock.verdict_ago", verdict=verdict, seconds=row["since_exit"])

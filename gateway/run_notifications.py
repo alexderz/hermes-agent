@@ -1186,6 +1186,9 @@ class GatewayNotificationsMixin(GatewayUpdateNotificationsMixin, GatewayNotifica
         verdict, claim.owner_session_id, claim.proven_session_id = await self._classify_completion_owner(
             parent_session_id, str(evt.get("session_key") or ""))
         if verdict == "terminal":
+            if evt_type == "completion":
+                from tools.process_registry_service import clear_service_admission
+                clear_service_admission(str(evt.get("session_id") or ""))
             if evt_type == "async_delegation":
                 logger.warning(
                     "Async delegation %s targets permanently-gone session %s; "
@@ -1540,6 +1543,8 @@ class GatewayNotificationsMixin(GatewayUpdateNotificationsMixin, GatewayNotifica
                     continue
             parent = str(evt.get("parent_session_id") or "")
             if parent and await self._classify_completion_target(parent, str(evt.get("session_key") or "")) == "terminal":
+                from tools.process_registry_service import clear_service_admission
+                clear_service_admission(str(evt.get("session_id") or ""))
                 await self._deliver_completion_notification(synth_text, evt)
                 continue
             identity = self._completion_delivery_identity(evt)
@@ -1848,6 +1853,18 @@ class GatewayNotificationsMixin(GatewayUpdateNotificationsMixin, GatewayNotifica
         finally:
             live.discard(watcher["session_id"])
 
+    async def _watch_service_until_settled(self, session, session_id: str, interval: float) -> None:
+        """Refresh one service until it exits. The completion event is published elsewhere."""
+        from tools.process_registry import process_registry
+        from tools.process_registry_service import refresh_service_session
+
+        while session is not None and getattr(session, "service_unit", ""):
+            refresh_service_session(process_registry, session)
+            if session.exited:
+                return
+            await asyncio.sleep(interval)
+            session = process_registry.get(session_id)
+
     async def _watch_process(self, watcher: dict) -> None:
         """Poll a background process and push updates until it exits. Mode
         (``display.background_process_notifications``): concise (default one-liner; failures append
@@ -1872,6 +1889,10 @@ class GatewayNotificationsMixin(GatewayUpdateNotificationsMixin, GatewayNotifica
             await asyncio.sleep(retry_interval)
             session = process_registry.get(session_id)
             if session is None:
+                break
+            if getattr(session, "service_unit", ""):
+                # Show refresh is the only terminal writer. Do not build a second event.
+                await self._watch_service_until_settled(session, session_id, interval)
                 break
             surface = should_surface_notification({
                 "owner_task_id": getattr(session, "owner_task_id", ""),
