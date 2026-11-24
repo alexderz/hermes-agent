@@ -19,6 +19,7 @@ const fixture = vi.hoisted(() => ({
     openrouter: { week: 12.34 as number | null | undefined, today: 1.23 as number | null | undefined },
     cheaperinference: {
       status: 'ok' as string,
+      spend: { today: 0.42, week: 1.9, month: 4.47, balance: null } as Record<string, unknown> | null,
       active_model: 'model-b' as string | null,
       models: [
         { id: 'model-a', provider: 'DeepSeek', input: 0.5, output: 2, discount: 15 },
@@ -359,20 +360,33 @@ it('shows Cheaper Inference rates in a pay-per-use grid and a status chip', () =
   const { container, getByTestId } = render(meter())
   const panel = getByTestId('usage-panel')
   const ci = panel.querySelector('[data-payg-cheaperinference]')!
+  const rates = panel.querySelector('[data-ci-rates]')!
 
   expect(panel.textContent).toContain('Subscriptions')
   expect(panel.textContent).toContain('Pay per use')
   expect(ci.textContent).toContain('Cheaper Inference')
-  const active = ci.querySelector('[data-ci-model="model-b"]')!
+  const active = rates.querySelector('[data-ci-model="model-b"]')!
   expect(active.textContent).toContain('model-b')
   expect(active.textContent).toContain('0.075')
   expect(active.textContent).toContain('0.24')
   expect(active.textContent).toContain('-56%')
-  expect(ci.textContent).toContain('Current model: model-b')
+  expect(rates.textContent).toContain('Current model: model-b')
 
+  expect(ci.textContent).toContain('W $1.90  D $0.42')
+  expect(ci.textContent).toContain('M $4.47')
   for (const row of container.querySelectorAll('[data-usage-compact], [data-usage-full]')) {
     const chip = row.querySelector('[data-ci-chip]')
-    expect(chip?.textContent).toContain('CI 0.075/0.24')
-    expect(chip?.getAttribute('aria-label')).toContain('56% off list')
+    expect(chip?.textContent).toContain('CI W$1.9 D$0.42')
+    expect(chip?.getAttribute('aria-label')).toContain('this week (UTC)')
+  }
+})
+
+it('colours the Antigravity chip by remaining Neon quota', () => {
+  const cases: Array<[number, string]> = [[100, 'good'], [35, 'good'], [20, 'warn'], [9, 'bad'], [0, 'bad']]
+  for (const [left, tone] of cases) {
+    showAgy(agyCard({ summary: { group_name: 'Gemini Models', tag: 'G', window: 'weekly', remaining_percent: left } }))
+    const { container, unmount } = render(meter())
+    expect(container.querySelector('[data-usage-compact] [data-agy-chip] [data-tone]')?.getAttribute('data-tone')).toBe(tone)
+    unmount()
   }
 })

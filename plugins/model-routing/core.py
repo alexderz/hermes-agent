@@ -354,12 +354,19 @@ def render_text(state: dict[str, Any], now: Optional[datetime] = None) -> str:
         lines.append(f"  OpenRouter (pay per use): ${o.get('today') or 0:.2f} today, ${o.get('week') or 0:.2f} this week, "
                      f"${o.get('month') or 0:.2f} this month; balance ${o.get('balance') or 0:.2f}")
     ci = state.get("cheaperinference") or {}
-    if ci.get("status") == "ok" and ci.get("models"):
-        lines.append("  Cheaper Inference (pay per use, $/M tokens in / out):")
-        for row in ci["models"]:
-            off = f", {row['discount']:.0f}% off list" if row.get("discount") else ""
-            mark = "  <- current model" if ci.get("active_model") == row.get("id") else ""
-            lines.append(f"    {row['id']}: ${row['input']:.4g} in / ${row['output']:.4g} out{off}{mark}")
+    if ci.get("status") == "ok":
+        spend = ci.get("spend") or {}
+        if spend:
+            lines.append(f"  Cheaper Inference (pay per use): ${spend.get('today') or 0:.2f} today, "
+                         f"${spend.get('week') or 0:.2f} this week, ${spend.get('month') or 0:.2f} this month")
+        elif ci.get("spend_error"):
+            lines.append(f"  Cheaper Inference (pay per use): spend unavailable ({ci['spend_error']})")
+        if ci.get("models"):
+            lines.append("    Model rates ($/M tokens in / out):")
+            for row in ci["models"]:
+                off = f", {row['discount']:.0f}% off list" if row.get("discount") else ""
+                mark = "  <- current model" if ci.get("active_model") == row.get("id") else ""
+                lines.append(f"      {row['id']}: ${row['input']:.4g} in / ${row['output']:.4g} out{off}{mark}")
     pick = state.get("pick")
     od = state.get("on_demand") or {}
     if od.get("active"):

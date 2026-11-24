@@ -56,9 +56,18 @@ function agyChipText(c, compact) {
   return `${provider} ${summary.tag} ${pct(summary.remaining_percent)}`
 }
 
+// Remaining Neon/Gemini quota, in percent. The same notice thresholds the model picker uses:
+// 20 or less is amber, 10 or less is red, exhausted is red.
+const AGY_WARN_REMAINING = 20
+const AGY_BAD_REMAINING = 10
+
 function agyTone(c) {
   const summary = agySummary(c)
-  return summary && summary.remaining_percent === 0 ? 'bad' : 'muted'
+  if (!summary || !Number.isFinite(summary.remaining_percent)) return 'muted'
+  const left = summary.remaining_percent
+  if (left <= AGY_BAD_REMAINING) return 'bad'
+  if (left <= AGY_WARN_REMAINING) return 'warn'
+  return 'good'
 }
 
 // A single status-bar row, not another mobile toolbar. Reserve enough of the
@@ -172,6 +181,7 @@ function PaygSection({ data }) {
   const o = data.openrouter || {}
   const ci = data.cheaperinference || {}
   const models = ci.status === 'ok' ? (ci.models || []) : []
+  const spend = ci.status === 'ok' ? (ci.spend || null) : null
   const active = models.find(row => row.id === ci.active_model) || null
   return jsx(Section, { label: 'Pay per use', children: [
     jsxs('div', {
@@ -185,8 +195,22 @@ function PaygSection({ data }) {
         jsx('div', { style: { color: 'var(--ui-text-tertiary)', fontSize: 10.5, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }, children: `M ${money(o.month)} · bal ${money(o.balance)}` })
       ]
     }),
-    models.length ? jsxs('div', { 'data-payg-cheaperinference': '', style: { paddingTop: 3, minWidth: 0 }, children: [
-      jsx('div', { style: { fontWeight: 600 }, children: 'Cheaper Inference' }),
+    jsxs('div', {
+      'data-payg-cheaperinference': '',
+      style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: '1px 10px', padding: '3px 0',
+        borderBottom: '1px dotted var(--ui-stroke-secondary)', minWidth: 0 },
+      children: [
+        jsx('div', { style: { fontWeight: 600, minWidth: 0 }, children: 'Cheaper Inference' }),
+        jsx('div', { style: { fontWeight: 700, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }, children:
+          spend ? `W ${money(spend.week)}  D ${money(spend.today)}` : '–' }),
+        jsx('div', { style: { color: 'var(--ui-text-tertiary)', fontSize: 10.5 }, children: 'UTC spend' }),
+        jsx('div', { style: { color: 'var(--ui-text-tertiary)', fontSize: 10.5, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }, children:
+          spend ? `M ${money(spend.month)}${Number.isFinite(spend.balance) ? ` · bal ${money(spend.balance)}` : ''}`
+            : (ci.spend_error || ci.error || 'spend unavailable') })
+      ]
+    }),
+    models.length ? jsxs('div', { 'data-ci-rates': '', style: { paddingTop: 3, minWidth: 0 }, children: [
+      jsx('div', { style: { fontWeight: 600, fontSize: 10.5, color: 'var(--ui-text-tertiary)' }, children: 'Model rates' }),
       jsxs('div', {
         style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 42px 42px 30px', gap: '0 6px',
           fontSize: 10, fontVariantNumeric: 'tabular-nums', color: 'var(--ui-text-tertiary)', paddingTop: 1 },
@@ -216,8 +240,7 @@ function PaygSection({ data }) {
       }, row.id)),
       active ? jsx('div', { style: { color: 'var(--ui-text-tertiary)', fontSize: 10, paddingTop: 1 },
         children: `Current model: ${active.id}` }) : null
-    ] }) : jsx('div', { style: { color: 'var(--ui-text-tertiary)', fontSize: 10.5, padding: '3px 0' },
-      children: ci.status === 'ok' ? 'No configured model rates' : (ci.error || 'Rates unavailable') })
+    ] }) : null
   ] })
 }
 
@@ -279,8 +302,7 @@ function Meter({ ctx }) {
   if (!data) return null
   const o = data.openrouter || {}
   const ci = data.cheaperinference || {}
-  const ciModels = ci.status === 'ok' ? (ci.models || []) : []
-  const ciActive = ciModels.find(row => row.id === ci.active_model) || null
+  const ciSpend = ci.status === 'ok' ? (ci.spend || null) : null
   const chips = (compact) => (data.cards || []).flatMap(c => {
     if (isAgy(c)) {
       if (!agySummary(c)) return []
@@ -300,14 +322,14 @@ function Meter({ ctx }) {
         `${METER_SHORT[c.id] || c.name} ${pct(left)}${!compact && c.pace_delta != null ? ` P${signed(c.pace_delta)}` : ''}`
       ] })]
   })
-  const ciDetail = ciActive
-    ? `Cheaper Inference ${ciActive.id}: $${rate(ciActive.input)} per million in, $${rate(ciActive.output)} out` +
-      (ciActive.discount ? `, ${Math.round(ciActive.discount)}% off list` : '')
-    : 'Cheaper Inference rates unavailable'
-  const ciChip = ciActive
+  const ciDetail = ciSpend
+    ? `Cheaper Inference spending: this week (UTC) ${money(ciSpend.week)}, today (UTC) ${money(ciSpend.today)}` +
+      `, this month (UTC) ${money(ciSpend.month)}`
+    : 'Cheaper Inference spend unavailable'
+  const ciChip = ciSpend
     ? jsx('span', { 'data-ci-chip': '', 'aria-label': ciDetail, title: ciDetail,
         style: { display: 'inline-flex', alignItems: 'center', gap: 4 }, children: [
-          jsx(StatusDot, { tone: 'muted' }), `CI ${rate(ciActive.input)}/${rate(ciActive.output)}`
+          jsx(StatusDot, { tone: 'muted' }), `CI W${compactMoney(ciSpend.week)} D${compactMoney(ciSpend.today)}`
         ] }, 'ci')
     : null
   const costDetail = `OpenRouter spending: this week (UTC) ${money(o.week)}, today (UTC) ${money(o.today)}`

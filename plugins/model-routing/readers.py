@@ -14,7 +14,7 @@ import os
 import re
 import subprocess
 import urllib.request
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Callable, Optional
 
 SUPERGROK_BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
@@ -318,6 +318,7 @@ READERS: dict[str, Callable[[], dict[str, Any]]] = {
 # Hermes is configured to use through ``custom:cheaperinference``. One read-only GET, no tokens.
 
 CHEAPER_MODELS_URL = "https://api.cheaperinference.com/v1/models"
+CHEAPER_USAGE_URL = "https://api.cheaperinference.com/v1/usage/daily"
 CHEAPER_MAX_BYTES = 8 * 1024 * 1024
 CHEAPER_TIMEOUT_S = 20.0
 _CHEAPER_KEY_ENVS = ("CHEAPERINFERENCE_API_KEY", "CI_MCP_BEARER_TOKEN")
@@ -433,12 +434,47 @@ def _cheaper_urlopen(req, timeout: float) -> bytes:
         return resp.read(CHEAPER_MAX_BYTES + 1)
 
 
+def parse_cheaper_spend(payload: Any, now: datetime) -> Optional[dict[str, Any]]:
+    """UTC week/day/month spend from the daily feed, the same shape OpenRouter reports.
+
+    Balance needs ``account:read`` on the key; without it the balance stays unknown, never zero.
+    """
+    if not isinstance(payload, dict) or not isinstance(payload.get("daily_spend"), list):
+        return None
+    by_day: dict[str, float] = {}
+    for row in payload["daily_spend"]:
+        if not isinstance(row, dict):
+            continue
+        date = row.get("date")
+        amount = _price(row.get("spend_usd"))
+        if isinstance(date, str) and len(date) == 10 and amount is not None:
+            by_day[date] = amount
+    if not by_day:
+        return None
+    day = now.astimezone(UTC).date()
+    monday = day - timedelta(days=day.weekday())
+    first = day.replace(day=1)
+    week = round(sum(v for d, v in by_day.items() if d >= monday.isoformat()), 6)
+    month = round(sum(v for d, v in by_day.items() if d >= first.isoformat()), 6)
+    return {"today": by_day.get(day.isoformat(), 0.0), "week": week, "month": month, "balance": None}
+
+
+def _cheaper_get(url: str, token: str, timeout: float) -> Any:
+    req = urllib.request.Request(url, headers={"Authorization": "Bearer " + token, "Accept": "application/json"})
+    raw = _cheaper_urlopen(req, timeout)
+    if not raw or len(raw) > CHEAPER_MAX_BYTES:
+        raise ValueError("payload rejected")
+    return json.loads(raw.decode("utf-8"))
+
+
 def read_cheaper_inference(token_fn: Callable[[], Optional[str]] = _cheaper_token,
                            timeout: float = CHEAPER_TIMEOUT_S,
-                           models_fn: Callable[[], list[str]] = cheaper_configured_models) -> dict[str, Any]:
-    """Read the Cheaper Inference rates for the models this Hermes is configured to use.
+                           models_fn: Callable[[], list[str]] = cheaper_configured_models,
+                           now: Optional[datetime] = None) -> dict[str, Any]:
+    """Read Cheaper Inference spend and the rates for the models this Hermes uses.
 
-    Total by design: any failure becomes a ``failed`` reading so the collector still writes state.
+    Total by design: any failure becomes a failed reading so the collector still writes state.
+    Spend is the primary figure; the rate rows are detail that may be absent.
     """
     try:
         token = token_fn()
@@ -449,25 +485,25 @@ def read_cheaper_inference(token_fn: Callable[[], Optional[str]] = _cheaper_toke
     try:
         wanted = list(dict.fromkeys(models_fn()))
     except Exception:
-        return _failed("cheaperinference", "configured models unavailable")
-    if not wanted:
-        return _failed("cheaperinference", "no configured models")
+        wanted = []
+    moment = now or datetime.now(UTC)
+    spend = None
+    spend_error = None
     try:
-        req = urllib.request.Request(CHEAPER_MODELS_URL, headers={
-            "Authorization": "Bearer " + token, "Accept": "application/json"})
-        raw = _cheaper_urlopen(req, timeout)
+        spend = parse_cheaper_spend(_cheaper_get(CHEAPER_USAGE_URL, token, timeout), moment)
+        if spend is None:
+            spend_error = "usage returned no daily spend"
     except Exception as exc:
-        code = getattr(exc, "code", None)
-        return _failed("cheaperinference", f"HTTP {code}" if code else f"{type(exc).__name__}")
-    if not raw or len(raw) > CHEAPER_MAX_BYTES:
-        return _failed("cheaperinference", "model catalog unavailable")
+        spend_error = f"usage unreadable ({type(exc).__name__})"
+    rows: list[dict[str, Any]] = []
+    active = None
     try:
-        payload = json.loads(raw.decode("utf-8"))
-        rows = parse_cheaper_models(payload, wanted)
-        active = cheaper_active_model()
-    except Exception as exc:  # malformed, too deeply nested, or a broken price field
-        return _failed("cheaperinference", f"model catalog unreadable ({type(exc).__name__})")
-    if not rows:
-        return _failed("cheaperinference", "no priced configured models")
+        payload = _cheaper_get(CHEAPER_MODELS_URL, token, timeout) if wanted else None
+        rows = parse_cheaper_models(payload, wanted) if payload is not None else []
+        active = cheaper_active_model() if rows else None
+    except Exception:
+        rows, active = [], None
+    if spend is None and not rows:
+        return _failed("cheaperinference", spend_error or "no rates or spend")
     return {"id": "cheaperinference", "status": "ok", "attempted_at": _now_iso(), "observed_at": _now_iso(),
-            "active_model": active, "models": rows}
+            "spend": spend, "spend_error": spend_error, "active_model": active, "models": rows}

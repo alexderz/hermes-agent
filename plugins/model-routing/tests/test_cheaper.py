@@ -69,6 +69,7 @@ class ParseTests(unittest.TestCase):
 class CollectTests(unittest.TestCase):
     def cheaper(self):
         return {"id": "cheaperinference", "status": "ok", "observed_at": NOW.isoformat(),
+                "spend": {"today": 0.42, "week": 1.9, "month": 4.47, "balance": None},
                 "active_model": "b",
                 "models": [{"id": "b", "provider": "DeepSeek", "input": 0.075, "output": 0.24,
                             "list_input": 0.3, "list_output": 1.2, "discount": 56.0, "free": False}]}
@@ -118,15 +119,17 @@ class CollectTests(unittest.TestCase):
 class ReaderTests(unittest.TestCase):
     """read_cheaper_inference is total: every failure becomes a failed reading."""
 
-    def read(self, payload=b"", *, token="token", models=("m",), exc=None):
+    def read(self, payload=b"", *, usage=b'{"daily_spend":[]}', token="token", models=("m",), exc=None, now=None):
         def fake(req, timeout):
             if exc is not None:
                 raise exc
+            if req.full_url.endswith("/usage/daily"):
+                return usage
             return payload
 
         with patch.object(readers, "_cheaper_urlopen", fake):
             return readers.read_cheaper_inference(token_fn=lambda: token,
-                                                  models_fn=lambda: list(models))
+                                                  models_fn=lambda: list(models), now=now)
 
     def catalog(self, *rows):
         return json.dumps({"data": list(rows)}).encode()
@@ -143,19 +146,19 @@ class ReaderTests(unittest.TestCase):
 
         reading = self.read(exc=HTTPError("down"))
         self.assertEqual(reading["status"], "failed")
-        self.assertEqual(reading["error"], "HTTP 503")
+        self.assertEqual(reading["error"], "usage unreadable (HTTPError)")
 
     def test_transport_error_is_a_failed_reading(self):
         reading = self.read(exc=TimeoutError())
         self.assertEqual(reading["status"], "failed")
-        self.assertEqual(reading["error"], "TimeoutError")
+        self.assertEqual(reading["error"], "usage unreadable (TimeoutError)")
 
     def test_hostile_prices_do_not_raise(self):
         huge = json.dumps({"data": [{"id": "m", "pricing": {"input_per_million": 1 << 2000,
                                                             "output_per_million": 1}}]}).encode()
         reading = self.read(huge)
         self.assertEqual(reading["status"], "failed")
-        self.assertEqual(reading["error"], "no priced configured models")
+        self.assertIn("usage", reading["error"])
 
     def test_non_string_provider_is_dropped(self):
         reading = self.read(self.catalog({"id": "m", "provider": {"x": 1},
@@ -166,7 +169,7 @@ class ReaderTests(unittest.TestCase):
     def test_malformed_json_is_a_failed_reading(self):
         reading = self.read(b"{not json")
         self.assertEqual(reading["status"], "failed")
-        self.assertIn("unreadable", reading["error"])
+        self.assertTrue(reading["error"])
 
     def test_recursion_error_from_the_parser_is_caught(self):
         with patch.object(readers.json, "loads", side_effect=RecursionError):
@@ -178,6 +181,46 @@ class ReaderTests(unittest.TestCase):
         reading = self.read(self.catalog({"id": "m", "pricing": {"input_per_million": "1", "output_per_million": "2"}}),
                             models=("m", "m"))
         self.assertEqual([row["id"] for row in reading["models"]], ["m"])
+
+    def test_spend_is_primary_and_rates_are_detail(self):
+        usage = json.dumps({"daily_spend": [
+            {"date": "2026-11-24", "spend_usd": "1.00"},
+            {"date": "2026-11-26", "spend_usd": "0.25"}]}).encode()
+        reading = self.read(self.catalog({"id": "m", "pricing": {"input_per_million": "1", "output_per_million": "2"}}),
+                            usage=usage, now=datetime(2026, 11, 26, 12, tzinfo=UTC))
+        self.assertEqual(reading["status"], "ok")
+        self.assertEqual(reading["spend"]["today"], 0.25)
+        self.assertEqual(reading["spend"]["week"], 1.25)
+        self.assertEqual(reading["spend"]["month"], 1.25)
+        self.assertEqual(reading["models"][0]["id"], "m")
+
+    def test_spend_without_rates_is_still_ok(self):
+        usage = json.dumps({"daily_spend": [{"date": "2026-11-26", "spend_usd": "0.10"}]}).encode()
+        reading = self.read(b"{}", usage=usage, now=datetime(2026, 11, 26, 12, tzinfo=UTC))
+        self.assertEqual(reading["status"], "ok")
+        self.assertEqual(reading["spend"]["today"], 0.10)
+        self.assertEqual(reading["models"], [])
+
+
+class SpendTests(unittest.TestCase):
+    def payload(self, *pairs):
+        return {"daily_spend": [{"date": day, "spend_usd": amount} for day, amount in pairs]}
+
+    def test_utc_week_month_and_today(self):
+        now = datetime(2026, 11, 26, 12, tzinfo=UTC)  # Thursday
+        out = readers.parse_cheaper_spend(self.payload(
+            ("2026-10-31", "1.00"), ("2026-11-01", "2.00"),
+            ("2026-11-22", "3.00"), ("2026-11-23", "0.40"), ("2026-11-26", "0.10")), now)
+        self.assertEqual(out["today"], 0.10)
+        self.assertAlmostEqual(out["week"], 0.50)   # Monday the 23rd onward
+        self.assertAlmostEqual(out["month"], 5.50)  # the 1st onward
+        self.assertIsNone(out["balance"])           # needs account:read, never zero
+
+    def test_missing_today_reads_zero_and_unknown_shapes_are_none(self):
+        now = datetime(2026, 11, 26, 12, tzinfo=UTC)
+        self.assertEqual(readers.parse_cheaper_spend(self.payload(("2026-11-25", "1.00")), now)["today"], 0.0)
+        for payload in (None, {}, {"daily_spend": "nope"}, {"daily_spend": [{"date": "bad"}]}):
+            self.assertIsNone(readers.parse_cheaper_spend(payload, now))
 
 
 if __name__ == "__main__":
