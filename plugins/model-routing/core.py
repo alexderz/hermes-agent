@@ -87,7 +87,9 @@ def _merge_reading(prev: Optional[dict[str, Any]], new: dict[str, Any]) -> dict[
 
 
 def collect(*, now: Optional[datetime] = None, read: Optional[dict[str, Callable[[], dict]]] = None,
-            read_openrouter: Optional[Callable[[], dict]] = None, path: Optional[Path] = None,
+            read_openrouter: Optional[Callable[[], dict]] = None,
+            read_cheaper: Optional[Callable[[], dict]] = None,
+            path: Optional[Path] = None,
             cfg: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     """Read every subscription once, score, advance the latch and write the state file."""
     cfg = {**pace.DEFAULTS, **(cfg or {})}
@@ -100,6 +102,9 @@ def collect(*, now: Optional[datetime] = None, read: Optional[dict[str, Callable
     orr = (read_openrouter or readers.read_openrouter)()
     if orr.get("status") != "ok" and (prev.get("openrouter") or {}).get("observed_at"):
         orr = {**prev["openrouter"], "status": "failed", "error": orr.get("error")}
+    cheaper = (read_cheaper or readers.read_cheaper_inference)()
+    if cheaper.get("status") != "ok" and (prev.get("cheaperinference") or {}).get("observed_at"):
+        cheaper = {**prev["cheaperinference"], "status": "failed", "error": cheaper.get("error")}
     now = now or datetime.now(UTC)
     scored = {k: v for k, v in subs.items() if k not in DISPLAY_ONLY}
     scores = {k: pace.assess(v, now, cfg) for k, v in scored.items()}
@@ -123,7 +128,7 @@ def collect(*, now: Optional[datetime] = None, read: Optional[dict[str, Callable
         t = SUBSCRIPTIONS.get(latch["incumbent"], {})
         pick = {"subscription": latch["incumbent"], "provider": t.get("provider"), "model": t.get("model")}
     state = {"schema": SCHEMA, "written_at": now.isoformat(), "subscriptions": subs, "scores": scores,
-             "openrouter": orr, "latch": latch, "pick": pick,
+             "openrouter": orr, "cheaperinference": cheaper, "latch": latch, "pick": pick,
              "on_demand": {"active": on_demand, "reason": od_reason}, "warning": warning,
              "last_transition": transition or prev.get("last_transition")}
     _write_atomic(path, state)
@@ -344,6 +349,13 @@ def render_text(state: dict[str, Any], now: Optional[datetime] = None) -> str:
     if o:
         lines.append(f"  OpenRouter (pay per use): ${o.get('today') or 0:.2f} today, ${o.get('week') or 0:.2f} this week, "
                      f"${o.get('month') or 0:.2f} this month; balance ${o.get('balance') or 0:.2f}")
+    ci = state.get("cheaperinference") or {}
+    if ci.get("status") == "ok" and ci.get("models"):
+        lines.append("  Cheaper Inference (pay per use, $/M tokens in / out):")
+        for row in ci["models"]:
+            off = f", {row['discount']:.0f}% off list" if row.get("discount") else ""
+            mark = "  <- current model" if ci.get("active_model") == row.get("id") else ""
+            lines.append(f"    {row['id']}: ${row['input']:.4g} in / ${row['output']:.4g} out{off}{mark}")
     pick = state.get("pick")
     od = state.get("on_demand") or {}
     if od.get("active"):

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import subprocess
 import urllib.request
@@ -309,3 +310,139 @@ def read_agy() -> dict[str, Any]:
 READERS: dict[str, Callable[[], dict[str, Any]]] = {
     "claude": read_claude, "codex": read_codex, "supergrok": read_supergrok, "agy": read_agy,
 }
+
+
+# ---------------------------------------------------------- Cheaper Inference rates
+#
+# Pay-per-use prices, not a quota: the catalog the account pays, filtered to the models this
+# Hermes is configured to use through ``custom:cheaperinference``. One read-only GET, no tokens.
+
+CHEAPER_MODELS_URL = "https://api.cheaperinference.com/v1/models"
+CHEAPER_MAX_BYTES = 8 * 1024 * 1024
+CHEAPER_TIMEOUT_S = 20.0
+_CHEAPER_KEY_ENVS = ("CHEAPERINFERENCE_API_KEY", "CI_MCP_BEARER_TOKEN")
+
+
+def _cheaper_token() -> Optional[str]:
+    for name in _CHEAPER_KEY_ENVS:
+        value = os.environ.get(name)
+        if value and value.strip():
+            return value.strip()
+    return None
+
+
+def cheaper_configured_models(cfg: Optional[dict[str, Any]] = None) -> list[str]:
+    """The model ids this Hermes routes through Cheaper Inference, in config order."""
+    if cfg is None:
+        try:
+            from hermes_cli.config import load_config
+            cfg = load_config() or {}
+        except Exception:
+            cfg = {}
+    entry = ((cfg or {}).get("providers") or {}).get("cheaperinference") or {}
+    models = [m for m in entry.get("models") or [] if isinstance(m, str) and m.strip()]
+    default = (cfg or {}).get("model") or {}
+    default_model = default.get("default") if isinstance(default, dict) else None
+    if isinstance(default_model, str) and default_model and default_model not in models:
+        models.append(default_model)
+    return models
+
+
+def cheaper_active_model(cfg: Optional[dict[str, Any]] = None) -> Optional[str]:
+    """The configured default model, when it runs through Cheaper Inference."""
+    if cfg is None:
+        try:
+            from hermes_cli.config import load_config
+            cfg = load_config() or {}
+        except Exception:
+            cfg = {}
+    default = (cfg or {}).get("model") or {}
+    model = default.get("default") if isinstance(default, dict) else None
+    provider = default.get("provider") if isinstance(default, dict) else None
+    if isinstance(model, str) and model in cheaper_configured_models(cfg) and isinstance(provider, str) \
+            and "cheaperinference" in provider:
+        return model
+    return None
+
+
+def _price(value: Any) -> Optional[float]:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+    elif isinstance(value, str) and value.strip():
+        try:
+            number = float(value)
+        except ValueError:
+            return None
+    else:
+        return None
+    return number if math.isfinite(number) and number >= 0 else None
+
+
+def parse_cheaper_models(payload: Any, wanted: list[str]) -> list[dict[str, Any]]:
+    """Rows for the configured models, in config order. Unknown or unpriced models are skipped."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+        return []
+    by_id: dict[str, dict[str, Any]] = {}
+    for item in payload["data"]:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+            continue
+        pricing = item.get("pricing")
+        if not isinstance(pricing, dict):
+            continue
+        input_price = _price(pricing.get("input_per_million"))
+        output_price = _price(pricing.get("output_per_million"))
+        if input_price is None or output_price is None:
+            continue
+        row = {
+            "id": item["id"],
+            "provider": item.get("provider") or item.get("owned_by") or "",
+            "input": input_price,
+            "output": output_price,
+            "list_input": _price(pricing.get("list_input_per_million")),
+            "list_output": _price(pricing.get("list_output_per_million")),
+            "discount": _price(pricing.get("discount_percent")),
+            "free": bool(item.get("is_free")),
+        }
+        by_id[item["id"]] = row
+    rows = []
+    for model_id in wanted:
+        row = by_id.get(model_id)
+        if row is not None:
+            rows.append(row)
+    return rows
+
+
+def read_cheaper_inference(token_fn: Callable[[], Optional[str]] = _cheaper_token,
+                           timeout: float = CHEAPER_TIMEOUT_S,
+                           models_fn: Callable[[], list[str]] = cheaper_configured_models) -> dict[str, Any]:
+    """Read the Cheaper Inference rates for the models this Hermes is configured to use."""
+    token = token_fn()
+    if not token:
+        return _failed("cheaperinference", "no Cheaper Inference key")
+    try:
+        wanted = models_fn()
+    except Exception as exc:
+        return _failed("cheaperinference", f"{type(exc).__name__}: {exc}")
+    if not wanted:
+        return _failed("cheaperinference", "no configured models")
+    try:
+        req = urllib.request.Request(CHEAPER_MODELS_URL, headers={
+            "Authorization": "Bearer " + token, "Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read(CHEAPER_MAX_BYTES + 1)
+    except Exception as exc:
+        code = getattr(exc, "code", None)
+        return _failed("cheaperinference", f"HTTP {code}" if code else f"{type(exc).__name__}: {exc}")
+    if not raw or len(raw) > CHEAPER_MAX_BYTES:
+        return _failed("cheaperinference", "model catalog unavailable")
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return _failed("cheaperinference", "model catalog malformed")
+    rows = parse_cheaper_models(payload, wanted)
+    if not rows:
+        return _failed("cheaperinference", "no priced configured models")
+    return {"id": "cheaperinference", "status": "ok", "attempted_at": _now_iso(), "observed_at": _now_iso(),
+            "active_model": cheaper_active_model(), "models": rows}

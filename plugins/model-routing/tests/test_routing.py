@@ -4,18 +4,22 @@ import json
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-import core  # noqa: E402
-import pace  # noqa: E402
-import readers  # noqa: E402
+import core
+import pace
+import readers
 
-NOW = datetime(2026, 11, 8, 18, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 11, 8, 18, 0, tzinfo=UTC)
 CFG = dict(pace.DEFAULTS)
+
+
+def offline_cheaper():
+    return {"id": "cheaperinference", "status": "failed", "error": "offline"}
 
 
 def reading(sub_id, used, reset_in_h, *, short=None, status="ok", age_s=60):
@@ -141,12 +145,12 @@ class CollectTests(unittest.TestCase):
             ok = {"claude": lambda: reading("claude", 16, 127), "codex": lambda: reading("codex", 10, 100),
                   "supergrok": lambda: reading("supergrok", 19, 30)}
             orr = lambda: {"id": "openrouter", "status": "ok", "observed_at": NOW.isoformat(), "spend": {"today": 0.0}}
-            st = core.collect(now=NOW, read=ok, read_openrouter=orr, path=path)
+            st = core.collect(now=NOW, read=ok, read_openrouter=orr, read_cheaper=offline_cheaper, path=path)
             self.assertIsNotNone(st["pick"])
             self.assertFalse(st["warning"]["active"])
             self.assertEqual(oct(path.stat().st_mode & 0o777), "0o600")
             failing = dict(ok, supergrok=lambda: {"id": "supergrok", "status": "failed", "error": "HTTP 401"})
-            st2 = core.collect(now=NOW + timedelta(minutes=15), read=failing, read_openrouter=orr, path=path)
+            st2 = core.collect(now=NOW + timedelta(minutes=15), read=failing, read_openrouter=orr, read_cheaper=offline_cheaper, path=path)
             self.assertEqual(st2["subscriptions"]["supergrok"]["status"], "failed")
             self.assertIn("observed_at", st2["subscriptions"]["supergrok"])  # last good kept
             self.assertTrue(st2["warning"]["active"])

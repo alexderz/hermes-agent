@@ -116,32 +116,46 @@ function groupMetric(group) {
     || null
 }
 
+const rate = v => !Number.isFinite(v) ? '–' : v === 0 ? 'free' : String(Number(v.toPrecision(3)))
+
+function Section({ label, children }) {
+  return jsxs('div', { style: { marginTop: 6, minWidth: 0 }, children: [
+    jsx('div', {
+      style: { fontSize: 9.5, fontWeight: 700, letterSpacing: '.07em', textTransform: 'uppercase',
+        color: 'var(--ui-text-quaternary)', borderBottom: '1px solid var(--ui-stroke-secondary)',
+        paddingBottom: 2, marginBottom: 1 },
+      children: label
+    }),
+    ...children
+  ] })
+}
+
 function AgyDetails({ c }) {
   const groups = c.fresh ? (c.groups || []) : []
   const summary = agySummary(c)
   return jsxs('div', {
     'data-agy-details': '',
-    style: { padding: '6px 0', borderBottom: '1px solid var(--ui-stroke-secondary)', minWidth: 0 },
+    style: { padding: '5px 0', borderBottom: '1px solid var(--ui-stroke-secondary)', minWidth: 0 },
     children: [
       jsxs('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: '2px 12px', alignItems: 'center' }, children: [
         jsxs('div', { style: { display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, minWidth: 0 }, children: [
           jsx(StatusDot, { tone: agyTone(c) }), 'Antigravity'
         ] }),
-        summary ? jsx('div', { 'data-agy-summary': '', style: { fontWeight: 700, fontSize: 15 }, children: pct(summary.remaining_percent) }) : null
+        summary ? jsx('div', { 'data-agy-summary': '', style: { fontWeight: 700, fontSize: 14, fontVariantNumeric: 'tabular-nums' }, children: pct(summary.remaining_percent) }) : null
       ] }),
       groups.length ? groups.map(group => {
         const metric = groupMetric(group)
         return jsxs('div', {
           'data-agy-group': group.name,
-          style: { minWidth: 0, marginTop: 4 },
+          style: { minWidth: 0, marginTop: 3, paddingLeft: 6, borderLeft: '2px solid var(--ui-stroke-secondary)' },
           children: [
             jsxs('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: '2px 8px', alignItems: 'baseline' }, children: [
               jsx('div', { style: { fontWeight: 600, minWidth: 0, overflowWrap: 'anywhere' }, children: group.name }),
-              metric ? jsx('div', { 'data-agy-metric': metric.id, style: { fontWeight: 700 }, children: pct(metric.remaining_percent) }) : null
+              metric ? jsx('div', { 'data-agy-metric': metric.id, style: { fontWeight: 700, fontVariantNumeric: 'tabular-nums' }, children: pct(metric.remaining_percent) }) : null
             ] }),
             ...(group.buckets || []).map(bucket => jsx('div', {
               'data-agy-bucket': bucket.id,
-              style: { color: 'var(--ui-text-tertiary)', fontSize: 11, minWidth: 0, overflowWrap: 'anywhere' },
+              style: { color: 'var(--ui-text-tertiary)', fontSize: 10.5, minWidth: 0, overflowWrap: 'anywhere', fontVariantNumeric: 'tabular-nums' },
               children: `${windowWord(bucket.window)} ${pct(bucket.remaining_percent)} remaining, resets ${bucket.reset_label || '?'}`
             }, bucket.id))
           ]
@@ -154,9 +168,61 @@ function AgyDetails({ c }) {
   })
 }
 
+function PaygSection({ data }) {
+  const o = data.openrouter || {}
+  const ci = data.cheaperinference || {}
+  const models = ci.status === 'ok' ? (ci.models || []) : []
+  const active = models.find(row => row.id === ci.active_model) || null
+  return jsx(Section, { label: 'Pay per use', children: [
+    jsxs('div', {
+      'data-payg-openrouter': '',
+      style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: '1px 10px', padding: '3px 0',
+        borderBottom: '1px dotted var(--ui-stroke-secondary)', minWidth: 0 },
+      children: [
+        jsx('div', { style: { fontWeight: 600, minWidth: 0 }, children: 'OpenRouter' }),
+        jsx('div', { style: { fontWeight: 700, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }, children: `W ${money(o.week)}  D ${money(o.today)}` }),
+        jsx('div', { style: { color: 'var(--ui-text-tertiary)', fontSize: 10.5 }, children: 'UTC spend' }),
+        jsx('div', { style: { color: 'var(--ui-text-tertiary)', fontSize: 10.5, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }, children: `M ${money(o.month)} · bal ${money(o.balance)}` })
+      ]
+    }),
+    models.length ? jsxs('div', { 'data-payg-cheaperinference': '', style: { paddingTop: 3, minWidth: 0 }, children: [
+      jsx('div', { style: { fontWeight: 600 }, children: 'Cheaper Inference' }),
+      jsxs('div', {
+        style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 42px 42px 30px', gap: '0 6px',
+          fontSize: 10, fontVariantNumeric: 'tabular-nums', color: 'var(--ui-text-tertiary)', paddingTop: 1 },
+        children: [
+          jsx('span', { children: 'model · $/M tokens' }),
+          jsx('span', { style: { textAlign: 'right' }, children: 'in' }),
+          jsx('span', { style: { textAlign: 'right' }, children: 'out' }),
+          jsx('span', { style: { textAlign: 'right' }, children: 'disc' })
+        ]
+      }),
+      ...models.map(row => jsxs('div', {
+        'data-ci-model': row.id,
+        style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 42px 42px 30px', gap: '0 6px',
+          fontSize: 10.5, fontVariantNumeric: 'tabular-nums', padding: '1px 0', minWidth: 0 },
+        children: [
+          jsx('span', {
+            title: row.id,
+            style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              fontWeight: row.id === ci.active_model ? 700 : 500 },
+            children: row.id
+          }),
+          jsx('span', { style: { textAlign: 'right' }, children: rate(row.input) }),
+          jsx('span', { style: { textAlign: 'right' }, children: rate(row.output) }),
+          jsx('span', { style: { textAlign: 'right', color: 'var(--ui-text-tertiary)' },
+            children: row.discount ? `-${Math.round(row.discount)}%` : '—' })
+        ]
+      }, row.id)),
+      active ? jsx('div', { style: { color: 'var(--ui-text-tertiary)', fontSize: 10, paddingTop: 1 },
+        children: `Current model: ${active.id}` }) : null
+    ] }) : jsx('div', { style: { color: 'var(--ui-text-tertiary)', fontSize: 10.5, padding: '3px 0' },
+      children: ci.status === 'ok' ? 'No configured model rates' : (ci.error || 'Rates unavailable') })
+  ] })
+}
+
 function Panel({ data, ctx }) {
   const [busy, setBusy] = useState(false)
-  const o = data.openrouter || {}
   const refresh = async () => {
     setBusy(true)
     try {
@@ -169,33 +235,31 @@ function Panel({ data, ctx }) {
     }
   }
   const pick = data.pick
+  const blank = (data.cards || []).filter(c => !isAgy(c) && !Number.isFinite(remaining(c.used_percent)))
   return jsxs('div', {
     'data-subscription-panel': '',
-    style: { fontSize: 12, padding: 4, minWidth: 0, maxWidth: '100%', maxHeight: 'min(72dvh, calc(100dvh - 48px))', overflow: 'auto', overflowWrap: 'anywhere' },
+    style: { fontSize: 12, padding: 4, minWidth: 0, maxWidth: '100%', maxHeight: 'min(78dvh, calc(100dvh - 40px))', overflow: 'auto', overflowWrap: 'anywhere' },
     children: [
-    jsx('div', { style: { fontWeight: 600, marginBottom: 4 }, children:
-      'Weekly quota remaining, most over pace first. Antigravity groups are separate allowances and are not paced.' }),
-    data.warning && data.warning.active
-      ? jsx('div', { style: { color: 'var(--ui-text-secondary)', marginBottom: 4 },
-          children: `Warning: usage data unavailable for ${data.warning.subscriptions.join(', ')}` })
-      : null,
-    ...(data.cards || []).filter(c => !isAgy(c)).map(c => jsx(Row, { c }, c.id)),
-    (data.cards || []).some(isAgy) ? jsx(AgyDetails, { c: (data.cards || []).find(isAgy) }, 'agy') : null,
-    jsxs('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: '2px 12px', padding: '6px 0', minWidth: 0 }, children: [
-      jsxs('div', { style: { display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, minWidth: 0, overflowWrap: 'anywhere' }, children: [
-        jsx(StatusDot, { tone: 'muted' }), 'OpenRouter (pay per use)'] }),
-      jsx('div', { style: { fontWeight: 700, fontSize: 15 }, children: `${money(o.week)} this week (UTC)` }),
-      jsx('div', { style: { color: 'var(--ui-text-tertiary)', fontSize: 11 }, children:
-        `${money(o.today)} today (UTC) · ${money(o.month)} this month · balance ${money(o.balance)}` })
+    jsx('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, fontWeight: 600 }, children: [
+      jsx('span', { children: 'Usage' }),
+      jsx('span', { style: { color: 'var(--ui-text-quaternary)', fontSize: 10, fontWeight: 400 },
+        children: data.written_at ? `read ${new Date(data.written_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'not read yet' })
     ] }),
-    jsx('div', { style: { color: 'var(--ui-text-tertiary)', fontSize: 11, margin: '4px 0 8px' }, children:
-      (data.on_demand && data.on_demand.active ? 'Routing would use on-demand OpenRouter. '
-        : pick ? `Routing would pick ${SHORT[pick.subscription] || pick.subscription} (${pick.model}). ` : 'No routing pick. ') +
-      'Advisory only for now. Percentages are quota remaining. P is pace headroom in percentage points; minus means over pace. Antigravity shows each model group\'s own remaining allowance.' }),
+    jsx(Section, { label: 'Subscriptions', children: [
+      ...(data.cards || []).filter(c => !isAgy(c)).map(c => jsx(Row, { c }, c.id)),
+      (data.cards || []).some(isAgy) ? jsx(AgyDetails, { c: (data.cards || []).find(isAgy) }, 'agy') : null,
+      blank.length ? jsx('div', { style: { color: 'var(--ui-text-quaternary)', fontSize: 10, paddingTop: 2 },
+        children: `No reading: ${blank.map(c => c.name).join(', ')}` }) : null
+    ] }),
+    jsx(PaygSection, { data }),
+    jsx('div', { style: { color: 'var(--ui-text-quaternary)', fontSize: 10, margin: '6px 0 6px' }, children:
+      (data.on_demand && data.on_demand.active ? 'Routing: on-demand OpenRouter. '
+        : pick ? `Routing: ${SHORT[pick.subscription] || pick.subscription}${pick.model ? ` (${pick.model})` : ''}. ` : 'No routing pick. ') +
+      'Quota percentages are remaining; P is pace headroom in percentage points.' }),
     jsxs('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' }, children: [
-      jsx('span', { style: { color: 'var(--ui-text-quaternary)', fontSize: 11 },
-        children: data.written_at ? `Read ${new Date(data.written_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'Not read yet' }),
-      jsx(Button, { variant: 'ghost', size: 'sm', disabled: busy, onClick: refresh, children: busy ? 'Reading…' : 'Refresh now' })
+      jsx('span', { style: { color: 'var(--ui-text-quaternary)', fontSize: 10 },
+        children: 'Antigravity groups are separate and not paced.' }),
+      jsx(Button, { variant: 'ghost', size: 'sm', disabled: busy, onClick: refresh, children: busy ? 'Reading…' : 'Refresh' })
     ] })
   ] })
 }
@@ -214,22 +278,38 @@ function Meter({ ctx }) {
   }
   if (!data) return null
   const o = data.openrouter || {}
-  const chips = (compact) => (data.cards || []).map(c => {
+  const ci = data.cheaperinference || {}
+  const ciModels = ci.status === 'ok' ? (ci.models || []) : []
+  const ciActive = ciModels.find(row => row.id === ci.active_model) || null
+  const chips = (compact) => (data.cards || []).flatMap(c => {
     if (isAgy(c)) {
+      if (!agySummary(c)) return []
       const label = agyAccess(c)
-      return jsxs('span', {
+      return [jsxs('span', {
         key: c.id, 'data-agy-chip': '', 'aria-label': label, title: label,
         style: { display: 'inline-flex', alignItems: 'center', gap: 4 },
         children: [jsx(StatusDot, { tone: agyTone(c) }), agyChipText(c, compact)]
-      })
+      })]
     }
+    const left = remaining(c.used_percent)
+    if (!Number.isFinite(left)) return []
     const [t, word] = tone(c)
-    return jsxs('span', { key: c.id, 'aria-label': `${c.name} ${pct(remaining(c.used_percent))} remaining, ${word}`,
+    return [jsxs('span', { key: c.id, 'aria-label': `${c.name} ${pct(left)} remaining, ${word}`,
       style: { display: 'inline-flex', alignItems: 'center', gap: 4 }, children: [
         jsx(StatusDot, { tone: t }),
-        `${METER_SHORT[c.id] || c.name} ${pct(remaining(c.used_percent))}${!compact && c.pace_delta != null ? ` P${signed(c.pace_delta)}` : ''}`
-      ] })
+        `${METER_SHORT[c.id] || c.name} ${pct(left)}${!compact && c.pace_delta != null ? ` P${signed(c.pace_delta)}` : ''}`
+      ] })]
   })
+  const ciDetail = ciActive
+    ? `Cheaper Inference ${ciActive.id}: $${rate(ciActive.input)} per million in, $${rate(ciActive.output)} out` +
+      (ciActive.discount ? `, ${Math.round(ciActive.discount)}% off list` : '')
+    : 'Cheaper Inference rates unavailable'
+  const ciChip = ciActive
+    ? jsx('span', { 'data-ci-chip': '', 'aria-label': ciDetail, title: ciDetail,
+        style: { display: 'inline-flex', alignItems: 'center', gap: 4 }, children: [
+          jsx(StatusDot, { tone: 'muted' }), `CI ${rate(ciActive.input)}/${rate(ciActive.output)}`
+        ] }, 'ci')
+    : null
   const costDetail = `OpenRouter spending: this week (UTC) ${money(o.week)}, today (UTC) ${money(o.today)}`
   const cost = jsx('span', { 'aria-label': costDetail, title: costDetail, children: `OR W${compactMoney(o.week)} D${compactMoney(o.today)}` }, 'or')
   return jsxs(Popover, { open, onOpenChange: setOpen, children: [
@@ -238,8 +318,8 @@ function Meter({ ctx }) {
       variant: 'ghost', size: 'micro', 'aria-label': 'Subscription usage',
       'data-subscription-meter': '',
       children: [
-        jsxs('span', { key: 'full', 'data-usage-full': '', style: { display: 'inline-flex', flexWrap: 'nowrap', whiteSpace: 'nowrap', gap: 10, fontSize: 11, color: 'var(--ui-text-secondary)' }, children: [...chips(false), cost] }),
-        jsxs('span', { key: 'compact', 'data-usage-compact': '', style: { alignItems: 'center', flexWrap: 'nowrap', whiteSpace: 'nowrap', gap: 6, fontSize: 11, color: 'var(--ui-text-secondary)' }, children: [...chips(true), cost] })
+        jsxs('span', { key: 'full', 'data-usage-full': '', style: { display: 'inline-flex', flexWrap: 'nowrap', whiteSpace: 'nowrap', gap: 10, fontSize: 11, color: 'var(--ui-text-secondary)' }, children: [...chips(false), ciChip, cost] }),
+        jsxs('span', { key: 'compact', 'data-usage-compact': '', style: { alignItems: 'center', flexWrap: 'nowrap', whiteSpace: 'nowrap', gap: 6, fontSize: 11, color: 'var(--ui-text-secondary)' }, children: [...chips(true), ciChip, cost] })
       ]
     }) }),
     jsx(PopoverContent, {

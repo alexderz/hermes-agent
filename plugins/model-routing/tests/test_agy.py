@@ -26,6 +26,10 @@ SECRET_STDERR = "SECRET-STDERR"
 USAGE_ARGV = ["--print", "/usage", "--output-format", "json"]
 
 
+def offline_cheaper():
+    return {"id": "cheaperinference", "status": "failed", "error": "offline"}
+
+
 def envelope(groups, **overrides):
     payload = {
         "status": "SUCCESS",
@@ -408,12 +412,14 @@ class AgyCollectTests(unittest.TestCase):
                 now=NOW,
                 read=routed_readers(),
                 read_openrouter=orr,
+                read_cheaper=offline_cheaper,
                 path=Path(tmp) / "plain.json",
             )
             shown = core.collect(
                 now=NOW,
                 read={**routed_readers(), "agy": tempting_agy},
                 read_openrouter=orr,
+                read_cheaper=offline_cheaper,
                 path=Path(tmp) / "shown.json",
             )
         for key in ("scores", "latch", "pick", "on_demand", "warning"):
@@ -434,12 +440,14 @@ class AgyCollectTests(unittest.TestCase):
                 now=NOW,
                 read=over_pace_readers(),
                 read_openrouter=orr,
+                read_cheaper=offline_cheaper,
                 path=Path(tmp) / "plain.json",
             )
             shown = core.collect(
                 now=NOW,
                 read={**over_pace_readers(), "agy": tempting_agy},
                 read_openrouter=orr,
+                read_cheaper=offline_cheaper,
                 path=Path(tmp) / "shown.json",
             )
         self.assertTrue(plain["on_demand"]["active"])
@@ -472,12 +480,14 @@ class AgyCollectTests(unittest.TestCase):
                 now=NOW,
                 read={**routed_readers(), "agy": lambda: ok},
                 read_openrouter=orr,
+                read_cheaper=offline_cheaper,
                 path=path,
             )
             second = core.collect(
                 now=NOW + timedelta(minutes=15),
                 read={**routed_readers(), "agy": lambda: failed},
                 read_openrouter=orr,
+                read_cheaper=offline_cheaper,
                 path=path,
             )
             history = (Path(tmp) / "history.jsonl").read_text().splitlines()
@@ -549,6 +559,7 @@ class AgyCollectTests(unittest.TestCase):
                     now=NOW,
                     read={**routed_readers(), "agy": readers.read_agy},
                     read_openrouter=orr,
+                    read_cheaper=offline_cheaper,
                     path=path,
                 )
             raw = path.read_text()

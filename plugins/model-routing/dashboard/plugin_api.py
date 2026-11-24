@@ -37,6 +37,7 @@ def _payload(core, s):
         "written_at": s.get("written_at"),
         "cards": core.cards(s) if s else [],
         "openrouter": (s.get("openrouter") or {}).get("spend"),
+        "cheaperinference": s.get("cheaperinference") or {},
         "pick": s.get("pick"),
         "latch_event": (s.get("latch") or {}).get("event"),
         "on_demand": od,

@@ -16,7 +16,15 @@ const fixture = vi.hoisted(() => ({
       { id: 'codex', name: 'ChatGPT', used_percent: 70, fresh: true, eligible: true, pace_delta: 3 },
       { id: 'supergrok', name: 'SuperGrok', used_percent: 15, fresh: true, eligible: true, pace_delta: 4 }
     ],
-    openrouter: { week: 12.34 as number | null | undefined, today: 1.23 as number | null | undefined }
+    openrouter: { week: 12.34 as number | null | undefined, today: 1.23 as number | null | undefined },
+    cheaperinference: {
+      status: 'ok' as string,
+      active_model: 'model-b' as string | null,
+      models: [
+        { id: 'model-a', provider: 'DeepSeek', input: 0.5, output: 2, discount: 15 },
+        { id: 'model-b', provider: 'DeepSeek', input: 0.075, output: 0.24, discount: 56 }
+      ] as Array<Record<string, unknown>>
+    }
   }
 }))
 
@@ -116,7 +124,7 @@ it('uses remaining quota consistently in the bar and popup with pace measured in
   expect(row.children[1].textContent).toBe('79%  P: -12pp')
   expect(row.children[2].textContent).toContain('5-hour 85%')
   expect(row.children[3].textContent).toBe('pace target 91%')
-  expect(panel.textContent).toContain('Weekly quota remaining')
+  expect(panel.textContent).toContain('Subscriptions')
   expect(panel.textContent).not.toContain('% used')
   expect(panel.textContent).toContain('percentage points')
   for (const bar of container.querySelectorAll('[data-usage-compact], [data-usage-full]')) {
@@ -146,7 +154,12 @@ it('shows zero only for exhausted quota and keeps tiny or unknown amounts distin
       expect(row.children[3].textContent).toBe('')
     }
     for (const bar of container.querySelectorAll('[data-usage-compact], [data-usage-full]')) {
-      expect(bar.querySelector('[aria-label^="Claude"]')?.getAttribute('aria-label')).toContain(`${label} remaining`)
+      const chip = bar.querySelector('[aria-label^="Claude"]')
+      if (label === '–') {
+        expect(chip).toBeNull()
+      } else {
+        expect(chip?.getAttribute('aria-label')).toContain(`${label} remaining`)
+      }
     }
   }
 })
@@ -262,7 +275,7 @@ it('shows every Antigravity group and bucket with its own reset and no pace', ()
   const details = panel.querySelector('[data-agy-details]')!
   const claude = within(panel).getByText('Claude').parentElement!
 
-  expect(panel.textContent).toContain('Weekly quota remaining')
+  expect(panel.textContent).toContain('Subscriptions')
   expect(panel.textContent).toContain('percentage points')
   expect(panel.textContent?.toLowerCase()).toContain('not paced')
   expect(claude.children[1].textContent).toBe('60%  P: +2pp')
@@ -298,9 +311,7 @@ it('keeps Antigravity unknown, full, tiny and zero distinct', () => {
   showAgy(agyCard({ fresh: false, reason: 'no reading', summary: null, groups: [] }))
   rerender(meter())
   for (const row of container.querySelectorAll('[data-usage-compact], [data-usage-full]')) {
-    const chip = row.querySelector('[data-agy-chip]')!
-    expect(chip.textContent).toMatch(/^(Ag|AGY) –$/)
-    expect(chip.getAttribute('aria-label')).toContain('unavailable')
+    expect(row.querySelector('[data-agy-chip]')).toBeNull()
   }
   expect(getByTestId('usage-panel').querySelector('[data-agy-details]')?.textContent).toContain('no reading')
   expect(getByTestId('usage-panel').textContent).not.toContain('Gemini 4 Argon')
@@ -328,4 +339,40 @@ it('keeps Antigravity unknown, full, tiny and zero distinct', () => {
   rerender(meter())
   expect(container.querySelector('[data-usage-compact] [data-agy-chip]')?.textContent).toBe('Ag G 0%')
   expect(getByTestId('usage-panel').querySelector('[data-agy-group="Gemini Models"]')?.textContent).toContain('0%')
+})
+
+it('hides a blank reading from the status bar but keeps it named in the popup', () => {
+  fixture.showPanel = true
+  fixture.data.cards[0].used_percent = null
+  const { container, getByTestId } = render(meter())
+
+  for (const row of container.querySelectorAll('[data-usage-compact], [data-usage-full]')) {
+    expect(row.querySelector('[aria-label^="Claude"]')).toBeNull()
+    expect(row.textContent).not.toContain('Cl ')
+    expect(row.textContent).toContain('Gr 85%')
+  }
+  expect(getByTestId('usage-panel').textContent).toContain('No reading: Claude')
+})
+
+it('shows Cheaper Inference rates in a pay-per-use grid and a status chip', () => {
+  fixture.showPanel = true
+  const { container, getByTestId } = render(meter())
+  const panel = getByTestId('usage-panel')
+  const ci = panel.querySelector('[data-payg-cheaperinference]')!
+
+  expect(panel.textContent).toContain('Subscriptions')
+  expect(panel.textContent).toContain('Pay per use')
+  expect(ci.textContent).toContain('Cheaper Inference')
+  const active = ci.querySelector('[data-ci-model="model-b"]')!
+  expect(active.textContent).toContain('model-b')
+  expect(active.textContent).toContain('0.075')
+  expect(active.textContent).toContain('0.24')
+  expect(active.textContent).toContain('-56%')
+  expect(ci.textContent).toContain('Current model: model-b')
+
+  for (const row of container.querySelectorAll('[data-usage-compact], [data-usage-full]')) {
+    const chip = row.querySelector('[data-ci-chip]')
+    expect(chip?.textContent).toContain('CI 0.075/0.24')
+    expect(chip?.getAttribute('aria-label')).toContain('56% off list')
+  }
 })
