@@ -368,16 +368,20 @@ def cheaper_active_model(cfg: Optional[dict[str, Any]] = None) -> Optional[str]:
 def _price(value: Any) -> Optional[float]:
     if isinstance(value, bool):
         return None
-    if isinstance(value, (int, float)):
-        number = float(value)
-    elif isinstance(value, str) and value.strip():
-        try:
+    if isinstance(value, int) and value.bit_length() > 1024:
+        return None  # 2**1024 and larger cannot become a finite float
+    try:
+        if isinstance(value, (int, float)) or (isinstance(value, str) and value.strip()):
             number = float(value)
-        except ValueError:
+        else:
             return None
-    else:
+    except (OverflowError, ValueError):
         return None
     return number if math.isfinite(number) and number >= 0 else None
+
+
+def _provider_name(value: Any) -> str:
+    return value if isinstance(value, str) else ""
 
 
 def parse_cheaper_models(payload: Any, wanted: list[str]) -> list[dict[str, Any]]:
@@ -397,7 +401,7 @@ def parse_cheaper_models(payload: Any, wanted: list[str]) -> list[dict[str, Any]
             continue
         row = {
             "id": item["id"],
-            "provider": item.get("provider") or item.get("owned_by") or "",
+            "provider": _provider_name(item.get("provider")) or _provider_name(item.get("owned_by")),
             "input": input_price,
             "output": output_price,
             "list_input": _price(pricing.get("list_input_per_million")),
@@ -414,35 +418,56 @@ def parse_cheaper_models(payload: Any, wanted: list[str]) -> list[dict[str, Any]
     return rows
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects: the bearer token must never follow a Location to another host."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_CHEAPER_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+def _cheaper_urlopen(req, timeout: float) -> bytes:
+    with _CHEAPER_OPENER.open(req, timeout=timeout) as resp:
+        return resp.read(CHEAPER_MAX_BYTES + 1)
+
+
 def read_cheaper_inference(token_fn: Callable[[], Optional[str]] = _cheaper_token,
                            timeout: float = CHEAPER_TIMEOUT_S,
                            models_fn: Callable[[], list[str]] = cheaper_configured_models) -> dict[str, Any]:
-    """Read the Cheaper Inference rates for the models this Hermes is configured to use."""
-    token = token_fn()
+    """Read the Cheaper Inference rates for the models this Hermes is configured to use.
+
+    Total by design: any failure becomes a ``failed`` reading so the collector still writes state.
+    """
+    try:
+        token = token_fn()
+    except Exception:
+        return _failed("cheaperinference", "key lookup failed")
     if not token:
         return _failed("cheaperinference", "no Cheaper Inference key")
     try:
-        wanted = models_fn()
-    except Exception as exc:
-        return _failed("cheaperinference", f"{type(exc).__name__}: {exc}")
+        wanted = list(dict.fromkeys(models_fn()))
+    except Exception:
+        return _failed("cheaperinference", "configured models unavailable")
     if not wanted:
         return _failed("cheaperinference", "no configured models")
     try:
         req = urllib.request.Request(CHEAPER_MODELS_URL, headers={
             "Authorization": "Bearer " + token, "Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read(CHEAPER_MAX_BYTES + 1)
+        raw = _cheaper_urlopen(req, timeout)
     except Exception as exc:
         code = getattr(exc, "code", None)
-        return _failed("cheaperinference", f"HTTP {code}" if code else f"{type(exc).__name__}: {exc}")
+        return _failed("cheaperinference", f"HTTP {code}" if code else f"{type(exc).__name__}")
     if not raw or len(raw) > CHEAPER_MAX_BYTES:
         return _failed("cheaperinference", "model catalog unavailable")
     try:
         payload = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return _failed("cheaperinference", "model catalog malformed")
-    rows = parse_cheaper_models(payload, wanted)
+        rows = parse_cheaper_models(payload, wanted)
+        active = cheaper_active_model()
+    except Exception as exc:  # malformed, too deeply nested, or a broken price field
+        return _failed("cheaperinference", f"model catalog unreadable ({type(exc).__name__})")
     if not rows:
         return _failed("cheaperinference", "no priced configured models")
     return {"id": "cheaperinference", "status": "ok", "attempted_at": _now_iso(), "observed_at": _now_iso(),
-            "active_model": cheaper_active_model(), "models": rows}
+            "active_model": active, "models": rows}

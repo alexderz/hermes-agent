@@ -102,7 +102,11 @@ def collect(*, now: Optional[datetime] = None, read: Optional[dict[str, Callable
     orr = (read_openrouter or readers.read_openrouter)()
     if orr.get("status") != "ok" and (prev.get("openrouter") or {}).get("observed_at"):
         orr = {**prev["openrouter"], "status": "failed", "error": orr.get("error")}
-    cheaper = (read_cheaper or readers.read_cheaper_inference)()
+    try:
+        cheaper = (read_cheaper or readers.read_cheaper_inference)()
+    except Exception as exc:  # the collector always writes state, even if a reader escapes
+        cheaper = {"id": "cheaperinference", "status": "failed",
+                   "attempted_at": datetime.now(UTC).isoformat(), "error": type(exc).__name__}
     if cheaper.get("status") != "ok" and (prev.get("cheaperinference") or {}).get("observed_at"):
         cheaper = {**prev["cheaperinference"], "status": "failed", "error": cheaper.get("error")}
     now = now or datetime.now(UTC)

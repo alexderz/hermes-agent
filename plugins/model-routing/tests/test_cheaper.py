@@ -3,6 +3,7 @@
 Pure: fake catalog payloads and fake readers, temp state dir.
 Run: python3 -I -m unittest discover -s plugins/model-routing/tests
 """
+import json
 import sys
 import tempfile
 import unittest
@@ -100,6 +101,83 @@ class CollectTests(unittest.TestCase):
         self.assertEqual(first["cheaperinference"]["status"], "ok")
         self.assertEqual(second["cheaperinference"]["status"], "failed")
         self.assertEqual(second["cheaperinference"]["models"][0]["id"], "b")
+
+    def test_a_reader_that_escapes_never_stops_the_collector(self):
+        def boom():
+            raise RuntimeError("boom")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.json"
+            state = core.collect(now=NOW, read=self.subscriptions(), read_openrouter=self.openrouter,
+                                 read_cheaper=boom, path=path)
+            self.assertTrue(path.exists())
+        self.assertEqual(state["cheaperinference"]["status"], "failed")
+        self.assertEqual(state["cheaperinference"]["error"], "RuntimeError")
+
+
+class ReaderTests(unittest.TestCase):
+    """read_cheaper_inference is total: every failure becomes a failed reading."""
+
+    def read(self, payload=b"", *, token="token", models=("m",), exc=None):
+        def fake(req, timeout):
+            if exc is not None:
+                raise exc
+            return payload
+
+        with patch.object(readers, "_cheaper_urlopen", fake):
+            return readers.read_cheaper_inference(token_fn=lambda: token,
+                                                  models_fn=lambda: list(models))
+
+    def catalog(self, *rows):
+        return json.dumps({"data": list(rows)}).encode()
+
+    def test_no_token_makes_no_request(self):
+        with patch.object(readers, "_cheaper_urlopen", side_effect=AssertionError("must not run")):
+            reading = readers.read_cheaper_inference(token_fn=lambda: None, models_fn=lambda: ["m"])
+        self.assertEqual(reading["status"], "failed")
+        self.assertEqual(reading["error"], "no Cheaper Inference key")
+
+    def test_http_error_is_a_failed_reading(self):
+        class HTTPError(Exception):
+            code = 503
+
+        reading = self.read(exc=HTTPError("down"))
+        self.assertEqual(reading["status"], "failed")
+        self.assertEqual(reading["error"], "HTTP 503")
+
+    def test_transport_error_is_a_failed_reading(self):
+        reading = self.read(exc=TimeoutError())
+        self.assertEqual(reading["status"], "failed")
+        self.assertEqual(reading["error"], "TimeoutError")
+
+    def test_hostile_prices_do_not_raise(self):
+        huge = json.dumps({"data": [{"id": "m", "pricing": {"input_per_million": 1 << 2000,
+                                                            "output_per_million": 1}}]}).encode()
+        reading = self.read(huge)
+        self.assertEqual(reading["status"], "failed")
+        self.assertEqual(reading["error"], "no priced configured models")
+
+    def test_non_string_provider_is_dropped(self):
+        reading = self.read(self.catalog({"id": "m", "provider": {"x": 1},
+                                          "pricing": {"input_per_million": "1", "output_per_million": "2"}}))
+        self.assertEqual(reading["status"], "ok")
+        self.assertEqual(reading["models"][0]["provider"], "")
+
+    def test_malformed_json_is_a_failed_reading(self):
+        reading = self.read(b"{not json")
+        self.assertEqual(reading["status"], "failed")
+        self.assertIn("unreadable", reading["error"])
+
+    def test_recursion_error_from_the_parser_is_caught(self):
+        with patch.object(readers.json, "loads", side_effect=RecursionError):
+            reading = self.read(b"{}")
+        self.assertEqual(reading["status"], "failed")
+        self.assertIn("RecursionError", reading["error"])
+
+    def test_duplicate_configured_models_collapse(self):
+        reading = self.read(self.catalog({"id": "m", "pricing": {"input_per_million": "1", "output_per_million": "2"}}),
+                            models=("m", "m"))
+        self.assertEqual([row["id"] for row in reading["models"]], ["m"])
 
 
 if __name__ == "__main__":
