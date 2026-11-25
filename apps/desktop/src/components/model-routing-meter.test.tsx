@@ -397,10 +397,17 @@ it('shows Antigravity pace from the Gemini week', () => {
   expect(getByTestId('usage-panel').querySelector('[data-agy-pace]')?.textContent).toBe('P: +12pp')
 })
 
-it('colours the Antigravity chip by remaining Neon quota', () => {
-  const cases: Array<[number, string]> = [[100, 'good'], [35, 'good'], [20, 'warn'], [9, 'bad'], [0, 'bad']]
-  for (const [left, tone] of cases) {
-    showAgy(agyCard({ summary: { group_name: 'Gemini Models', tag: 'G', window: 'weekly', remaining_percent: left } }))
+it('colours the Antigravity chip by the Gemini pace, then remaining quota', () => {
+  const cases: Array<[number, number | null, string]> = [
+    [35, 12, 'good'], [35, -3, 'warn'], [21, -56, 'warn'],
+    [100, null, 'good'], [20, null, 'warn'], [9, null, 'bad'], [0, null, 'bad']
+  ]
+  for (const [left, pace, tone] of cases) {
+    const summary: Record<string, unknown> = { group_name: 'Gemini Models', tag: 'G', window: 'weekly', remaining_percent: left }
+    if (pace != null) {
+      summary.pace_delta = pace
+    }
+    showAgy(agyCard({ summary }))
     const { container, unmount } = render(meter())
     expect(container.querySelector('[data-usage-compact] [data-agy-chip] [data-tone]')?.getAttribute('data-tone')).toBe(tone)
     unmount()

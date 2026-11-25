@@ -65,14 +65,15 @@ function agyChipText(c, compact) {
   return `${provider} ${summary.tag} ${pct(summary.remaining_percent)}${paceText}`
 }
 
-// Remaining Neon/Gemini quota, in percent. The same notice thresholds the model picker uses:
-// 20 or less is amber, 10 or less is red, exhausted is red.
+// Pace is the meter's contract: the dot follows the Gemini pool's pace when it has one, and
+// falls back to remaining-quota thresholds when the reset is too far out to pace.
 const AGY_WARN_REMAINING = 20
 const AGY_BAD_REMAINING = 10
 
 function agyTone(c) {
   const summary = agySummary(c)
   if (!summary || !Number.isFinite(summary.remaining_percent)) return 'muted'
+  if (Number.isFinite(summary.pace_delta)) return summary.pace_delta < 0 ? 'warn' : 'good'
   const left = summary.remaining_percent
   if (left <= AGY_BAD_REMAINING) return 'bad'
   if (left <= AGY_WARN_REMAINING) return 'warn'
