@@ -263,7 +263,7 @@ async def test_latest_skips_a_newer_empty_launch_stub(tmp_path, monkeypatch, adm
         expected = stub if admission else real
 
         from hermes_cli.main import _resolve_last_session
-        monkeypatch.setattr('hermes_cli.main._resolve_workspace_key', lambda: None)
+        monkeypatch.setattr('hermes_cli.main_resume_args._resolve_workspace_key', lambda: None)
         monkeypatch.setattr('hermes_cli.main.get_hermes_home', lambda: Path(store_location(authority.persistence.scope)).parent)
         assert _resolve_last_session('cli') == expected
 

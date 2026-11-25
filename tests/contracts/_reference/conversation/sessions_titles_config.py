@@ -397,6 +397,17 @@ class SessionTitlesConfigMixin:
         generation: int = row["cwd_generation"]
         return generation
 
+    def fill_cwd_if_missing(self, session_id: SessionId, cwd: str) -> bool:
+        scope = self._backend.scope
+        if not session_id or not cwd:
+            return False
+        row = self._table(scope).get(session_id)
+        if row is None or row["cwd"]:
+            return False
+        row["cwd"] = cwd
+        row["cwd_generation"] = int(row.get("cwd_generation", 0)) + 1
+        return True
+
     def publish_git_metadata(
         self,
         session_id: SessionId,

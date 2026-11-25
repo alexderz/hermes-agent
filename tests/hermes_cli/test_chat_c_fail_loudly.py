@@ -91,6 +91,80 @@ class TestCreateTitledSession:
             assert resolved == sid
 
 
+class TestTitledSessionRecordsCwd:
+    """A titled session made by ``--create-if-missing`` (or resumed with ``--in``) records its cwd, so it
+    groups under the project whose folder contains it (#106016)."""
+
+    def test_fill_keeps_git_fields_and_skips_non_cli(self, isolated_home, tmp_path, monkeypatch):
+        from hermes_cli.main import _stamp_resumed_session_cwd
+        from persistence_assembly import open_persistence, profile_scope
+        from tests.fixtures.storage_seed import seed_session
+
+        with open_persistence(profile_scope()) as store:
+            seed_session(store, "s_git", "cli", git_repo_root="/repo")
+            seed_session(store, "s_tg", "telegram")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("TERMINAL_ENV", raising=False)
+        _stamp_resumed_session_cwd("s_git")
+        _stamp_resumed_session_cwd("s_tg")
+        with open_persistence(profile_scope()) as store:
+            row = store.sessions.get("s_git").as_session_row()
+            assert row["cwd"] == str(tmp_path) and row["git_repo_root"] == "/repo"
+            assert not store.sessions.get("s_tg").as_session_row()["cwd"]
+
+    def test_remote_backend_does_not_stamp_resume(self, isolated_home, tmp_path, monkeypatch):
+        from hermes_cli.main import _stamp_resumed_session_cwd
+        from persistence_assembly import open_persistence, profile_scope
+        from tests.fixtures.storage_seed import seed_session
+
+        with open_persistence(profile_scope()) as store:
+            seed_session(store, "s_r", "cli")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("TERMINAL_ENV", "docker")
+        _stamp_resumed_session_cwd("s_r")
+        with open_persistence(profile_scope()) as store:
+            assert not store.sessions.get("s_r").as_session_row()["cwd"]
+
+    def test_resolve_args_stamps_only_with_in(self, isolated_home, tmp_path, monkeypatch):
+        import argparse
+
+        from hermes_cli import main as hm
+        from persistence_assembly import open_persistence, profile_scope
+        from tests.fixtures.storage_seed import seed_session
+
+        with open_persistence(profile_scope()) as store:
+            seed_session(store, "s_a", "cli")
+            seed_session(store, "s_b", "cli")
+        work = tmp_path / "w"
+        work.mkdir()
+        monkeypatch.delenv("TERMINAL_ENV", raising=False)
+        monkeypatch.delenv("TERMINAL_CWD", raising=False)
+        monkeypatch.chdir(tmp_path)
+        hm._resolve_chat_session_args(argparse.Namespace(in_dir=str(work), resume="s_a", continue_last=None), False)
+        hm._resolve_chat_session_args(argparse.Namespace(in_dir=None, resume="s_b", continue_last=None), False)
+        with open_persistence(profile_scope()) as store:
+            assert store.sessions.get("s_a").as_session_row()["cwd"] == str(work)
+            assert not store.sessions.get("s_b").as_session_row()["cwd"]
+
+    def test_resume_with_in_fills_missing_cwd_only(self, isolated_home, tmp_path, monkeypatch):
+        from hermes_cli.main import _stamp_resumed_session_cwd
+        from persistence_assembly import open_persistence, profile_scope
+        from tests.fixtures.storage_seed import seed_session
+
+        with open_persistence(profile_scope()) as store:
+            seed_session(store, "s_null", "cli")
+            seed_session(store, "s_set", "cli", cwd="/elsewhere")
+        work = tmp_path / "proj"
+        work.mkdir()
+        monkeypatch.chdir(work)
+        monkeypatch.delenv("TERMINAL_ENV", raising=False)
+        _stamp_resumed_session_cwd("s_null")
+        _stamp_resumed_session_cwd("s_set")
+        with open_persistence(profile_scope()) as store:
+            assert store.sessions.get("s_null").as_session_row()["cwd"] == str(work)
+            assert store.sessions.get("s_set").as_session_row()["cwd"] == "/elsewhere"
+
+
 class TestChatCFailLoudlyOnStderr:
     """Behavior-level: run the real cmd_chat path and inspect channels."""
 

@@ -47,7 +47,8 @@ from ._store.sessions import (
     INTERNAL_LISTING_SOURCES, _own_profile_name, _parse_model_config,
     backfill_acp_session_cwd, backfill_null_session_profiles, backfill_repo_roots,
     clear_session_activity_labels, count_empty_sessions, create_session, declared_scope_identity, delete_empty_sessions,
-    delete_session, delete_session_if_empty, delete_sessions, discard_unadmitted_session, end_session, get_session,
+    delete_session, delete_session_if_empty, delete_sessions, discard_unadmitted_session, end_session,
+    fill_session_cwd_if_missing, get_session,
     get_session_delete_targets, get_session_list_row, get_session_model_config_value, list_recent_sessions_bounded,
     list_sessions_rich, patch_session_model_config, promote_to_session_reset, publish_session_git_metadata,
     reopen_session, resolve_session_id, retire_undrained_queue_rows, search_sessions, session_count,
@@ -594,6 +595,11 @@ class SQLiteSessionRepository:
         holder = self._store.holder()
         with refusals(holder, session_id):
             return update_session_cwd(holder, session_id, cwd, git_branch, git_repo_root, replace_git_meta=replace_git_meta)
+
+    def fill_cwd_if_missing(self, session_id: SessionId, cwd: str) -> bool:
+        holder = self._store.holder()
+        with refusals(holder, session_id):
+            return bool(fill_session_cwd_if_missing(holder, session_id, cwd))
 
     def publish_git_metadata(
         self,

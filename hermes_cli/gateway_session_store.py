@@ -713,13 +713,18 @@ def session_store():
 def create_titled_session(title):
     """``chat -c <title> --create-if-missing`` for the classic CLI: the gateway's ``session.create``
     with ``title`` (it resolves-or-creates under one owner lock), so this process writes no row.
-    Main's ``_create_titled_session`` minted the id and wrote the row itself, with no cwd stamp
-    (``row_cwd`` ""). Returns the id, or None when the gateway refused (the caller prints main's
+    The row records this process's cwd (``--in DIR`` already chdir'd there) on a local backend, as a
+    plain CLI create does, so the session groups under its project instead of staying cwd-less
+    (#106016). Returns the id, or None when the gateway refused (the caller prints main's
     "could not be created" copy)."""
     params = _creation_policy({})
     params["cwd"] = _launch_cwd()
     params["source"] = "cli"  # main's titled row is `cli` (hermes_cli.main._create_titled_session)
-    params["row_cwd"] = ""
+    local = (os.getenv("TERMINAL_ENV") or "local").strip().lower() in ("", "local")
+    try:
+        params["row_cwd"] = os.getcwd() if local else ""
+    except OSError:  # cwd was unlinked out from under us
+        params["row_cwd"] = ""
     try:
         store = session_store()
         params.update(store.client_env())

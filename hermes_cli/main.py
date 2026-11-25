@@ -259,7 +259,9 @@ from pathlib import Path
 from typing import Optional
 
 
-from hermes_cli.main_resume_args import apply_in_dir as _apply_in_dir
+from hermes_cli.main_resume_args import (
+    _resolve_last_session, _session_db, _stamp_resumed_session_cwd, apply_in_dir as _apply_in_dir,
+)
 from hermes_cli.subcommands.cron import build_cron_parser
 from hermes_cli.subcommands.gateway import build_gateway_parser
 from hermes_cli.subcommands.profile import build_profile_parser
@@ -1111,84 +1113,12 @@ def _confirm_startup_expensive_model_override(args) -> None:
         raise SystemExit(1)
 
 
-def _resolve_workspace_key() -> Optional[str]:
-    """The current workspace identity for cwd-scoped resume.
-
-    Git repo root when CWD is inside a repo (so all sessions across its
-    subdirs/worktrees group together), else the CWD itself. Returns None when
-    neither can be determined — callers fall back to the global MRU then.
-    """
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
-            check=False,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return os.path.abspath(result.stdout.strip())
-    except Exception:
-        pass
-    try:
-        return os.getcwd()
-    except Exception:
-        return None
-
-
-@contextlib.contextmanager
-def _session_db():
-    """Yield main's read-only session reads over a storage interface reader on the current profile's store, or None
-    when it cannot open (lazy imports, so test patches on ``persistence_assembly`` intercept). Every caller is a lookup
-    (last session, title → id, recorded cwd), so it never opens a writer beside the one the CLI opens a moment later.
-    Open failures yield None and any error raised by the ``with`` body is swallowed: callers fall through to their
-    ``return None``."""
-    reader, handles = None, contextlib.ExitStack()
-    try:
-        from persistence_assembly import open_persistence_reader
-        store = handles.enter_context(open_persistence_reader(get_hermes_home()))
-        store.ready()
-        # Gateway rows the CLI/TUI created are labelled ``local``; source-scoped lookups read main's labels.
-        from hermes_cli.gateway_session_store import SurfaceLabelReader
-        reader = SurfaceLabelReader(store)
-    except Exception:
-        pass
-    try:
-        yield reader  # body errors (incl. AttributeError on a None reader) are swallowed
-    except Exception:
-        pass
-    finally:
-        handles.close()
-
-
 def _latest_session_id(use_tui: bool) -> Optional[str]:
     """MRU session for the active interface; a TUI launch falls back to the CLI MRU."""
     last_id = _resolve_last_session(source="tui" if use_tui else "cli")
     if not last_id and use_tui:
         last_id = _resolve_last_session(source="cli")
     return last_id
-
-
-def _resolve_last_session(source: str = "cli") -> Optional[str]:
-    """Look up the most recently-used session ID for a source.
-
-    Scoped to the current workspace first (git repo root, else cwd) so
-    ``hermes -c`` from repo A continues repo A's last session rather than the
-    global MRU. Falls back to the unscoped MRU when no session matches the
-    current workspace, preserving the old behaviour for fresh directories.
-    """
-    # A finite `hermes -z`/`chat -q` run is CLI history too: `hermes -z … --resume latest` chains on it.
-    if source == "cli":
-        from agent.session_source import CLI_FAMILY_SOURCES
-        source = sorted(CLI_FAMILY_SOURCES)
-    with _session_db() as db:
-        ws_key = _resolve_workspace_key()
-        if ws_key:
-            sessions = db.search_sessions(source=source, limit=1, workspace_key=ws_key, skip_launch_stubs=True)
-            if sessions:
-                return sessions[0]["id"]
-        # Fallback: global MRU for this source.
-        sessions = db.search_sessions(source=source, limit=1, skip_launch_stubs=True)
-        return sessions[0]["id"] if sessions else None
-    return None
 
 
 def _resolve_session_by_name_or_id(name_or_id: str) -> Optional[str]:
@@ -1350,6 +1280,8 @@ def _resolve_chat_session_args(args, use_tui: bool) -> None:
     if resume_val:
         # On miss keep the original so _init_agent reports "Session not found" with it.
         args.resume = _resolve_session_by_name_or_id(resume_val) or resume_val
+        if getattr(args, "in_dir", None):
+            _stamp_resumed_session_cwd(args.resume)
 
     recreate_resumed_tui_worktree(args)
 

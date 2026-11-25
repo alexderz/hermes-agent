@@ -466,6 +466,25 @@ def test_create_if_missing_titles_a_gateway_created_session(store, monkeypatch):
     assert params["title"] == "Fresh Named" and params["source"] and params["cwd"]
 
 
+def test_in_with_create_if_missing_records_the_launch_cwd(store, monkeypatch, tmp_path):
+    """``chat --in DIR -c NAME --create-if-missing`` mints the row with DIR as its cwd, so the new
+    session groups under that project instead of staying cwd-less (#106016)."""
+    from hermes_cli import gateway_session_store as gss
+    from hermes_cli.main import _resolve_continue_arg
+    db, client = store
+    work = tmp_path / "project"
+    work.mkdir()
+    monkeypatch.chdir(work)  # _apply_in_dir has already chdir'd to --in DIR
+    monkeypatch.delenv("TERMINAL_ENV", raising=False)
+    monkeypatch.setattr(gss, "session_store", lambda: db)
+    args = types.SimpleNamespace(continue_last="Bot Chat", resume=None, create_if_missing=True,
+                                 in_dir=str(work))
+    _resolve_continue_arg(args, use_tui=False)
+    assert args.resume == "local-new"
+    _method, params = [c for c in client.calls if c[0] == "session.create"][-1]
+    assert params["title"] == "Bot Chat" and params["row_cwd"] == str(work.resolve())
+
+
 def test_bare_continue_finds_the_last_session_the_cli_created(tmp_path, monkeypatch):
     """Bare ``-c`` (main.py ``_resolve_last_session``) reads main's labels too: a gateway row labelled
     ``local`` that the CLI created is CLI history."""
@@ -480,7 +499,7 @@ def test_bare_continue_finds_the_last_session_the_cli_created(tmp_path, monkeypa
         seed_messages(writer, "local-tui", {"role": "user", "content": "later"})
         raw_holder(writer)._execute_write(lambda conn: conn.executemany(
             "UPDATE sessions SET created_source=? WHERE id=?", [("cli", "local-cli"), ("tui", "local-tui")]))
-    monkeypatch.setattr("hermes_cli.main._resolve_workspace_key", lambda: None)
+    monkeypatch.setattr("hermes_cli.main_resume_args._resolve_workspace_key", lambda: None)
     from hermes_cli.main import _resolve_last_session
     assert _resolve_last_session("cli") == "local-cli"
     assert _resolve_last_session("tui") == "local-tui"
@@ -533,7 +552,8 @@ def test_verbose_flag_rides_session_create():
 
 def test_row_cwd_is_mains_stamp_while_the_tools_run_in_terminal_cwd(store, monkeypatch, tmp_path):
     """Main's row cwd: the launching process's cwd on its first session (``-w`` never chdirs, so the
-    repo root), none on ``/new`` and ``--create-if-missing``. The execution cwd stays TERMINAL_CWD."""
+    repo root), none on ``/new``, and the launch cwd again for ``--create-if-missing`` (#106016). The
+    execution cwd stays TERMINAL_CWD."""
     from hermes_cli.cli_init_mixin import CLIInitMixin
     from hermes_cli import gateway_session_store as gss
     db, client = store
@@ -551,7 +571,7 @@ def test_row_cwd_is_mains_stamp_while_the_tools_run_in_terminal_cwd(store, monke
     assert [p for m, p in client.calls if m == "session.create"][-1]["row_cwd"] == ""
     monkeypatch.setattr(gss, "session_store", lambda: db)
     gss.create_titled_session("Fresh Named")
-    assert [p for m, p in client.calls if m == "session.create"][-1]["row_cwd"] == ""
+    assert [p for m, p in client.calls if m == "session.create"][-1]["row_cwd"] == str(repo.resolve())
     monkeypatch.setenv("TERMINAL_ENV", "docker")  # main stamps no host cwd for a remote backend
     db.create({"toolsets": ["file"]})
     assert [p for m, p in client.calls if m == "session.create"][-1]["row_cwd"] == ""

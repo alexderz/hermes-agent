@@ -541,6 +541,21 @@ def update_session_cwd(
     return holder._execute_write(_do)
 
 
+def fill_session_cwd_if_missing(holder: StoreHolder, session_id: str, cwd: str) -> bool:
+    """Record ``cwd`` only where the row has none, in one guarded statement: a concurrent writer's cwd
+    is never clobbered and the git fields are left to their own probe (only the generation is claimed,
+    as :func:`update_session_cwd` does). True when a row changed."""
+    if not session_id or not cwd:
+        return False
+
+    def _do(conn):
+        cur = conn.execute(
+            "UPDATE sessions SET cwd = ?, git_metadata_generation = COALESCE(git_metadata_generation, 0) + 1 "
+            "WHERE id = ? AND COALESCE(cwd, '') = ''", (cwd, session_id))
+        return cur.rowcount > 0
+    return bool(holder._execute_write(_do))
+
+
 def publish_session_git_metadata(
     holder: StoreHolder, session_id: str, cwd: str, generation: int, git_branch: Optional[str] = None,
     git_repo_root: Optional[str] = None,

@@ -996,6 +996,10 @@ class SessionRepository(Protocol):
         """Set the cwd and claim the next git metadata generation, returned. A new cwd or ``replace_git_meta`` replaces both git fields; the same cwd keeps a stored value unless a new one is given. ``None`` for an empty id or cwd or a missing row."""
         ...
 
+    def fill_cwd_if_missing(self, session_id: SessionId, cwd: str) -> bool:
+        """Record ``cwd`` only when the row has none, in one statement; returns whether a row changed. Never overwrites a recorded cwd and never touches the git fields (a probe may still be in flight for them), while claiming the next git metadata generation as :meth:`update_cwd` does. ``False`` for an empty id or cwd, a missing row, or a row that already records a cwd."""
+        ...
+
     def publish_git_metadata(
         self,
         session_id: SessionId,

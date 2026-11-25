@@ -97,7 +97,7 @@ def test_resolve_last_session_cli_continues_a_oneshot(monkeypatch, tmp_path):
             ((100.0, "interactive"), (200.0, "oneshot_run"), (300.0, "tui_chat")),
         ))
 
-    monkeypatch.setattr("hermes_cli.main._resolve_workspace_key", lambda: None)
+    monkeypatch.setattr("hermes_cli.main_resume_args._resolve_workspace_key", lambda: None)
     # The lookup opens the active home's store by explicit path (a served-profile process has no
     # single default home), so the home is the seam — same as the workspace test above.
     monkeypatch.setattr("hermes_cli.main.get_hermes_home", lambda: tmp_path)
