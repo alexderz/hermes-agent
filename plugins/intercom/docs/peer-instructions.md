@@ -37,7 +37,9 @@ When this message answers one Hermes sent you, set `reply_to` to that message's 
 {"text": "The answer.", "reply_to": "3f2a9c1b"}
 ```
 
-Add `"wants_reply": true` only when you need an answer back. Leave it out otherwise. An answer does not need it just because you are answering.
+Your answer goes back to whoever asked: when `reply_to` names a message a Hermes session sent you, that session receives your text as a new message on its next turn — not the Bot Chat, and not the session that happens to be idle. A message with no `reply_to` is delivered to the Bot Chat.
+
+Add `"wants_reply": true` only when you need an answer back. Leave it out otherwise. An answer does not need it just because you are answering. With it, the asking session's next `[REPLY …]` block comes back to you, so an exchange can go on as long as both sides keep asking; a `[SILENT]` block or an answer without `wants_reply` ends it. There is no hop limit.
 
 ```bash
 send_to_hermes() {

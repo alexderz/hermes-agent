@@ -15,7 +15,10 @@ function, in the default profile:
 - picks the reply mode: ``wants_reply`` true is ``requested``; a valid ``reply_to`` (an outbound
   row addressed ``peer:<name>``) without it is ``optional``; otherwise ``none``. An invalid
   ``reply_to`` is dropped;
-- sends to the exact title ``Bot Chat`` with ``route.send(peer=<name>)``, steered. Nothing in the
+- sends with ``route.send(peer=<name>)``, steered: to the session that asked, when ``reply_to``
+  answers a row one of this home's sessions posted to that agent, else to the exact title
+  ``Bot Chat``. A reply that asks for a reply is delivered ``requested``, so the asking session's
+  ``[REPLY …]`` block goes back to the agent and the exchange can continue. Nothing in the
   payload can name another target.
 
 ``validate_target_ref_fn`` refuses every target, so ``send_message``, the CLI and cron can never
@@ -32,8 +35,9 @@ from gateway.config import Platform
 from gateway.platforms.base import BasePlatformAdapter, SendResult
 
 try:
-    from . import peers, profiles, record, route
+    from . import address, peers, profiles, record, route
 except ImportError:  # loaded as top-level modules (the unittest layout)
+    import address
     import peers
     import profiles
     import record
@@ -112,7 +116,8 @@ def _deliver_inbound(chat_id, content) -> tuple[bool, str]:
         if parsed is None:
             return False, "malformed post"
         reply_to, wants_reply, text = parsed
-        if reply_to is not None and not _is_outbound_to(reply_to, name):
+        answering = _answering_row(reply_to, name)
+        if answering is None:
             reply_to = None
         if wants_reply:
             reply_mode = "requested"
@@ -120,8 +125,8 @@ def _deliver_inbound(chat_id, content) -> tuple[bool, str]:
             reply_mode = "optional"
         else:
             reply_mode = "none"
-        receipt = route.send(None, TARGET, text, ctx=profiles.Settings(), delivery="steer",
-                             reply_mode=reply_mode, reply_to=reply_to, peer=name)
+        receipt = route.send(None, _target_for(answering), text, ctx=profiles.Settings(),
+                             delivery="steer", reply_mode=reply_mode, reply_to=reply_to, peer=name)
     if receipt.get("ok") is True:
         return True, ""
     return False, f"message {receipt.get('message_id') or '-'}: {receipt.get('error') or 'refused'}"
@@ -153,7 +158,28 @@ def _present(value: str, key: str) -> str | None:
     return None if value in ("", f"{{{key}}}") else value
 
 
-def _is_outbound_to(message_id: str, name: str) -> bool:
-    """*message_id* is a row of this profile's record addressed to remote agent *name*."""
-    row = record.get(message_id)
-    return isinstance(row, dict) and row.get("address") == f"peer:{name}"
+def _answering_row(reply_to: str | None, name: str) -> dict | None:
+    """The outbound row *reply_to* answers: one of this profile's, addressed to agent *name*.
+
+    Anything else (another agent's row, a local message, an id this record never wrote) is not a
+    reply this agent can attach to, and the post lands in Bot Chat as one with no ``reply_to``.
+    """
+    if reply_to is None:
+        return None
+    row = record.get(reply_to)
+    return row if isinstance(row, dict) and row.get("address") == f"peer:{name}" else None
+
+
+def _target_for(row: dict | None) -> str:
+    """The asking session *row* answers, else the canonical Bot Chat.
+
+    The answer goes to the session that asked, not to Bot Chat: that session asked a specific
+    question and its next turn should see the answer. A row a script or an agent posted (no
+    session) has no asker. A session that is gone or was renamed keeps its reply deliverable
+    instead of failing the agent's post: it lands in Bot Chat.
+    """
+    asker = (row or {}).get("sender_session_id")
+    if not isinstance(asker, str) or not asker:
+        return TARGET
+    resolved = address.resolve(asker)
+    return resolved["session_id"] if resolved.get("ok") is True else TARGET

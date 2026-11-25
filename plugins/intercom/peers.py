@@ -358,9 +358,15 @@ def _finish(to: str, peer: Peer, message_id: str, *, delivery, reply_mode, statu
 
     if status is not None and 200 <= status < 300:
         record.update(message_id, result="delivered", detail=f"HTTP {status}", delivered_at=time.time())
-        return _fields(ok=True, receipt="delivered", to=to, message_id=message_id, title=peer.name,
-                       delivery=delivery, reply_mode=reply_mode, message=f"delivered (HTTP {status})",
-                       error=None, url=peer.url)
+        fields = _fields(ok=True, receipt="delivered", to=to, message_id=message_id, title=peer.name,
+                         delivery=delivery, reply_mode=reply_mode, message=f"delivered (HTTP {status})",
+                         error=None, url=peer.url)
+        if reply_mode in ("requested", "optional"):
+            # The answer is a later message in this session, never part of this turn: the agent
+            # can go on (or end its turn) and still get it.
+            fields["note"] = (f"{peer.name} answers as a new message in this session; it is not "
+                              "part of this turn.")
+        return fields
     if status is not None:
         detail = f"HTTP {status}"
     else:

@@ -265,6 +265,67 @@ class DeliverTest(PeerTestBase):
         self.assertEqual(self.rows()[0]["target_session_id"], BOT_CHAT)
 
 
+class ReplyRoutingTest(PeerTestBase):
+    """A reply attached to a message one of our sessions sent goes back to that session."""
+
+    def outbound_from(self, session_id, message_id, address="peer:remote-bot",
+                      reply_mode="requested", label="Other"):
+        record.insert(message_id, kind="send", sender_label=label, sender_source="tui",
+                      sender_session_id=session_id, address=address, body="question",
+                      reply_mode=reply_mode, requested="steer")
+
+    def test_an_answer_lands_in_the_session_that_asked(self):
+        self.outbound_from("local-other", "aaaa1111")
+        self.assertEqual(self.post(text="here is the answer", reply_to="aaaa1111",
+                                   wants_reply="False"), (True, ""))
+        [call] = self.owner.calls
+        self.assertEqual(call["target"], "local-other")
+        self.assertEqual(call["delivery"], "steer")
+        self.assertIn("reply to your message aaaa1111", call["text"])
+        self.assertIn("remote agent remote-bot says", call["text"])
+        row = self.rows()[-1]
+        self.assertEqual(row["target_session_id"], "local-other")
+        self.assertEqual(row["in_reply_to"], "aaaa1111")
+        self.assertEqual(row["reply_mode"], "optional")
+        self.assertEqual(row["sender_source"], "peer")
+
+    def test_an_answer_that_asks_again_keeps_the_exchange_going(self):
+        self.outbound_from("local-other", "bbbb2222")
+        self.assertEqual(self.post(text="what did you mean?", reply_to="bbbb2222",
+                                   wants_reply="True"), (True, ""))
+        row = self.rows()[-1]
+        self.assertEqual((row["target_session_id"], row["reply_mode"]),
+                         ("local-other", "requested"))
+        # The asking session's block is what goes back to the agent, so the exchange can continue.
+        stored = record.get(row["id"])
+        assert stored is not None
+        state, text, _detail, _gist = replies.reply_for(
+            stored, f"Some answer.\n[REPLY {row['id']}]short answer[/REPLY]")
+        self.assertEqual((state, text), ("sent", "short answer"))
+
+    def test_an_unknown_or_foreign_reply_still_lands_in_bot_chat(self):
+        self.outbound_from("local-other", "aaaa1111", address="peer:other-bot")
+        for reply_to in ("aaaa1111", "ffff0000", ""):
+            with self.subTest(reply_to=reply_to):
+                self.assertEqual(self.post(reply_to=reply_to)[0], True)
+        self.assertEqual([c["target"] for c in self.owner.calls], [BOT_CHAT] * 3)
+        for row in self.rows():
+            self.assertIsNone(row["in_reply_to"])
+
+    def test_a_row_without_a_session_answers_in_bot_chat(self):
+        record.insert("cccc3333", kind="send", sender_label="Hermius", sender_source="script",
+                      sender_session_id=None, address="peer:remote-bot", body="note",
+                      reply_mode="optional", requested="steer")
+        self.assertEqual(self.post(reply_to="cccc3333")[0], True)
+        self.assertEqual(self.owner.calls[0]["target"], BOT_CHAT)
+
+    def test_a_deleted_asker_still_gets_its_answer_delivered(self):
+        self.outbound_from("local-gone", "dddd4444")
+        self.assertEqual(self.post(reply_to="dddd4444")[0], True)
+        self.assertEqual(self.owner.calls[0]["target"], BOT_CHAT)
+        self.assertEqual(self.rows()[-1]["in_reply_to"], "dddd4444")
+
+
 class ParseTest(unittest.TestCase):
     def test_parse(self):
         parse = peer_inbound.parse
