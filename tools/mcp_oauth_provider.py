@@ -16,9 +16,11 @@ if TYPE_CHECKING:
     from tools.mcp_oauth import HermesTokenStorage
 logger = logging.getLogger(__name__)
 
-# Authorization servers that advertise ``authorization_response_iss_parameter_supported`` and then
-# omit ``iss`` from the redirect (#111135). Exact issuer match, nothing else is relaxed.
-_ISS_OMITTING_ISSUERS = frozenset({"https://api.figma.com"})
+# Issuers whose redirect reaches Hermes without the RFC 9207 ``iss`` they advertise: Figma omits it
+# (#111135); Plaid and Cloudflare send it, but the remote-desktop relay path can lose it before the
+# SDK check (#99984). Exact issuer match, nothing else is relaxed: ``state`` is still verified and a
+# present-but-different ``iss`` still fails.
+_ISS_OMITTING_ISSUERS = frozenset({"https://api.figma.com", "https://api.dashboard.plaid.com", "https://mcp.cloudflare.com"})
 
 # Authorization-server metadata documents the SDK tries in its 401 branch (RFC 8414 / OIDC discovery).
 _ASM_DISCOVERY_PATHS = ("/.well-known/oauth-authorization-server", "/.well-known/openid-configuration")
@@ -107,10 +109,11 @@ class HermesProviderMixin:
         return await super()._perform_authorization()
 
     def _tolerate_missing_iss_for_known_server(self) -> None:
-        """Figma advertises ``authorization_response_iss_parameter_supported`` and then omits ``iss``
-        from the redirect, so the SDK's RFC 9207 check rejects every valid code (#111135). For that
-        one issuer only, fill a missing ``iss`` with the discovered issuer and warn; a present-but-
-        different ``iss`` still fails the SDK check, and every other server keeps the strict rule."""
+        """Authorization servers that advertise ``authorization_response_iss_parameter_supported``
+        and then omit ``iss`` from the redirect make the SDK's RFC 9207 check reject every valid code
+        (#111135 Figma; #99984 Plaid and Cloudflare). For those issuers only, fill a missing ``iss``
+        with the discovered issuer and warn; a present-but-different ``iss`` still fails the SDK
+        check, and every other server keeps the strict rule."""
         issuer = _metadata_issuer(self.context)
         if issuer not in _ISS_OMITTING_ISSUERS:
             return

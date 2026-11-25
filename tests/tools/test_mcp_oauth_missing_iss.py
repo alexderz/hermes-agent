@@ -1,5 +1,6 @@
-"""Regression for #111135: Figma advertises RFC 9207 ``iss`` support and then omits ``iss`` from the
-redirect, so the SDK rejected every valid authorization code. Only that issuer is tolerated."""
+"""Regression for #111135 and #99984: an authorization server that advertises RFC 9207 ``iss`` support
+and then omits ``iss`` from the redirect made the SDK reject every valid authorization code (Figma), or
+lost it on the remote-desktop relay path (Plaid, Cloudflare). Only those exact issuers are tolerated."""
 
 import asyncio
 from types import SimpleNamespace
@@ -60,7 +61,12 @@ def _redirect_passes_sdk_check(provider: _Provider) -> bool:
 @pytest.mark.parametrize("issuer, iss, expected", [
     ("https://api.figma.com", None, True),        # the advertised-but-omitted case Figma ships
     ("https://api.figma.com", "https://evil.example", False),  # a wrong iss is still rejected
+    ("https://api.dashboard.plaid.com", None, True),           # relayed without the iss Plaid sends
+    ("https://api.dashboard.plaid.com", "https://evil.example", False),
+    ("https://mcp.cloudflare.com", None, True),                # same class, Cloudflare (#99984)
+    ("https://mcp.cloudflare.com", "https://evil.example", False),
+    ("https://mcp.cloudflare.com.attacker.example", None, False),  # prefix lookalikes stay strict
     ("https://auth.example.com", None, False),   # every other server keeps the strict RFC 9207 rule
 ])
-def test_missing_iss_is_tolerated_for_figma_only(issuer, iss, expected):
+def test_missing_iss_is_tolerated_for_known_issuers_only(issuer, iss, expected):
     assert _redirect_passes_sdk_check(_provider_for(issuer, iss_in_redirect=iss)) is expected
