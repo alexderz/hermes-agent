@@ -38,22 +38,31 @@ function agySummary(c) {
   return summary && Number.isFinite(summary.remaining_percent) ? summary : null
 }
 
+function agyPace(c) {
+  const summary = agySummary(c)
+  return summary && Number.isFinite(summary.pace_delta) ? summary.pace_delta : null
+}
+
 function agyAccess(c) {
   const summary = agySummary(c)
   if (!c.fresh) return 'Antigravity quota unavailable. Other model groups are separate.'
   if (!summary) return 'Antigravity has no weekly group reading. Other model groups are separate.'
   const windowKind = windowWord(summary.window)
+  const pace = agyPace(c)
+  const paceText = pace == null ? '' : ` Pace headroom ${signed(pace)}.`
   if (summary.remaining_percent === 0) {
-    return `Antigravity ${summary.group_name} ${windowKind} allowance is exhausted, 0% remaining. Other model groups are separate.`
+    return `Antigravity ${summary.group_name} ${windowKind} allowance is exhausted, 0% remaining.${paceText} Other model groups are separate.`
   }
-  return `Antigravity ${summary.group_name} ${windowKind} ${pct(summary.remaining_percent)} remaining. Other model groups are separate.`
+  return `Antigravity ${summary.group_name} ${windowKind} ${pct(summary.remaining_percent)} remaining.${paceText} Other model groups are separate.`
 }
 
 function agyChipText(c, compact) {
   const provider = compact ? 'Ag' : 'AGY'
   const summary = agySummary(c)
   if (!summary) return `${provider} ${pct(null)}`
-  return `${provider} ${summary.tag} ${pct(summary.remaining_percent)}`
+  const pace = agyPace(c)
+  const paceText = !compact && pace != null ? ` P${signed(pace)}` : ''
+  return `${provider} ${summary.tag} ${pct(summary.remaining_percent)}${paceText}`
 }
 
 // Remaining Neon/Gemini quota, in percent. The same notice thresholds the model picker uses:
@@ -150,7 +159,13 @@ function AgyDetails({ c }) {
         jsxs('div', { style: { display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, minWidth: 0 }, children: [
           jsx(StatusDot, { tone: agyTone(c) }), 'Antigravity'
         ] }),
-        summary ? jsx('div', { 'data-agy-summary': '', style: { fontWeight: 700, fontSize: 14, fontVariantNumeric: 'tabular-nums' }, children: pct(summary.remaining_percent) }) : null
+        summary ? jsxs('div', { 'data-agy-summary': '', style: { textAlign: 'right' }, children: [
+          jsx('div', { style: { fontWeight: 700, fontSize: 14, fontVariantNumeric: 'tabular-nums' }, children: pct(summary.remaining_percent) }),
+          Number.isFinite(summary.pace_delta)
+            ? jsx('div', { 'data-agy-pace': '', style: { fontSize: 10, color: 'var(--ui-text-tertiary)', fontVariantNumeric: 'tabular-nums' },
+                children: `P: ${signed(summary.pace_delta)}` })
+            : null
+        ] }) : null
       ] }),
       groups.length ? groups.map(group => {
         const metric = groupMetric(group)
@@ -180,9 +195,11 @@ function AgyDetails({ c }) {
 function PaygSection({ data }) {
   const o = data.openrouter || {}
   const ci = data.cheaperinference || {}
-  const models = ci.status === 'ok' ? (ci.models || []) : []
+  const models = (ci.status === 'ok' ? (ci.models || []) : [])
+    .filter(row => String(row.id).startsWith('deepseek') && !String(row.id).endsWith('-ultrafast'))
+    .slice(0, 2)
   const spend = ci.status === 'ok' ? (ci.spend || null) : null
-  const active = models.find(row => row.id === ci.active_model) || null
+  const shortModel = id => String(id).replace(/^deepseek-v4\.1-flash-/, '').replace(/-/g, ' ')
   return jsx(Section, { label: 'Pay per use', children: [
     jsxs('div', {
       'data-payg-openrouter': '',
@@ -209,37 +226,23 @@ function PaygSection({ data }) {
             : (ci.spend_error || ci.error || 'spend unavailable') })
       ]
     }),
-    models.length ? jsxs('div', { 'data-ci-rates': '', style: { paddingTop: 3, minWidth: 0 }, children: [
-      jsx('div', { style: { fontWeight: 600, fontSize: 10.5, color: 'var(--ui-text-tertiary)' }, children: 'Model rates' }),
-      jsxs('div', {
-        style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 42px 42px 30px', gap: '0 6px',
-          fontSize: 10, fontVariantNumeric: 'tabular-nums', color: 'var(--ui-text-tertiary)', paddingTop: 1 },
-        children: [
-          jsx('span', { children: 'model · $/M tokens' }),
-          jsx('span', { style: { textAlign: 'right' }, children: 'in' }),
-          jsx('span', { style: { textAlign: 'right' }, children: 'out' }),
-          jsx('span', { style: { textAlign: 'right' }, children: 'disc' })
-        ]
-      }),
+    models.length ? jsxs('div', { 'data-ci-rates': '', style: { paddingTop: 2, minWidth: 0 }, children: [
+      jsx('div', { style: { fontSize: 10, color: 'var(--ui-text-tertiary)', paddingBottom: 1 }, children: 'deepseek · $/M in/out' }),
       ...models.map(row => jsxs('div', {
         'data-ci-model': row.id,
-        style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 42px 42px 30px', gap: '0 6px',
+        style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 46px 46px 30px', gap: '0 6px',
           fontSize: 10.5, fontVariantNumeric: 'tabular-nums', padding: '1px 0', minWidth: 0 },
         children: [
-          jsx('span', {
-            title: row.id,
-            style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-              fontWeight: row.id === ci.active_model ? 700 : 500 },
-            children: row.id
-          }),
+          jsx('span', { title: row.id, style: { fontWeight: row.id === ci.active_model ? 700 : 500 }, children: shortModel(row.id) }),
           jsx('span', { style: { textAlign: 'right' }, children: rate(row.input) }),
           jsx('span', { style: { textAlign: 'right' }, children: rate(row.output) }),
           jsx('span', { style: { textAlign: 'right', color: 'var(--ui-text-tertiary)' },
             children: row.discount ? `-${Math.round(row.discount)}%` : '—' })
         ]
       }, row.id)),
-      active ? jsx('div', { style: { color: 'var(--ui-text-tertiary)', fontSize: 10, paddingTop: 1 },
-        children: `Current model: ${active.id}` }) : null
+      models.some(row => row.id === ci.active_model)
+        ? jsx('div', { style: { color: 'var(--ui-text-tertiary)', fontSize: 10, paddingTop: 1 }, children: 'Bold = current model' })
+        : null
     ] }) : null
   ] })
 }
@@ -281,7 +284,7 @@ function Panel({ data, ctx }) {
       'Quota percentages are remaining; P is pace headroom in percentage points.' }),
     jsxs('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' }, children: [
       jsx('span', { style: { color: 'var(--ui-text-quaternary)', fontSize: 10 },
-        children: 'Antigravity groups are separate and not paced.' }),
+        children: 'Antigravity groups are separate; Gemini pace uses its own week.' }),
       jsx(Button, { variant: 'ghost', size: 'sm', disabled: busy, onClick: refresh, children: busy ? 'Reading…' : 'Refresh' })
     ] })
   ] })

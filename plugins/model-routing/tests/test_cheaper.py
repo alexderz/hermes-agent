@@ -177,6 +177,23 @@ class ReaderTests(unittest.TestCase):
         self.assertEqual(reading["status"], "failed")
         self.assertIn("RecursionError", reading["error"])
 
+    def test_balance_parses_common_shapes(self):
+        for payload, want in (
+            ({"balance_usd": "12.5"}, 12.5),
+            ({"wallet": {"available_usd": "3.25"}}, 3.25),
+            ({"data": [{"balance": "0"}]}, 0.0),
+        ):
+            self.assertEqual(readers._find_balance(payload), want)
+        for payload in ({"unrelated": 1}, None, {}, {"balance": "n/a"}):
+            self.assertIsNone(readers._find_balance(payload))
+
+    def test_balance_rides_along_with_spend(self):
+        usage = json.dumps({"daily_spend": [{"date": "2026-11-26", "spend_usd": "0.10"}]}).encode()
+        reading = self.read(b'{"data": [], "balance_usd": "7.5"}', usage=usage,
+                            now=datetime(2026, 11, 26, 12, tzinfo=UTC))
+        self.assertEqual(reading["status"], "ok")
+        self.assertEqual(reading["spend"]["balance"], 7.5)
+
     def test_duplicate_configured_models_collapse(self):
         reading = self.read(self.catalog({"id": "m", "pricing": {"input_per_million": "1", "output_per_million": "2"}}),
                             models=("m", "m"))

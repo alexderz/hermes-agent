@@ -493,9 +493,9 @@ class AgyCollectTests(unittest.TestCase):
             history = (Path(tmp) / "history.jsonl").read_text().splitlines()
         card = next(item for item in core.cards(first, now=NOW) if item["id"] == "agy")
         self.assertTrue(card["fresh"])
-        self.assertEqual(card["summary"]["group_name"], "Gemini 4 Argon")
-        self.assertEqual(card["summary"]["tag"], "Ar")
-        self.assertAlmostEqual(card["summary"]["remaining_percent"], 0.4)
+        self.assertEqual(card["summary"]["group_name"], "Gemini Models")
+        self.assertEqual(card["summary"]["tag"], "G")
+        self.assertAlmostEqual(card["summary"]["remaining_percent"], 42.0)
         hidden = next(
             item
             for item in core.cards(second, now=NOW + timedelta(minutes=15))
@@ -593,7 +593,7 @@ class AgyCollectTests(unittest.TestCase):
         self.assertNotEqual(unknown, 0)
         self.assertEqual(card["groups"][0]["buckets"][0]["remaining_percent"], 42.0)
         self.assertAlmostEqual(card["groups"][2]["buckets"][0]["remaining_percent"], 0.4)
-        self.assertEqual(card["summary"]["group_name"], "Gemini 4 Argon")
+        self.assertEqual(card["summary"]["group_name"], "Gemini Models")
         text = core.render_text(state, now=moment)
         self.assertIn("Gemini Models", text)
         unknown_line = next(
@@ -628,7 +628,7 @@ class AgyCardTests(unittest.TestCase):
         self.assertGreater(cards[1]["pace_delta"], 0)
         return cards[2]
 
-    def test_lowest_weekly_is_not_an_account_aggregate(self):
+    def test_summary_speaks_for_the_gemini_pool_not_an_aggregate(self):
         card = self.card(stored_groups())
         self.assertEqual(card["name"], "Antigravity")
         self.assertIsNone(card["plan"])
@@ -638,7 +638,7 @@ class AgyCardTests(unittest.TestCase):
         self.assertIsNone(card["pace_used_percent"])
         self.assertIsNone(card["used_percent"])
         self.assertEqual(card["summary"]["window"], "weekly")
-        self.assertEqual(card["summary"]["bucket_id"], "gemini-argon-wtu-weekly")
+        self.assertEqual(card["summary"]["bucket_id"], "gemini-weekly")
         self.assertNotEqual(card["summary"]["remaining_percent"], 0)
         names = [group["name"] for group in card["groups"]]
         self.assertEqual(
@@ -682,19 +682,19 @@ class AgyCardTests(unittest.TestCase):
         payload = envelope([
             {"name": "Gemini Models", "buckets": [
                 {"id": "gemini-weekly", "name": "Week", "window": "weekly",
-                 "remaining_fraction": 0.5, "reset_time": "2026-11-27T18:00:00Z"},
+                 "remaining_fraction": 1e-12, "reset_time": "2026-11-27T18:00:00Z"},
                 {"id": "gemini-5h", "name": "Five hours", "window": "5h",
                  "remaining_fraction": 0, "reset_time": "2026-11-22T22:00:00Z"}]},
             {"name": "Gemini 4 Argon", "buckets": [
                 {"id": "gemini-argon-wtu-weekly", "name": "Week", "window": "weekly",
-                 "remaining_fraction": 1e-12, "reset_time": "2026-11-28T00:00:00Z"}]},
+                 "remaining_fraction": 1.0, "reset_time": "2026-11-28T00:00:00Z"}]},
         ])
         parsed = readers.parse_agy_usage(payload)
-        fraction = parsed["groups"][1]["buckets"][0]["remaining_fraction"]
+        fraction = parsed["groups"][0]["buckets"][0]["remaining_fraction"]
         self.assertEqual(fraction, 1e-12)
         card = self.card(parsed["groups"])
         percent = card["summary"]["remaining_percent"]
-        self.assertEqual(card["summary"]["group_name"], "Gemini 4 Argon")
+        self.assertEqual(card["summary"]["group_name"], "Gemini Models")
         self.assertEqual(percent, fraction * 100)
         self.assertGreater(percent, 0)
         self.assertLess(percent, 1)
@@ -708,11 +708,23 @@ class AgyCardTests(unittest.TestCase):
             "subscriptions": {"agy": {"id": "agy", "status": "ok", "observed_at": NOW.isoformat(),
                                       "groups": parsed["groups"]}},
         }, now=NOW)
-        argon = next(line for line in text.splitlines() if line.startswith("    Gemini 4 Argon"))
+        gemini = next(line for line in text.splitlines() if line.startswith("    Gemini Models"))
         short = next(line for line in text.splitlines() if "5-hour" in line)
-        self.assertIn("<1%", argon)
-        self.assertNotIn("0%", argon)
+        self.assertIn("<1%", gemini)
         self.assertIn("0%", short)
+
+    def test_summary_pace_uses_the_gemini_week(self):
+        moment = datetime(2026, 11, 26, 12, tzinfo=UTC)
+        sample = [{"name": "Gemini Models", "buckets": [
+            {"id": "gemini-weekly", "name": "Week", "window": "weekly",
+             "remaining_fraction": 0.35, "reset_at": "2026-11-29T20:27:00Z"}]}]
+        card = core.agy_view({"id": "agy", "status": "ok", "observed_at": moment.isoformat(),
+                              "groups": sample}, moment, CFG)
+        expected = pace.window_pace(65.0, pace.parse_ts("2026-11-29T20:27:00Z"), moment)
+        self.assertAlmostEqual(card["summary"]["pace_delta"], expected["p_points"])
+        self.assertAlmostEqual(card["summary"]["pace_used_percent"], expected["pace_used_percent"])
+        self.assertLess(card["summary"]["pace_delta"], 0)
+        self.assertIsNone(card["pace_delta"])
 
     def test_zero_weekly_keeps_the_other_groups(self):
         sample = stored_groups()
@@ -795,7 +807,7 @@ class AgyCardTests(unittest.TestCase):
         }
         card = next(item for item in core.cards(state, now=NOW) if item["id"] == "agy")
         self.assertTrue(card["fresh"])
-        self.assertEqual(card["summary"]["group_name"], "Gemini 4 Argon")
+        self.assertEqual(card["summary"]["group_name"], "Gemini Models")
         self.assertEqual(card["reason"], "")
         text = core.render_text(state, now=NOW)
         self.assertIn("Gemini 4 Argon", text)
@@ -843,7 +855,7 @@ class AgyCardTests(unittest.TestCase):
         self.assertNotEqual(argon["remaining_percent"], 0)
         self.assertEqual(card["groups"][0]["buckets"][0]["remaining_percent"], 42.0)
         self.assertEqual(card["groups"][1]["buckets"][0]["remaining_percent"], 15.0)
-        self.assertEqual(card["summary"]["group_name"], "Claude and GPT models")
+        self.assertEqual(card["summary"]["group_name"], "Gemini Models")
         text = core.render_text(
             {
                 "written_at": (NOW - timedelta(hours=5)).isoformat(),

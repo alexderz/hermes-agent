@@ -246,9 +246,13 @@ def _agy_group_cards(sub: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
-def _lowest_weekly(groups: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
+def _lowest_weekly(groups: list[dict[str, Any]], want_gemini: bool = False) -> Optional[dict[str, Any]]:
+    """The weekly bucket the card speaks for: the Gemini pool when asked and present, else the lowest."""
     best: Optional[dict[str, Any]] = None
     for group in groups:
+        gemini = "gemini" in str(group.get("name", "")).casefold() and "argon" not in str(group.get("name", "")).casefold()
+        if want_gemini and not gemini:
+            continue
         for bucket in group["buckets"]:
             if bucket.get("window") != "weekly":
                 continue
@@ -260,6 +264,24 @@ def _lowest_weekly(groups: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
                         "bucket_id": bucket.get("id"), "remaining_percent": percent,
                         "reset_at": bucket.get("reset_at"), "reset_label": bucket.get("reset_label")}
     return best
+
+
+def _agy_summary(groups: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    """Alex runs Gemini (Neon) from this pool, so the chip speaks for it whenever it is published."""
+    return _lowest_weekly(groups, want_gemini=True) or _lowest_weekly(groups)
+
+
+def _agy_pace(summary: Optional[dict[str, Any]], now: datetime) -> None:
+    """Pace for the weekly pool behind the summary, in place. Not a routing input."""
+    if not summary:
+        return
+    percent = summary.get("remaining_percent")
+    reset = pace.parse_ts(summary.get("reset_at"))
+    if percent is None or reset is None or reset <= now:
+        return
+    p = pace.window_pace(100.0 - float(percent), reset, now, period_s=pace.WEEK_S, reserve=0.0)
+    summary["pace_delta"] = p["p_points"]
+    summary["pace_used_percent"] = p["pace_used_percent"]
 
 
 def _agy_fresh(sub: Optional[dict[str, Any]], now: datetime, cfg: dict[str, Any]) -> tuple[bool, str]:
@@ -279,11 +301,13 @@ def agy_view(sub: Optional[dict[str, Any]], now: datetime, cfg: dict[str, Any]) 
     """One display card. Stale and failed readings keep no percentage on the card."""
     fresh, reason = _agy_fresh(sub, now, cfg)
     groups = _agy_group_cards(sub) if fresh and sub else []
+    summary = _agy_summary(groups) if groups else None
+    _agy_pace(summary, now)
     return {"id": "agy", "name": DISPLAY_NAMES["agy"], "plan": None, "display_only": True,
             "used_percent": None, "pace_delta": None, "pace_used_percent": None, "reset_at": None,
             "reset_label": None, "eligible": False, "fresh": fresh, "reason": reason,
             "short_used_percent": None, "observed_at": sub.get("observed_at") if sub else None,
-            "picked": False, "summary": _lowest_weekly(groups) if groups else None, "groups": groups}
+            "picked": False, "summary": summary, "groups": groups}
 
 
 def _render_agy(card: dict[str, Any]) -> list[str]:

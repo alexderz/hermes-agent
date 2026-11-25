@@ -19,11 +19,11 @@ const fixture = vi.hoisted(() => ({
     openrouter: { week: 12.34 as number | null | undefined, today: 1.23 as number | null | undefined },
     cheaperinference: {
       status: 'ok' as string,
-      spend: { today: 0.42, week: 1.9, month: 4.47, balance: null } as Record<string, unknown> | null,
-      active_model: 'model-b' as string | null,
+      spend: { today: 0.42, week: 1.9, month: 4.47, balance: 7.5 } as Record<string, unknown> | null,
+      active_model: 'deepseek-v4.1-flash-1017' as string | null,
       models: [
-        { id: 'model-a', provider: 'DeepSeek', input: 0.5, output: 2, discount: 15 },
-        { id: 'model-b', provider: 'DeepSeek', input: 0.075, output: 0.24, discount: 56 }
+        { id: 'deepseek-v4.1-flash-1017', provider: 'DeepSeek', input: 0.066, output: 0.264, discount: 56 },
+        { id: 'deepseek-v4.1-flash-1017-fast', provider: 'DeepSeek', input: 0.51, output: 2.04, discount: 15 }
       ] as Array<Record<string, unknown>>
     }
   }
@@ -278,7 +278,7 @@ it('shows every Antigravity group and bucket with its own reset and no pace', ()
 
   expect(panel.textContent).toContain('Subscriptions')
   expect(panel.textContent).toContain('percentage points')
-  expect(panel.textContent?.toLowerCase()).toContain('not paced')
+  expect(panel.textContent?.toLowerCase()).toContain('gemini pace uses its own week')
   expect(claude.children[1].textContent).toBe('60%  P: +2pp')
   expect(details.textContent).toContain('Antigravity')
   expect(details.textContent).not.toMatch(/Max|Pro Lite|Heavy|plan/i)
@@ -365,20 +365,36 @@ it('shows Cheaper Inference rates in a pay-per-use grid and a status chip', () =
   expect(panel.textContent).toContain('Subscriptions')
   expect(panel.textContent).toContain('Pay per use')
   expect(ci.textContent).toContain('Cheaper Inference')
-  const active = rates.querySelector('[data-ci-model="model-b"]')!
-  expect(active.textContent).toContain('model-b')
-  expect(active.textContent).toContain('0.075')
-  expect(active.textContent).toContain('0.24')
+  const active = rates.querySelector('[data-ci-model="deepseek-v4.1-flash-1017"]')!
+  expect(active.textContent).toContain('1017')
+  expect(active.textContent).toContain('0.066')
+  expect(active.textContent).toContain('0.264')
   expect(active.textContent).toContain('-56%')
-  expect(rates.textContent).toContain('Current model: model-b')
+  expect(rates.querySelectorAll('[data-ci-model]')).toHaveLength(2)
+  expect(rates.textContent).toContain('1017 fast')
+  expect(rates.textContent).toContain('Bold = current model')
+  expect(ci.textContent).toContain('bal $7.50')
 
   expect(ci.textContent).toContain('W $1.90  D $0.42')
-  expect(ci.textContent).toContain('M $4.47')
+  expect(ci.textContent).toContain('M $4.47 · bal $7.50')
   for (const row of container.querySelectorAll('[data-usage-compact], [data-usage-full]')) {
     const chip = row.querySelector('[data-ci-chip]')
     expect(chip?.textContent).toContain('CI W$1.9 D$0.42')
     expect(chip?.getAttribute('aria-label')).toContain('this week (UTC)')
   }
+})
+
+it('shows Antigravity pace from the Gemini week', () => {
+  fixture.showPanel = true
+  showAgy(agyCard({
+    summary: { group_name: 'Gemini Models', tag: 'G', window: 'weekly', remaining_percent: 35, pace_delta: 12.3, pace_used_percent: 22.7 }
+  }))
+  const { container, getByTestId } = render(meter())
+
+  expect(container.querySelector('[data-usage-full] [data-agy-chip]')?.textContent).toBe('AGY G 35% P+12pp')
+  expect(container.querySelector('[data-usage-compact] [data-agy-chip]')?.textContent).toBe('Ag G 35%')
+  expect(container.querySelector('[data-usage-full] [data-agy-chip]')?.getAttribute('aria-label')).toContain('Pace headroom +12pp')
+  expect(getByTestId('usage-panel').querySelector('[data-agy-pace]')?.textContent).toBe('P: +12pp')
 })
 
 it('colours the Antigravity chip by remaining Neon quota', () => {

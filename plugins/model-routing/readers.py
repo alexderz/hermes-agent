@@ -319,6 +319,7 @@ READERS: dict[str, Callable[[], dict[str, Any]]] = {
 
 CHEAPER_MODELS_URL = "https://api.cheaperinference.com/v1/models"
 CHEAPER_USAGE_URL = "https://api.cheaperinference.com/v1/usage/daily"
+CHEAPER_BALANCE_URL = "https://api.cheaperinference.com/v1/account/balance"
 CHEAPER_MAX_BYTES = 8 * 1024 * 1024
 CHEAPER_TIMEOUT_S = 20.0
 _CHEAPER_KEY_ENVS = ("CHEAPERINFERENCE_API_KEY", "CI_MCP_BEARER_TOKEN")
@@ -467,6 +468,40 @@ def _cheaper_get(url: str, token: str, timeout: float) -> Any:
     return json.loads(raw.decode("utf-8"))
 
 
+_BALANCE_KEYS = ("balance_usd", "available_usd", "wallet_balance_usd", "credits_usd", "balance")
+
+
+def _find_balance(payload: Any, depth: int = 0) -> Optional[float]:
+    """The wallet balance from an account payload; None when the shape is unknown."""
+    if depth > 3:
+        return None
+    if isinstance(payload, dict):
+        for key in _BALANCE_KEYS:
+            if key in payload:
+                amount = _price(payload[key])
+                if amount is not None:
+                    return amount
+        for key in ("wallet", "account", "data"):
+            if isinstance(payload.get(key), (dict, list)):
+                found = _find_balance(payload[key], depth + 1)
+                if found is not None:
+                    return found
+    elif isinstance(payload, list):
+        for item in payload:
+            found = _find_balance(item, depth + 1)
+            if found is not None:
+                return found
+    return None
+
+
+def read_cheaper_balance(token: str, timeout: float) -> Optional[float]:
+    """Wallet balance, when the key carries ``account:read``. A missing scope stays unknown."""
+    try:
+        return _find_balance(_cheaper_get(CHEAPER_BALANCE_URL, token, timeout))
+    except Exception:
+        return None
+
+
 def read_cheaper_inference(token_fn: Callable[[], Optional[str]] = _cheaper_token,
                            timeout: float = CHEAPER_TIMEOUT_S,
                            models_fn: Callable[[], list[str]] = cheaper_configured_models,
@@ -493,6 +528,8 @@ def read_cheaper_inference(token_fn: Callable[[], Optional[str]] = _cheaper_toke
         spend = parse_cheaper_spend(_cheaper_get(CHEAPER_USAGE_URL, token, timeout), moment)
         if spend is None:
             spend_error = "usage returned no daily spend"
+        else:
+            spend["balance"] = read_cheaper_balance(token, timeout)
     except Exception as exc:
         spend_error = f"usage unreadable ({type(exc).__name__})"
     rows: list[dict[str, Any]] = []
