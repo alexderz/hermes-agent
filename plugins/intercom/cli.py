@@ -112,6 +112,8 @@ def register_parser(parser: argparse.ArgumentParser) -> None:
                       help=INTERRUPT_SENTENCE + " passive is held until the other session's next turn and never wakes it.")
     send.add_argument("--key", default=None,
                       help="For passive or queue: a newer message with the same key replaces a held one.")
+    send.add_argument("--unless-closed-by-user", action="store_true",
+                      help="On a new admit, refuse when the owner closed that session.")
     # A string, so route.send refuses a bad value in plain words (exit 2), as the tool does.
     send.add_argument("--within", default=None, metavar="MINUTES",
                       help="For passive: wake the target after MINUTES (at least 5) if it has not run.")
@@ -259,6 +261,7 @@ def _cmd_send(args) -> int:
         key=args.key,
         within=args.within,
         gist=args.gist,
+        unless_closed_by_user=bool(getattr(args, "unless_closed_by_user", False)),
     )
     if args.json:
         print(json.dumps(receipt, ensure_ascii=False))

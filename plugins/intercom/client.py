@@ -62,7 +62,8 @@ def submission_id(message_id: str) -> str:
     return f"intercom-{message_id}"
 
 
-def deliver_sync(target: str, text: str, delivery: str, submission_id: str) -> dict:
+def deliver_sync(target: str, text: str, delivery: str, submission_id: str, *,
+                 unless_closed_by_user: bool = False) -> dict:
     """Deliver *text* to session *target* using the mode table at the top
     of this module.
 
@@ -70,10 +71,30 @@ def deliver_sync(target: str, text: str, delivery: str, submission_id: str) -> d
     ``admission_id`` is ``prompt.submit``'s id when the sequence ended in a submit, else ``None``;
     ``instance_id`` is the discovered owner's (``GatewayEndpoint.instance_id``). On failure:
     ``{"ok": False, "error": <detail>, "code": <owner code or None>, "exit", "message"}``.
+
+    ``unless_closed_by_user`` defaults off. When set, ``prompt.submit`` carries that flag.
+    Callers that omit it send the same params as before.
     """
     if delivery not in DELIVERIES:
         raise ValueError(f"delivery must be one of {', '.join(DELIVERIES)}")
-    return _run(_deliver, target, text, delivery, submission_id)
+    return _run(_deliver, target, text, delivery, submission_id, bool(unless_closed_by_user))
+
+
+def lookup_admission(session_id: str, request_id: str, *, payload_digest: str | None = None) -> dict:
+    """Read-only ``prompt.lookup_admission``. Never submits and never writes.
+
+    Returns ``found`` (with ``admission_id`` and ``target_session_id``), ``proven_not_found``,
+    ``unavailable``, or ``conflict``. A transport failure or an unusable answer is
+    ``unavailable``. ``payload_digest`` is omitted from the request when it is absent.
+    """
+    params: dict = {"session_id": session_id, "request_id": request_id}
+    if isinstance(payload_digest, str):
+        params["payload_digest"] = payload_digest
+    try:
+        result = _run(_read, "prompt.lookup_admission", _lookup_fields, **params)
+    except Exception:  # health: allow BLE001 -- a lost read is unavailable, not a write
+        return {"outcome": "unavailable"}
+    return _lookup_outcome(result)
 
 
 def owner_instance() -> str | None:
@@ -125,14 +146,67 @@ def _failure(detail: str, exc: BaseException | None = None, code: str | None = N
     return {"ok": False, "error": detail, "code": code, "exit": exit_code, "message": message}
 
 
+def _structured_refusal(data) -> dict:
+    """The owner refusal fields. Other ``error.data`` keys stay off the receipt."""
+    if not isinstance(data, dict):
+        return {}
+    kept = {}
+    for key in ("reason", "field", "detail"):
+        value = data.get(key)
+        if isinstance(value, str) and value:
+            kept[key] = value
+    for key in ("revision", "execution_generation"):
+        value = data.get(key)
+        if type(value) is int:
+            kept[key] = value
+    if data.get("admitted") is False:
+        kept["admitted"] = False
+    return kept
+
+
 def _refusal(exc) -> dict:
     code = str(exc)  # GatewayRPCError's str is the owner's bounded reason code
-    return _failure(_OWNER_CODES.get(code, "refused-by-owner"), exc, code)
+    failure = _failure(_OWNER_CODES.get(code, "refused-by-owner"), exc, code)
+    data = _structured_refusal(getattr(exc, "data", None))
+    if data:
+        failure["data"] = data
+    return failure
 
 
 def _applied(applied: str, detail: str | None = None, admission_id=None) -> dict:
     return {"ok": True, "applied": applied, "applied_detail": detail,
             "admission_id": admission_id if isinstance(admission_id, str) else None}
+
+
+_LOOKUP_OUTCOMES = ("found", "proven_not_found", "unavailable", "conflict")
+
+
+def _lookup_fields(answer) -> dict:
+    body = answer if isinstance(answer, dict) else {}
+    return {"outcome": body.get("outcome"), "admission_id": body.get("admission_id"),
+            "target_session_id": body.get("target_session_id"),
+            "payload_digest": body.get("payload_digest"),
+            "canonical_session_id": body.get("canonical_session_id")}
+
+
+def _lookup_outcome(result) -> dict:
+    if not isinstance(result, dict) or result.get("ok") is not True:
+        return {"outcome": "unavailable"}
+    outcome = result.get("outcome")
+    if outcome not in _LOOKUP_OUTCOMES:
+        return {"outcome": "unavailable"}
+    named = {}
+    canonical = result.get("canonical_session_id")
+    if isinstance(canonical, str) and canonical:
+        named["canonical_session_id"] = canonical
+    if outcome != "found":
+        return {"outcome": outcome, **named}
+    admission = result.get("admission_id")
+    if not isinstance(admission, str) or not admission:
+        return {"outcome": "unavailable"}
+    return {"outcome": "found", "admission_id": admission,
+            "target_session_id": result.get("target_session_id"),
+            "payload_digest": result.get("payload_digest"), **named}
 
 
 def _discover():
@@ -172,13 +246,14 @@ async def _read(method, project, **params):
     return result
 
 
-async def _deliver(target, text, delivery, sub_id):
+async def _deliver(target, text, delivery, sub_id, unless_closed_by_user=False):
     endpoint, failure = _discover()
     if failure is not None:
         return failure
     from hermes_cli.gateway_client import GatewayClientError, GatewayRPCError, connect_gateway
 
-    owner = _Owner(target, text, sub_id, GatewayRPCError, GatewayClientError)
+    owner = _Owner(target, text, sub_id, GatewayRPCError, GatewayClientError,
+                   unless_closed_by_user=bool(unless_closed_by_user))
     result = None
     try:
         async with connect_gateway(endpoint) as client:
@@ -200,9 +275,11 @@ async def _deliver(target, text, delivery, sub_id):
 class _Owner:
     """One delivery's call sequence on one attached connection."""
 
-    def __init__(self, target, text, sub_id, rpc_error, client_error):
+    def __init__(self, target, text, sub_id, rpc_error, client_error, *,
+                 unless_closed_by_user=False):
         self.target, self.text, self.sub_id = target, text, sub_id
         self.rpc_error, self.client_error = rpc_error, client_error
+        self.unless_closed_by_user = bool(unless_closed_by_user)
         self.client = None
         self.in_flight = False
 
@@ -230,6 +307,8 @@ class _Owner:
         params = {"text": self.text, "submission_id": self.sub_id}
         if queued:
             params["queued"] = True
+        if self.unless_closed_by_user:
+            params["unless_closed_by_user"] = True
         return (await self.hand("prompt.submit", **params)).get("admission_id")
 
     async def apply(self, delivery):

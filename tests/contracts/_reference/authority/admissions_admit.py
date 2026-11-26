@@ -24,6 +24,7 @@ from persistence.authority.admissions import (
     raise_gate,
 )
 from persistence.authority.vocabulary import ADMISSION_QUEUE_MAX, ADMITTED_REQUEST_CONFLICT, admission_fingerprint
+from persistence.conversation.sessions import RECOVERABLE_END_REASONS
 from persistence.conversation.messages import NewMessage, ReplaceMode, RewindPlan
 from persistence.core.canonical import canonical_json
 from persistence.core.errors import STORE_FAILURES, AuthorityRefusal, CapabilityUnsupported
@@ -32,6 +33,23 @@ from session_rules.automation import folded_payload
 
 from . import admissions_rows as rows
 from .admissions_rows import _identity_key, _terminal_key
+
+
+def _reference_physical(sessions: Mapping[str, Any], logical_owner: str) -> str:
+    """Compression tip of ``logical_owner`` inside the reference session table."""
+    current = logical_owner
+    seen: set[str] = set()
+    while current not in seen and current in sessions:
+        seen.add(current)
+        if sessions[current].get("end_reason") != "compression":
+            break
+        children = [sid for sid, row in sessions.items()
+                    if row.get("parent_session_id") == current and sid not in seen]
+        if not children:
+            break
+        live = [sid for sid in children if not sessions[sid].get("ended_at")]
+        current = (live or children)[-1]
+    return current
 
 
 def _replacement_binding(principal_id: str, session_id: str, request_id: str) -> str:
@@ -73,7 +91,8 @@ class AdmitMixin:
 
     def admit(self, *, epoch: int, principal_id: str, session_id: str, request_id: str, payload: Mapping[str, Any], intent: str = "queue", gate: AdmissionGate = None,
               replaces: QueuedReplacement | None = None, supersedes: str | None = None, api_target: ApiTargetClaim | None = None,
-              rewrite: TranscriptRewrite | None = None, hosted: Any = None, fold: QueuedFold | None = None) -> tuple[AdmissionRecord, bool]:
+              rewrite: TranscriptRewrite | None = None, hosted: Any = None, fold: QueuedFold | None = None,
+              close_aware: Any = None) -> tuple[AdmissionRecord, bool]:
         for value in (principal_id, session_id, request_id):
             rows.text(value)
         if intent not in ("queue", "steer", "redirect"):
@@ -100,6 +119,8 @@ class AdmitMixin:
             if sum(1 for row in rows.session_rows(authority, session_id) if row["status"] == "queued") >= ADMISSION_QUEUE_MAX:
                 raise AuthorityRefusal("queue_full")
             raise_gate(gate)
+            if close_aware is not None:
+                self._refuse_user_close(close_aware)
             self._run_extras(authority, principal_id, session_id, request_id, replaces, supersedes, api_target, rewrite, hosted, fold)
             authority = state.snapshot
             meta = authority["meta"]
@@ -111,6 +132,23 @@ class AdmitMixin:
                 "owner_epoch": epoch, "generation": None, "seq": meta["admissions_seq"],
             }
             return rows.record(row), True
+
+    def _refuse_user_close(self, check: Any) -> None:
+        """The in-memory twin of the durable close check: receipt target, else compression tip."""
+        logical_owner = getattr(check, "logical_owner", None)
+        if not isinstance(logical_owner, str) or not logical_owner:
+            raise AuthorityRefusal("invalid_params", field="session")
+        sessions = self._tables().get("sessions") or {}
+        physical = _reference_physical(sessions, logical_owner)
+        row = sessions.get(physical)
+        if row is None or not row.get("ended_at"):
+            return
+        if row.get("end_reason") in RECOVERABLE_END_REASONS:
+            return
+        runtime = (self._state().snapshot.get("sessions") or {}).get(physical) or {}
+        revision = int(runtime.get("revision", 0))
+        detail = f"logical_owner={logical_owner} physical={physical} runtime_revision={revision}"
+        raise AuthorityRefusal("closed-by-user", field="session", detail=detail)
 
     def _run_extras(self, authority: dict[str, Any], principal_id: str, session_id: str, request_id: str, replaces: QueuedReplacement | None, supersedes: str | None,
                     api_target: ApiTargetClaim | None, rewrite: TranscriptRewrite | None, hosted: Any, fold: QueuedFold | None = None) -> None:

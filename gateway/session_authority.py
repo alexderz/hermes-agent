@@ -727,7 +727,8 @@ class SessionAuthority:
         return results
 
     async def submit(self, actor: SessionActor, request: Submission, *, queue_while_restarting=False,
-                     _kanban_card=None, replaces=None, supersedes=None, api_target=None, hosted=None):
+                     _kanban_card=None, replaces=None, supersedes=None, api_target=None, hosted=None,
+                     close_aware=False):
         """``queue_while_restarting``: the caller is an interactive client attached to a restart's
         after-turn wait, which commits the input queued for the next owner. Machine callers (a2a,
         kanban, hosted rooms) keep the plain ``runtime_draining`` refusal and retry against the next
@@ -747,10 +748,10 @@ class SessionAuthority:
             with capture_lease():  # captured bytes are held from capture until commit or refusal
                 return await self._submit(actor, request, queue_only=queue_while_restarting is True,
                                           _kanban_card=_kanban_card, replaces=replaces, supersedes=supersedes,
-                                          api_target=api_target, hosted=hosted)
+                                          api_target=api_target, hosted=hosted, close_aware=close_aware)
 
     async def _submit(self, actor, request, *, queue_only=False, _kanban_card=None, replaces=None, supersedes=None,
-                      api_target=None, hosted=None):
+                      api_target=None, hosted=None, close_aware=False):
         self._require_admission_open(queue_only=queue_only)
         if (request.intent != 'queue' or not {'text'} <= set(request.payload) <= {
                 'text', 'attachments', 'finite', 'unattended', 'surface', 'voice_context', 'interrupted',
@@ -775,23 +776,18 @@ class SessionAuthority:
                    **admit_attachments(request.payload.get('attachments'), admitted=admitted)}
         if _kanban_card is not None:
             payload['kanban_card_v1'] = _kanban_card
-        source = self.sessions[request.ref.session_id].source
-        from gateway.owner_identity import same_owner
-        if source is not None and not same_owner(source.user_id, actor.subject):
-            # Durable server authorization, not a client payload field. The original
-            # principal remains the admission/retry identity across owner restarts.
-            # Operator provenance is about who was authorized at this boundary, not
-            # whether the bound session happens to use the LOCAL transport.
-            payload['local_operator_v1'] = {
-                'profile_id': self.profile_id, 'session_id': request.ref.session_id,
-                'principal_id': actor.subject}
+        from gateway.session_close_aware import admission_gate, stamp_operator
+        # Unflagged operator provenance stays. A flagged admit pins the text frame only.
+        stamp_operator(self, actor, request, payload, close_aware=close_aware)
+        gate, aware = admission_gate(
+            self, request.ref.session_id, queue_only=queue_only, close_aware=close_aware)
         def admit():
             try:
                 row, _created = store.admissions.admit(
                     epoch=self.epoch, principal_id=actor.subject, session_id=request.ref.session_id,
                     request_id=request.request_id, payload=payload, intent=request.intent,
-                    gate=self.gate_refusal(queue_only=queue_only), replaces=replaces, supersedes=supersedes,
-                    api_target=api_target, hosted=hosted)
+                    gate=gate, replaces=replaces, supersedes=supersedes,
+                    api_target=api_target, hosted=hosted, close_aware=aware)
                 return admission_row(row)
             except Exception:
                 self._release_refused_capture(request, payload)

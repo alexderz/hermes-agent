@@ -113,7 +113,7 @@ def _log_storage_failure(profile, method, session_id, exc: sqlite3.Error | Persi
 _END_REASON = re.compile(r'[a-z][a-z_]{0,31}')
 # Verbs whose param sets are closed and never carried a ``profile`` key.
 _PROFILE_IMPLICIT = frozenset({'session.create', 'session.list', 'session.info', 'session.resume', 'session.detach',
-                               'prompt.submit', 'prompt.receipt', 'prompt.cancel', 'prompt.resolve_unknown',
+                               'prompt.submit', 'prompt.receipt', 'prompt.lookup_admission', 'prompt.cancel', 'prompt.resolve_unknown',
                                'prompt.steer_queued', 'prompt.replace_queued',
                                'session.interrupt', 'session.events.since', 'session.mutate', 'session.stats',
                                'session.account_usage',
@@ -264,7 +264,8 @@ class AuthorityConnection:
                     'setup.status': self.setup_status, 'setup.runtime_check': self.setup_runtime_check,
                     'session.resume': self.resume, 'session.detach': self.detach,
                     'prompt.submit': self.submit,
-                    'prompt.receipt': self.receipt, 'prompt.cancel': self.cancel,
+                    'prompt.receipt': self.receipt, 'prompt.lookup_admission': self.lookup_admission,
+                    'prompt.cancel': self.cancel,
                     'prompt.resolve_unknown': self.resolve_unknown,
                     'session.interrupt': self.interrupt, 'session.events.since': self.events_since,
                     'approval.respond': self.respond, 'clarify.respond': self.respond_clarify}
@@ -838,9 +839,12 @@ class AuthorityConnection:
         if self._voice_stop_replay(ref, params) or await self._typed_voice_stop(ref, params):
             self._record_voice_stop(ref, params)
             return {'voice_stopped': True}
+        from gateway.session_close_aware import close_flag
+        flagged = close_flag(params)
         # The interactive WS is the one surface a restart's after-turn wait admits (#139041).
-        receipt = await self.authority.submit(self.actor, self.submission(ref, params),
-                                              queue_while_restarting=self._operator is True)
+        receipt = await self.authority.submit(
+            self.actor, self.submission(ref, params, close_aware=flagged),
+            queue_while_restarting=self._operator is True, close_aware=flagged)
         return asdict(receipt)
 
     def _voice_stop_key(self, ref, params):
@@ -894,13 +898,14 @@ class AuthorityConnection:
         from tui_gateway import server
         return await asyncio.to_thread(server._consume_typed_stop_phrase, text, ref.session_id, emit=False)
 
-    def submission(self, ref, params):
+    def submission(self, ref, params, *, close_aware=False):
         """The admission a ``prompt.submit``-shaped request asks for (``prompt.replace_queued`` too)."""
-        if ref.session_id not in self.subscriptions:
-            raise AuthorityRefusal('permission_denied')
+        from gateway.session_close_aware import place_submission
+        ref = place_submission(self, ref, close_aware=close_aware)
+        # ``unless_closed_by_user`` is a control, never stored payload text.
         forbidden = set(params) - {'session_id', 'text', 'submission_id', 'input_id', 'queued', 'attachments', 'finite', 'unattended',
                                    'surface', 'voice_context', 'interrupted', 'voice_turn', 'display_kind', 'title_preview',
-                                   'turn_author', 'api_text', 'model_override', 'clarify_batch'}
+                                   'turn_author', 'api_text', 'model_override', 'clarify_batch', 'unless_closed_by_user'}
         if forbidden:
             raise AuthorityRefusal('invalid_params')
         request_id = params.get('submission_id') or params.get('input_id')
@@ -941,6 +946,10 @@ class AuthorityConnection:
         if child and child not in self.subscriptions:
             await self.resume(SessionRef(ref.profile_id, child), {})
         return result
+
+    async def lookup_admission(self, ref, params):
+        from gateway.session_close_aware import answer_lookup
+        return answer_lookup(self, ref.session_id, params)
 
     async def receipt(self, ref, params):
         receipt = await self.authority.receipt(self.actor, ref, params.get('admission_id'))

@@ -12101,6 +12101,11 @@
             "default": false,
             "title": "Clarify Batch",
             "type": "boolean"
+          },
+          "unless_closed_by_user": {
+            "default": false,
+            "title": "Unless Closed By User",
+            "type": "boolean"
           }
         },
         "required": [
@@ -34117,6 +34122,105 @@
         "title": "PromptCancelParams",
         "type": "object"
       },
+      "PromptLookupAdmissionParams": {
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "payload_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Payload Digest"
+          }
+        },
+        "required": [
+          "session_id",
+          "request_id"
+        ],
+        "title": "PromptLookupAdmissionParams",
+        "type": "object"
+      },
+      "PromptLookupAdmissionResult": {
+        "additionalProperties": false,
+        "properties": {
+          "outcome": {
+            "enum": [
+              "found",
+              "proven_not_found",
+              "unavailable",
+              "conflict"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "admission_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Admission Id"
+          },
+          "target_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Target Session Id"
+          },
+          "payload_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Payload Digest"
+          },
+          "canonical_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Canonical Session Id"
+          }
+        },
+        "required": [
+          "outcome"
+        ],
+        "title": "PromptLookupAdmissionResult",
+        "type": "object"
+      },
       "PromptReceiptParams": {
         "additionalProperties": false,
         "properties": {
@@ -51255,6 +51359,24 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/AdmissionStatus"
+        }
+      }
+    },
+    {
+      "name": "prompt.lookup_admission",
+      "summary": "Read whether this caller's request id already has an admission. Does not submit or write it back.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/PromptLookupAdmissionParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/PromptLookupAdmissionResult"
         }
       }
     },

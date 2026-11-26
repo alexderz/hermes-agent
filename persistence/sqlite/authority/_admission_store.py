@@ -17,6 +17,7 @@ from persistence.authority.vocabulary import (
 from persistence.authority.admissions import raise_gate
 from persistence.core.errors import AuthorityRefusal
 
+from ._admission_close import refuse_user_close
 from ._admission_owner import authorize_admission, close_discarded_turn
 from ._runtime import (
     _CANCEL_QUEUED,
@@ -61,7 +62,7 @@ __all__ = [
 def admit_session_input(holder, *, epoch: int, principal_id: str, session_id: str,
                         request_id: str, payload: dict, intent: str = 'queue',
                         gate=None, replaces=None, supersedes=None, api_target=None, rewrite=None,
-                        hosted=None, fold=None) -> tuple[dict, bool]:
+                        hosted=None, fold=None, close_aware=None) -> tuple[dict, bool]:
     """Admit input; ``(row, created)``. ``gate`` (the owner's ``GateRefusal``, or a callable answered here on every
     attempt) refuses a NEW write after the queue cap, then the typed extras run in the same write before the insert. Exact
     existing and terminal replays bypass both; ``replaces`` runs its replay check on the exact live replay."""
@@ -94,6 +95,7 @@ def admit_session_input(holder, *, epoch: int, principal_id: str, session_id: st
         if queued >= ADMISSION_QUEUE_MAX:
             raise AuthorityRefusal('queue_full')
         raise_gate(gate)
+        refuse_user_close(holder, conn, close_aware)
         authorize_admission(holder, conn, epoch=epoch, principal_id=principal_id, session_id=session_id,
                             request_id=request_id, replaces=replaces, supersedes=supersedes,
                             api_target=api_target, rewrite=rewrite, hosted=hosted, fold=fold)

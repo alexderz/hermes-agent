@@ -320,6 +320,12 @@
         "hermes_cli.config_providers:get_custom_provider_tls_settings",
         "tools.schema_sanitizer:normalize_type_array"
       ]
+    },
+    {
+      "source": "project recovery read-only MCP call",
+      "entries": [
+        "tools.mcp_readonly:call_mcp_tool_readonly"
+      ]
     }
   ]
 }

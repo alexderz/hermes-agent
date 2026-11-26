@@ -19,10 +19,12 @@
   lineage, or the pending ``all`` row) and the receipt is ``held``; nothing is delivered.
   A keyed queued message is stored ``pending`` too (``record.insert_keyed_queue``); it rides
   the outstanding wake of the row it replaces, else its send frames a wake line
-  (``reply_mode='none'``, ``header_sha`` on its row) and queues it through steps 5-6. The
-  target's next turn carries the newest version (``passive.py``). Receipt: ``started`` (idle
-  target) or ``queued`` (replaceable, with the key); ``held`` when the owner did not take the
-  wake, so the row rides the target's next turn;
+  (``reply_mode='none'``, ``header_sha`` on its row) and queues it through steps 5-6. A
+  flagged send stores the owner canonical id from the read-only lookup before that frame;
+  an unflagged send keeps the caller's tip. The target's next turn carries the newest
+  version (``passive.py``). Receipt: ``started`` (idle target) or ``queued`` (replaceable,
+  with the key); ``held`` when the owner did not take the wake, so the row rides the
+  target's next turn;
 - 5 ``frame.build``, ``sanitize_user_prompt_text`` once, then ``header_sha`` over the span from
   header line 1 to the closing line, stored in the row. An explicit gist is cleaned and stored
   on the row and quoted on the notice line. A keyed wake passes its version's gist (or that
@@ -149,7 +151,8 @@ def cold_start_sentence(title: str, message_id: str) -> str:
 
 def send(sender, to, message, *, ctx, delivery="steer", reply_mode=None, kind="send",
          reply_to=None, script=False, lister=None, on_inserted=None, key=None,
-         profile=None, within=None, peer=None, gist=None) -> dict:
+         profile=None, within=None, peer=None, gist=None,
+         unless_closed_by_user=False) -> dict:
     """Send *message* from *sender* to the one session *to* resolves to. Returns the receipt.
 
     *sender* is the calling session's id, or with ``script=True`` a script label (the CLI, which
@@ -216,7 +219,7 @@ def send(sender, to, message, *, ctx, delivery="steer", reply_mode=None, kind="s
         row["wake_at"] = row["created_at"] + _minutes(within) * 60
     steps = dict(sender=sender, to=to, ctx=ctx, delivery=delivery, reply_mode=reply_mode,
                  kind=kind, reply_to=reply_to, script=script, lister=lister,
-                 on_inserted=on_inserted)
+                 on_inserted=on_inserted, unless_closed_by_user=bool(unless_closed_by_user))
     if profile is None:
         return _steps(receipt, row, who, **steps)
 
@@ -238,7 +241,8 @@ _UNREAD = object()
 
 
 def _steps(receipt, row, who, *, sender, to, ctx, delivery, reply_mode, kind, reply_to, script,
-           lister, on_inserted, profile=None, sender_scope=_UNREAD) -> dict:
+           lister, on_inserted, profile=None, sender_scope=_UNREAD,
+           unless_closed_by_user=False) -> dict:
     """Steps 0-7 for one message, in the active profile (the target's, under ``in_profile``).
 
     *profile* is the target profile when it is not the sender's; *sender_scope* is then
@@ -295,7 +299,8 @@ def _steps(receipt, row, who, *, sender, to, ctx, delivery, reply_mode, kind, re
         return _hold(receipt, row, who, lineage=_target_lineage(target))
     if delivery == "queue" and key:
         return _queue_keyed(receipt, row, who, ctx=ctx, lister=lister, shown=shown,
-                            scopes=(sender_scope, target, target_scope, title))
+                            scopes=(sender_scope, target, target_scope, title),
+                            unless_closed_by_user=unless_closed_by_user)
     record.insert(**row)
     if on_inserted is not None:
         on_inserted(message_id, target)
@@ -308,7 +313,15 @@ def _steps(receipt, row, who, *, sender, to, ctx, delivery, reply_mode, kind, re
 
     # 6. deliver through the owner
     was_open = _is_live(target, lister)
-    outcome = client.deliver_sync(target, text, delivery, client.submission_id(message_id))
+    outcome = _deliver_owner(target, text, delivery, client.submission_id(message_id),
+                             unless_closed_by_user=unless_closed_by_user)
+    if unless_closed_by_user and _user_closed(outcome):
+        record.update(message_id, delivery_path="owner", result="refused", detail="closed-by-user")
+        fields = receipt.refused("closed-by-user", _closed_sentence(shown, message_id))
+        data = outcome.get("data")
+        if isinstance(data, dict) and data:
+            fields["data"] = data
+        return fields
 
     # 7. record and receipt
     if outcome.get("ok") is True:
@@ -453,54 +466,321 @@ def _framed(message_id, who, body, *, ctx, reply_mode, scopes, interrupt=False, 
     return sanitize_user_prompt_text(text)
 
 
-def _queue_keyed(receipt, row, who, *, ctx, lister, scopes, shown) -> dict:
-    """A keyed queued message: stored ``pending``; it rides an outstanding wake or queues one."""
+def _deliver_owner(target, text, delivery, sub_id, *, unless_closed_by_user):
+    """``deliver_sync`` with the close flag only when the caller set it.
+
+    Omitting the keyword keeps the four-argument call the unflagged tests patch.
+    """
+    if unless_closed_by_user:
+        return client.deliver_sync(target, text, delivery, sub_id, unless_closed_by_user=True)
+    return client.deliver_sync(target, text, delivery, sub_id)
+
+
+def _user_closed(outcome) -> bool:
+    return outcome.get("code") == "closed-by-user" or outcome.get("error") == "closed-by-user"
+
+
+def _closed_sentence(title, message_id) -> str:
+    return f'Message {message_id} was refused for "{title}": the owner closed that session.'
+
+
+def _queued_sentence(title, message_id, key) -> str:
+    return (f'"{title}" is busy. Message {message_id} is queued (replaceable, key {key}): a newer '
+            "message with this key replaces it until its turn starts.")
+
+
+def _held_sentence(title, message_id, error) -> str:
+    return (f'Message {message_id} is held for "{title}" until its next turn: the gateway '
+            f"did not take its wake ({error}).")
+
+
+def _wake_line(key, label) -> str:
+    return f"keyed update `{key}` from `{label}`; the current version follows."
+
+
+def _who_of_row(row):
+    """The sender stored on *row*, for framing that row rather than a newer caller."""
+    if row.get("sender_source") == PEER_SOURCE:
+        return _Who.peer(row.get("sender_label"))
+    if row.get("sender_source") == SCRIPT_SOURCE or not row.get("sender_session_id"):
+        return _Who.script(row.get("sender_label"))
+    if row.get("sender_profile"):
+        return _Who.of_profile(row["sender_session_id"], row["sender_profile"], row)
+    return _Who.session(row["sender_session_id"])
+
+
+def _pin_frame(row, ctx) -> str:
+    """Frame the stored intent once. A newer caller's body is not part of this text."""
+    who = _who_of_row(row)
+    sender_scope = None if who.kind in ("script", "peer") else row.get("sender_chat_scope")
+    scopes = (sender_scope, row.get("target_session_id"), row.get("target_chat_scope"),
+              row.get("target_title") or row.get("target_session_id"))
+    gist = row.get("gist") or frame.fallback_gist(row.get("body") or "")
+    line = _wake_line(row.get("note_key"), row.get("sender_label") or "")
+    return _framed(row["id"], who, line, ctx=ctx, reply_mode="none", scopes=scopes, gist=gist)
+
+
+def _lookup_frame(row, text) -> dict:
+    """Owner read of the pinned frame. A lost read is ``unavailable`` and writes nothing."""
+    target = row.get("target_session_id")
+    if not isinstance(target, str) or not target:
+        return {"outcome": "unavailable"}
+    try:
+        from . import digest as frame_digest
+    except ImportError:  # loaded as top-level modules (the unittest layout)
+        import digest as frame_digest
+    try:
+        looked = client.lookup_admission(
+            target, client.submission_id(row["id"]),
+            payload_digest=frame_digest.frame_digest(target, text))
+    except Exception:  # health: allow BLE001 -- a lost read leaves the pin
+        return {"outcome": "unavailable"}
+    return looked if isinstance(looked, dict) else {"outcome": "unavailable"}
+
+
+def _wake_token(row) -> str:
+    wake = row.get("wake_admission")
+    if isinstance(wake, str) and wake:
+        return wake
+    return client.submission_id(row["id"])
+
+
+def _take_outcome(message_id, target, title, key, text, wake, *, lister, unless_closed_by_user):
+    """Record one submit of an already pinned frame. Returns the receipt pieces."""
+    was_open = _is_live(target, lister)
+    outcome = _deliver_owner(target, text, "queue", wake, unless_closed_by_user=unless_closed_by_user)
+    if outcome.get("ok") is True:
+        applied = outcome.get("applied")
+        record.update(message_id, delivery_path="owner", admission_id=outcome.get("admission_id"),
+                      applied=applied, applied_detail=outcome.get("applied_detail"))
+        record.wake_submitted(wake, outcome.get("instance_id"))
+        if applied == "queue":
+            sentence = _queued_sentence(title, message_id, key)
+            result = "queued"
+        else:
+            sentence = _delivered_sentence(applied, None, title, message_id, was_open)
+            result = "started"
+        return {"sentence": sentence, "result": result, "applied": applied,
+                "admission_id": outcome.get("admission_id")}
+    if unless_closed_by_user and _user_closed(outcome):
+        record.update(message_id, delivery_path="owner", result="refused", detail="closed-by-user")
+        record.wake_failed(wake)
+        taken = {"refused": "closed-by-user", "sentence": _closed_sentence(title, message_id)}
+        data = outcome.get("data")
+        if isinstance(data, dict) and data:
+            taken["data"] = data
+        return taken
+    error = outcome.get("error") or "delivery-unknown"
+    if error == "delivery-unknown":
+        return {"sentence": _held_sentence(title, message_id, error), "result": "held",
+                "applied": None, "condition": "owner_unreachable", "lookup": "unavailable"}
+    record.wake_failed(wake)
+    return {"sentence": _held_sentence(title, message_id, error), "result": "held", "applied": None}
+
+
+def _keyed_fields(receipt, *, who, row, message_id, key, replaced, taken) -> dict:
+    if taken.get("refused"):
+        fields = receipt.refused(taken["refused"], taken["sentence"])
+        fields["key"] = key
+        fields["replaced"] = replaced
+        data = taken.get("data")
+        if isinstance(data, dict) and data:
+            fields["data"] = data
+        return fields
+    receipt.applied = taken.get("applied")
+    parts = [taken["sentence"]]
+    if replaced:
+        parts.append(f"It replaces queued message {', '.join(replaced)} (key {key}).")
+    parts += [_answer_sentence(row.get("reply_mode"), who, message_id),
+              _shared_sentence(receipt.shared_chat)]
+    fields = receipt.done(taken["result"], " ".join(part for part in parts if part))
+    admission = taken.get("admission_id")
+    if isinstance(admission, str) and admission:
+        fields["admission_id"] = admission
+    stored = taken.get("stored_target")
+    if isinstance(stored, str) and stored:
+        fields["stored_target"] = stored
+    if taken.get("condition"):
+        fields["condition"] = taken["condition"]
+    if taken.get("lookup"):
+        fields["lookup"] = taken["lookup"]
+    fields["key"] = key
+    fields["replaced"] = replaced
+    return fields
+
+
+def _unreachable(receipt, row, who, outcome) -> dict:
+    """O4: the pin stays, nothing is minted, and the caller hears ``owner_unreachable``."""
+    title = receipt.target_title or row.get("target_title") or row["id"]
+    sentence = (f'Message {row["id"]} is held for "{title}": the owner could not confirm '
+                f"this wake ({outcome}). Nothing new was sent.")
+    taken = {"sentence": sentence, "result": "held", "applied": None,
+             "condition": "owner_unreachable", "lookup": outcome}
+    return _keyed_fields(receipt, who=who, row=row, message_id=row["id"], key=row.get("note_key"),
+                         replaced=[], taken=taken)
+
+
+def _adopt_found(receipt, row, who, looked) -> dict:
+    admission = looked.get("admission_id")
+    if not isinstance(admission, str) or not admission:
+        return _unreachable(receipt, row, who, "unavailable")
+    record.update(row["id"], admission_id=admission, delivery_path="owner")
+    title = receipt.target_title or row.get("target_title") or row["id"]
+    key = row.get("note_key")
+    sentence = (f'"{title}" already admitted message {row["id"]} (key {key}). '
+                "It was not sent again.")
+    taken = {"sentence": sentence, "result": "queued", "applied": "queue",
+             "admission_id": admission, "stored_target": looked.get("target_session_id")}
+    return _keyed_fields(receipt, who=who, row=row, message_id=row["id"], key=key,
+                         replaced=[], taken=taken)
+
+
+def _resume_framed(receipt, row, who, text, *, lister, unless_closed_by_user) -> dict:
+    looked = _lookup_frame(row, text)
+    outcome = looked.get("outcome")
+    if outcome == "found":
+        return _adopt_found(receipt, row, who, looked)
+    if outcome != "proven_not_found":
+        named = outcome if outcome in ("unavailable", "conflict") else "unavailable"
+        return _unreachable(receipt, row, who, named)
+    target = row.get("target_session_id")
+    title = receipt.target_title or row.get("target_title") or row["id"]
+    taken = _take_outcome(row["id"], target, title, row.get("note_key"), text, _wake_token(row),
+                          lister=lister, unless_closed_by_user=unless_closed_by_user)
+    return _keyed_fields(receipt, who=who, row=row, message_id=row["id"], key=row.get("note_key"),
+                         replaced=[], taken=taken)
+
+
+def _resume_pinned(receipt, pinned, who, *, ctx, lister, unless_closed_by_user) -> dict:
+    """Reuse one unresolved row. A completed user-close is returned, not submitted again."""
+    receipt.message_id = pinned["id"]
+    stored = pinned.get("target_session_id")
+    if isinstance(stored, str) and stored:
+        receipt.target_session = stored
+    if pinned.get("result") == "refused" and pinned.get("detail") == "closed-by-user":
+        title = receipt.target_title or pinned.get("target_title") or pinned["id"]
+        taken = {"refused": "closed-by-user", "sentence": _closed_sentence(title, pinned["id"])}
+        return _keyed_fields(receipt, who=who, row=pinned, message_id=pinned["id"],
+                             key=pinned.get("note_key"), replaced=[], taken=taken)
+    text = pinned.get("framed_text")
+    if isinstance(text, str) and text:
+        return _resume_framed(receipt, pinned, who, text, lister=lister,
+                              unless_closed_by_user=unless_closed_by_user)
+    if not isinstance(pinned.get("target_session_id"), str) or not pinned.get("target_session_id"):
+        return _unreachable(receipt, pinned, who, "unavailable")
+    text = _pin_frame(pinned, ctx)
+    record.update(pinned["id"], header_sha=header_sha(text, pinned["id"]), framed_text=text,
+                  target_session_id=pinned.get("target_session_id"))
+    title = receipt.target_title or pinned.get("target_title") or pinned["id"]
+    taken = _take_outcome(pinned["id"], pinned.get("target_session_id"), title, pinned.get("note_key"),
+                          text, _wake_token(pinned), lister=lister,
+                          unless_closed_by_user=unless_closed_by_user)
+    return _keyed_fields(receipt, who=who, row=pinned, message_id=pinned["id"],
+                         key=pinned.get("note_key"), replaced=[], taken=taken)
+
+
+def _inherited_admission(replaced) -> str | None:
+    """The admission already stored on a row this send replaced, newest first."""
+    for old in reversed(list(replaced or ())):
+        row = record.get(old)
+        admission = row.get("admission_id") if isinstance(row, dict) else None
+        if isinstance(admission, str) and admission:
+            return admission
+    return None
+
+
+def _ride(receipt, row, who, message_id, key, title, replaced, *, unless_closed_by_user) -> dict:
+    """A live admitted wake is not submitted again.
+
+    A flagged retry copies that admission onto the replacement row so the
+    scanner can adopt it without a second wake. An unflagged send keeps the
+    receipt it had before this flag existed.
+    """
+    queued = _queued_sentence(title, message_id, key)
+    taken = {"sentence": f"{queued} It rides the wake already queued there.",
+             "result": "queued", "applied": "queue"}
+    if unless_closed_by_user:
+        inherited = _inherited_admission(replaced)
+        if inherited is not None:
+            record.update(message_id, admission_id=inherited, delivery_path="owner")
+            taken["admission_id"] = inherited
+    return _keyed_fields(receipt, who=who, row=row, message_id=message_id, key=key,
+                         replaced=replaced, taken=taken)
+
+
+def _canonical_for_pin(tip: str, message_id: str) -> str | None:
+    """The owner-named canonical id, or None when that read does not name one.
+
+    This is the existing lookup. It does not mount, restore, or change authorization.
+    """
+    try:
+        looked = client.lookup_admission(tip, client.submission_id(message_id))
+    except Exception:  # health: allow BLE001 -- a lost identity read does not pin the tip
+        return None
+    if not isinstance(looked, dict):
+        return None
+    canonical = looked.get("canonical_session_id")
+    if isinstance(canonical, str) and canonical:
+        return canonical
+    return None
+
+
+def _flagged_pin_target(receipt, row, message_id, target, scopes, ctx):
+    """Peek an unresolved row, else bind the canonical id before insert.
+
+    Returns ``(pinned or None, refusal or None, target, scopes)``. A pinned row
+    is resumed as stored. A read that does not name an id inserts nothing.
+    """
+    pinned = record.unresolved_keyed(row["note_key"], lineage=_target_lineage(target))
+    if pinned is not None:
+        return pinned, None, target, scopes
+    canonical = _canonical_for_pin(target, message_id)
+    if canonical is None:
+        receipt.message_id = None
+        return None, receipt.refused(
+            "not-reachable",
+            f"{NOTHING_SENT} The owner could not name that session.",
+        ), target, scopes
+    target_scope = scope.chat_scope(canonical, ctx)
+    row.update(target_session_id=canonical, target_chat_scope=target_scope)
+    receipt.target_session = canonical
+    return None, None, canonical, (scopes[0], canonical, target_scope, scopes[3])
+
+
+def _queue_keyed(receipt, row, who, *, ctx, lister, scopes, shown, unless_closed_by_user=False) -> dict:
+    """A keyed queued message. An unresolved row of the key is resumed before any replacement."""
     message_id = row.pop("message_id")
     target = scopes[1]
     title = shown
     key = row["note_key"]
+    if unless_closed_by_user:
+        pinned, refusal, target, scopes = _flagged_pin_target(
+            receipt, row, message_id, target, scopes, ctx)
+        if pinned is not None:
+            return _resume_pinned(receipt, pinned, who, ctx=ctx, lister=lister,
+                                  unless_closed_by_user=unless_closed_by_user)
+        if refusal is not None:
+            return refusal
     wake = client.submission_id(message_id)
-    replaced, submit = record.insert_keyed_queue(
+    replaced, submit, pinned = record.insert_keyed_queue(
         message_id, lineage=_target_lineage(target), wake_admission=wake,
         instance_id=client.owner_instance(), **row)
-    queued = (f'"{title}" is busy. Message {message_id} is queued (replaceable, key {key}): a newer '
-              "message with this key replaces it until its turn starts.")
-    result, applied = "queued", "queue"
+    if pinned is not None:
+        return _resume_pinned(receipt, pinned, who, ctx=ctx, lister=lister,
+                              unless_closed_by_user=unless_closed_by_user)
     if not submit:
-        sentence = f"{queued} It rides the wake already queued there."
-    else:
-        line = f"keyed update `{key}` from `{who.label}`; the current version follows."
-        # The row shows this version's gist (or its first sentence), not the mechanical wake line
-        # (owner's choice). A newer version may replace it before the turn; the row keeps this one.
-        gist = row.get("gist") or frame.fallback_gist(row.get("body") or "")
-        text = _framed(message_id, who, line, ctx=ctx, reply_mode="none", scopes=scopes, gist=gist)
-        record.update(message_id, header_sha=header_sha(text, message_id))
-        was_open = _is_live(target, lister)
-        outcome = client.deliver_sync(target, text, "queue", wake)
-        if outcome.get("ok") is True:
-            applied = outcome.get("applied")
-            record.update(message_id, delivery_path="owner", admission_id=outcome.get("admission_id"),
-                          applied=applied, applied_detail=outcome.get("applied_detail"))
-            record.wake_submitted(wake, outcome.get("instance_id"))
-            if applied == "queue":
-                sentence = queued
-            else:
-                result = "started"
-                sentence = _delivered_sentence(applied, None, title, message_id, was_open)
-        else:
-            record.wake_failed(wake)
-            result, applied = "held", None
-            sentence = (f'Message {message_id} is held for "{title}" until its next turn: the gateway '
-                        f"did not take its wake ({outcome.get('error') or 'delivery-unknown'}).")
-    receipt.applied = applied
-    parts = [sentence]
-    if replaced:
-        parts.append(f"It replaces queued message {', '.join(replaced)} (key {key}).")
-    parts += [_answer_sentence(row["reply_mode"], who, message_id), _shared_sentence(receipt.shared_chat)]
-    fields = receipt.done(result, " ".join(part for part in parts if part))
-    fields["key"] = key
-    fields["replaced"] = replaced
-    return fields
+        return _ride(receipt, row, who, message_id, key, title, replaced,
+                     unless_closed_by_user=unless_closed_by_user)
+    line = _wake_line(key, who.label)
+    # The row shows this version's gist (or its first sentence), not the mechanical wake line.
+    gist = row.get("gist") or frame.fallback_gist(row.get("body") or "")
+    text = _framed(message_id, who, line, ctx=ctx, reply_mode="none", scopes=scopes, gist=gist)
+    record.update(message_id, header_sha=header_sha(text, message_id), framed_text=text,
+                  target_session_id=target)
+    taken = _take_outcome(message_id, target, title, key, text, wake, lister=lister,
+                          unless_closed_by_user=unless_closed_by_user)
+    return _keyed_fields(receipt, who=who, row=row, message_id=message_id, key=key,
+                         replaced=replaced, taken=taken)
 
 
 def _hold(receipt, row, who, *, lineage) -> dict:

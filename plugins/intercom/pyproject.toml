@@ -2,6 +2,9 @@
 testpaths = ["tests"]
 addopts = "--import-mode=importlib"
 python_files = ["test_*.py"]
+# Bare imports (``import record``) resolve the plugin root. importlib mode does not
+# put that root on sys.path, and the repo-level runner collects these files from there.
+pythonpath = ["."]
 
 [project]
 name = "hermes-intercom-tests"

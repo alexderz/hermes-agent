@@ -70,7 +70,8 @@ REPLY_STATES = frozenset({None, "sent", "silent", "stored", "no-block"})
 # What the sender may record after insert, and what the reply hook may record.
 # echoed_at is only the echo claim. There is no retry count and no status column.
 _UPDATE_FIELDS = frozenset({
-    "header_sha", "delivery_path", "admission_id",
+    "header_sha", "delivery_path", "admission_id", "framed_text",
+    "target_session_id",
     "applied", "applied_detail", "result", "detail", "delivered_at",
     "reply", "reply_state", "replied_at", "reply_message_id",
     "offered_turn",
@@ -121,7 +122,8 @@ CREATE TABLE IF NOT EXISTS messages (
   wake_claimed_at REAL,
   wake_turn TEXT,
   woken_at REAL,
-  gist TEXT
+  gist TEXT,
+  framed_text TEXT
 )
 """
 
@@ -137,6 +139,7 @@ _ADDED_COLUMNS = (
     ("wake_turn", "TEXT"),
     ("woken_at", "REAL"),
     ("gist", "TEXT"),
+    ("framed_text", "TEXT"),
 )
 
 # Its own statement: conn.execute runs one statement only.
@@ -261,21 +264,27 @@ def insert_keyed_queue(
     wake_admission: str,
     instance_id: str | None,
     **row,
-) -> tuple[list[str], bool]:
-    """Insert a keyed queued message (result ``pending``). Returns ``(replaced ids, submit)``.
+) -> tuple[list[str], bool, dict | None]:
+    """Insert a keyed queued message, or pin an unresolved row of the same key.
 
-    One ``BEGIN IMMEDIATE``, as ``insert_note`` (same key, ``requested='queue'``, target in
-    *lineage*). When a replaced row's wake is outstanding (its ``wake_instance`` is
-    *instance_id*, the owner the send discovered, and no turn has been offered it), the new row
-    inherits that marker and *submit* is False. Otherwise the new row's marker is
-    (*wake_admission*, *instance_id*) and *submit* is True: the caller submits the wake after
-    commit.
+    Returns ``(replaced ids, submit, pinned)``. ``pinned`` is set and nothing is inserted when a
+    pending row of the key has no ``admission_id`` (whether or not ``wake_instance`` is set), or
+    when the latest row of the key is a completed ``closed-by-user`` refusal and nothing is
+    pending. Otherwise a live outstanding wake is inherited and *submit* is False. A new row's
+    marker is (*wake_admission*, *instance_id*) and *submit* is True.
     """
     values = list(_row_values({"message_id": message_id, **row}))
     marker = _INSERT_COLUMNS.index("wake_admission")
+    shaped = {**row, "requested": QUEUE}
 
-    def write(conn: sqlite3.Connection) -> tuple[list[str], bool]:
-        held = _held_with_key(conn, {**row, "requested": QUEUE}, lineage)
+    def write(conn: sqlite3.Connection) -> tuple[list[str], bool, dict | None]:
+        held = _held_with_key(conn, shaped, lineage)
+        unsent = [r for r in held if not r.get("admission_id")]
+        if unsent:
+            return [], False, unsent[-1]
+        latest = _latest_key_row(conn, shaped, lineage)
+        if not held and _closed_by_user_row(latest):
+            return [], False, latest
         live = [r for r in held if _wake_outstanding(r, instance_id)]
         if live:
             values[marker:marker + 2] = [live[-1]["wake_admission"], live[-1]["wake_instance"]]
@@ -284,9 +293,33 @@ def insert_keyed_queue(
         replaced = [r["id"] for r in held]
         _replace(conn, replaced, message_id)
         _insert_row(conn, tuple(values), "pending")
-        return replaced, not live
+        return replaced, not live, None
 
     return _run_write(write)
+
+
+def unresolved_keyed(note_key: str, *, lineage: Sequence[str], requested: str = QUEUE) -> dict | None:
+    """The pinned row of *note_key* that a later send must resume, or None.
+
+    Read-only. That row is a pending one with no admission, or the latest
+    completed user-close when nothing is pending. A live admitted wake is not
+    pinned here: the insert rides it. This does not reframe or change the target.
+    """
+    shaped = {"note_key": note_key, "requested": requested}
+
+    def read(conn: sqlite3.Connection) -> dict | None:
+        held = _held_with_key(conn, shaped, lineage)
+        unsent = [row for row in held if not row.get("admission_id")]
+        if unsent:
+            return unsent[-1]
+        if held:
+            return None
+        latest = _latest_key_row(conn, shaped, lineage)
+        if _closed_by_user_row(latest):
+            return latest
+        return None
+
+    return _run_read(read)
 
 
 def wake_submitted(wake_admission: str, instance_id) -> None:
@@ -403,6 +436,44 @@ def claim_echo(message_id: str, echoed_at: float | None = None) -> bool:
         return cur.rowcount == 1
 
     return _run_write(write)
+
+
+def lookup_message_admission(message_id: str) -> dict:
+    """Read-only admission state of one intercom row. Does not write, clear, or submit.
+
+    A missing row is ``unavailable``. A stored ``admission_id`` is ``found`` with that id and
+    the row's target. Otherwise the owner read answers, and a transport failure is
+    ``unavailable``. The admission id is not written back.
+    """
+    row = get(message_id)
+    if row is None:
+        return {"outcome": "unavailable"}
+    if row.get("admission_id"):
+        return {"outcome": "found", "admission_id": row["admission_id"],
+                "target_session_id": row.get("target_session_id")}
+    try:
+        from . import client as owner
+        from . import digest as frame_digest
+    except ImportError:  # loaded as top-level modules (the unittest layout)
+        import client as owner
+        import digest as frame_digest
+    target = row.get("target_session_id")
+    text = row.get("framed_text")
+    digest = None
+    if isinstance(text, str) and text and isinstance(target, str) and target:
+        digest = frame_digest.frame_digest(target, text)
+    try:
+        looked = owner.lookup_admission(
+            target, owner.submission_id(message_id), payload_digest=digest)
+    except Exception:  # health: allow BLE001 -- a lost read is unavailable, not a write
+        return {"outcome": "unavailable"}
+    outcome = looked.get("outcome") if isinstance(looked, dict) else None
+    if outcome not in ("found", "proven_not_found", "unavailable", "conflict"):
+        return {"outcome": "unavailable"}
+    if outcome != "found":
+        return {"outcome": outcome}
+    return {"outcome": "found", "admission_id": looked.get("admission_id"),
+            "target_session_id": looked.get("target_session_id")}
 
 
 def get(message_id: str) -> dict | None:
@@ -588,6 +659,24 @@ _INSERT_COLUMNS = (
     "note_key", "sender_profile", "wake_admission", "wake_instance", "wake_at",
     "gist",
 )
+
+
+def _closed_by_user_row(row: dict | None) -> bool:
+    return row is not None and row.get("result") == "refused" and row.get("detail") == "closed-by-user"
+
+
+def _latest_key_row(conn: sqlite3.Connection, row: dict, lineage: Sequence[str]) -> dict | None:
+    """The newest row of this key on the lineage, of any result. Not only the pending ones."""
+    key, ids = row.get("note_key"), list(lineage)
+    if not key or not ids:
+        return None
+    marks = ", ".join("?" for _ in ids)
+    found = conn.execute(
+        f"SELECT * FROM messages WHERE note_key = ? AND requested = ? "
+        f"AND target_session_id IN ({marks}) ORDER BY created_at DESC, id DESC LIMIT 1",
+        (key, row.get("requested"), *ids),
+    ).fetchone()
+    return _as_dict(found)
 
 
 def _held_with_key(conn: sqlite3.Connection, row: dict, lineage: Sequence[str]) -> list[dict]:

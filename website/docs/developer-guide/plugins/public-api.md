@@ -227,6 +227,7 @@ with a name allows that one name only.
 | `hermes_cli.auth` | `resolve_nous_access_token` | model-provider-plugin.md § Public helpers for native Gemini reasoning |
 | `hermes_cli.config_providers` | `get_custom_provider_tls_settings` | model-provider-plugin.md § Public helpers for native Gemini reasoning |
 | `tools.schema_sanitizer` | `normalize_type_array` | model-provider-plugin.md § Public helpers for native Gemini reasoning |
+| `tools.mcp_readonly` | `call_mcp_tool_readonly` | project recovery read-only MCP call |
 
 ## Attaching to the profile's owner
 

@@ -29,6 +29,7 @@ COLUMNS = (
     "created_at", "delivered_at", "replied_at", "echoed_at",
     "note_key", "offered_turn", "sender_profile", "wake_admission", "wake_instance",
     "wake_at", "wake_claimed_at", "wake_turn", "woken_at", "gist",
+    "framed_text",
 )
 
 REPLY_CHECK = "CHECK (reply_mode IN ('none','requested','waiting','optional'))"

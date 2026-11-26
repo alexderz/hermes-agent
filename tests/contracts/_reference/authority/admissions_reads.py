@@ -6,7 +6,7 @@ import json
 import sqlite3
 from typing import Any, Mapping, Sequence
 
-from persistence.authority.admissions import AdmissionRecord, AdmissionResult
+from persistence.authority.admissions import AdmissionLookup, AdmissionRecord, AdmissionResult
 from persistence.core.canonical import canonical_json
 from persistence.core.errors import AuthorityRefusal, PermanentStoreError
 from session_rules.api_payloads import compacted_api_payload
@@ -15,6 +15,18 @@ from . import admissions_rows as rows
 from .admissions_results import load_result
 
 _PENDING = ("queued", "started", "unknown")
+
+
+def _lookup_ids(target_ids: Sequence[str]) -> frozenset[str] | None:
+    if isinstance(target_ids, (str, bytes)) or target_ids is None:
+        return None
+    try:
+        ids = tuple(target_ids)
+    except TypeError:
+        return None
+    if not ids or any(not isinstance(item, str) or not item for item in ids):
+        return None
+    return frozenset(ids)
 
 
 def _api_turn(payload: Any) -> Any:
@@ -51,6 +63,28 @@ class AdmissionReadsMixin:
         key = (rows._bound_id(principal_id, 1), rows._bound_id(session_id, 2), rows._bound_id(request_id, 3))
         row = next((r for r in rows.rows_by_seq(self._committed()) if (r["principal_id"], r["target_session_id"], r["request_id"]) == key), None)
         return rows.record(row) if row is not None else None
+
+    def lookup_admission_by_request(self, *, principal_id: str, request_id: str, target_ids: Sequence[str],
+                                    payload_digest: str | None = None) -> AdmissionLookup:
+        ids = _lookup_ids(target_ids)
+        if ids is None or not isinstance(principal_id, str) or not principal_id:
+            return AdmissionLookup("unavailable")
+        if not isinstance(request_id, str) or not request_id:
+            return AdmissionLookup("unavailable")
+        if payload_digest is not None and not isinstance(payload_digest, str):
+            return AdmissionLookup("unavailable")
+        found = [r for r in rows.rows_by_seq(self._committed())
+                 if r["principal_id"] == principal_id and r["request_id"] == request_id
+                 and r["target_session_id"] in ids]
+        if len(found) > 1:
+            return AdmissionLookup("conflict")
+        if not found:
+            return AdmissionLookup("proven_not_found")
+        row = found[0]
+        digest = row.get("digest")
+        if payload_digest is not None and digest != payload_digest:
+            return AdmissionLookup("conflict")
+        return AdmissionLookup("found", row["admission_id"], row["target_session_id"], digest)
 
     def match(self, *, request_id: str | None = None, admission_id: str | None = None, principal_id: str | None = None, session_id: str | None = None,
               include_retired: bool = False) -> list[AdmissionRecord]:

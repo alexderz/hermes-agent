@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import cli
+import digest
 import echo
 import frame
 import passive
@@ -58,10 +59,18 @@ class FakeOwner:
         self.failure = None
         self.lock = threading.Lock()
 
-    def __call__(self, target, text, delivery, submission_id):
+    def __call__(self, target, text, delivery, submission_id, unless_closed_by_user=False):
         with self.lock:
             self.calls.append({"target": target, "text": text, "delivery": delivery,
-                               "submission_id": submission_id})
+                               "submission_id": submission_id,
+                               "unless_closed_by_user": unless_closed_by_user})
+        if self.failure == "closed-by-user":
+            body = {"ok": False, "error": "refused-by-owner", "code": "closed-by-user",
+                    "exit": 4, "message": "closed"}
+            data = getattr(self, "refusal_data", None)
+            if isinstance(data, dict):
+                body["data"] = data
+            return body
         if self.failure is not None:
             return {"ok": False, "error": self.failure, "code": None, "exit": 5, "message": "down"}
         applied = delivery if delivery == "steer" or self.busy else "start"
@@ -87,8 +96,13 @@ class KeyedQueueTestBase(unittest.TestCase):
             "      allow_gateway_injection: true\n      settings: {}\n", encoding="utf-8")
         self.ctx = FakeCtx(user_name="Sam", owner_user_ids=[f"telegram:{OWNER}"])
         self.owner = FakeOwner()
-        for target, name, value in ((route.client, "deliver_sync", self.owner),
-                                    (route.client, "owner_instance", lambda: self.owner.instance)):
+        def _identity_lookup(session_id, request_id, payload_digest=None):
+            return {"outcome": "proven_not_found", "canonical_session_id": session_id}
+
+        for target, name, value in (
+                (route.client, "deliver_sync", self.owner),
+                (route.client, "owner_instance", lambda: self.owner.instance),
+                (route.client, "lookup_admission", _identity_lookup)):
             patch = mock.patch.object(target, name, value)
             patch.start()
             self.addCleanup(patch.stop)
@@ -198,6 +212,7 @@ class WakeTests(KeyedQueueTestBase):
         self.assertEqual((first["receipt"], second["receipt"]), ("queued", "queued"))
         self.assertEqual(second["replaced"], [first["message_id"]])
         self.assertIn("rides the wake already queued", second["message"])
+        self.assertNotIn("admission_id", second)
         wake = self.owner.wakes()[0]
         self.assertEqual(wake["submission_id"], f"intercom-{first['message_id']}")
         self.assertIn("keyed update `build-state` from `status-script`; the current version follows.",
@@ -505,6 +520,221 @@ class AnswerTests(KeyedQueueTestBase):
         self.turn(answer="Here is what Sam asked for.")
         self.assertEqual(self.owner.replies(), [])
         self.assertEqual(record.get(receipt["message_id"])["reply_state"], "no-block")
+
+
+class RecoveryTests(KeyedQueueTestBase):
+    """E3: an unresolved keyed row keeps its id and its pinned frame."""
+
+    def _raw(self, message="newer picture", **kwargs):
+        kwargs.setdefault("reply_mode", "none")
+        kwargs.setdefault("key", "build-state")
+        return route.send(
+            "status-script", "local-target", message, ctx=self.ctx, lister=self.lister,
+            script=True, delivery="queue", **kwargs)
+
+    def _ids(self):
+        conn = sqlite3.connect(self.record_path())
+        try:
+            return [row[0] for row in conn.execute("SELECT id FROM messages")]
+        finally:
+            conn.close()
+
+    def _clear_admission(self, message_id):
+        self.set_row(message_id, admission_id=None)
+        return record.get(message_id)
+
+    def test_framed_text_is_stored_with_the_span_hash(self):
+        receipt = self.send()
+        row = record.get(receipt["message_id"])
+        self.assertEqual(row["framed_text"], self.owner.wakes()[0]["text"])
+        self.assertEqual(row["header_sha"], route.header_sha(row["framed_text"], receipt["message_id"]))
+
+    def test_unflagged_send_does_not_pass_the_close_flag(self):
+        self.send()
+        self.assertIs(self.owner.calls[0]["unless_closed_by_user"], False)
+
+    def test_flagged_send_passes_the_close_flag(self):
+        self.send(unless_closed_by_user=True)
+        self.assertIs(self.owner.wakes()[0]["unless_closed_by_user"], True)
+
+    def test_flagged_ride_adopts_a_stored_admission_without_a_second_wake(self):
+        first = self._raw("build state: verifying G3", unless_closed_by_user=True)
+        self.assertEqual(record.get(first["message_id"])["admission_id"], "adm")
+        self.assertEqual(len(self.owner.wakes()), 1)
+        self.owner.calls.clear()
+        second = self._raw("build state: verifying G3", unless_closed_by_user=True)
+        self.assertEqual(self.owner.calls, [])
+        self.assertEqual(second["replaced"], [first["message_id"]])
+        self.assertEqual(second["admission_id"], "adm")
+        self.assertEqual(record.get(second["message_id"])["admission_id"], "adm")
+        self.assertEqual(record.get(first["message_id"])["result"], "replaced")
+
+    def test_found_copies_the_admission_and_does_not_submit(self):
+        first = self.send("build state: verifying G3")
+        stored = self._clear_admission(first["message_id"])["framed_text"]
+        self.owner.calls.clear()
+        looked = {"outcome": "found", "admission_id": "adm-kept", "target_session_id": "local-target"}
+        with mock.patch.object(route.client, "lookup_admission", return_value=looked) as lookup:
+            second = self._raw("brand new picture")
+        self.assertEqual(second["message_id"], first["message_id"])
+        self.assertEqual(second["admission_id"], "adm-kept")
+        self.assertEqual(second["stored_target"], "local-target")
+        self.assertEqual(self.owner.calls, [])
+        self.assertEqual(lookup.call_count, 1)
+        self.assertEqual(lookup.call_args.kwargs["payload_digest"],
+                         digest.frame_digest("local-target", stored))
+        self.assertEqual(record.get(first["message_id"])["admission_id"], "adm-kept")
+        self.assertEqual(self._ids(), [first["message_id"]])
+
+    def test_proven_not_found_submits_the_stored_frame(self):
+        first = self.send("build state: verifying G3")
+        stored = self._clear_admission(first["message_id"])["framed_text"]
+        self.owner.calls.clear()
+        with mock.patch.object(route.client, "lookup_admission",
+                               return_value={"outcome": "proven_not_found"}):
+            second = self._raw("brand new picture", unless_closed_by_user=True)
+        self.assertEqual(second["message_id"], first["message_id"])
+        self.assertEqual(len(self.owner.wakes()), 1)
+        wake = self.owner.wakes()[0]
+        self.assertEqual(wake["text"], stored)
+        self.assertNotIn("brand new picture", wake["text"])
+        self.assertEqual(wake["submission_id"], f"intercom-{first['message_id']}")
+        self.assertIs(wake["unless_closed_by_user"], True)
+        self.assertEqual(record.get(first["message_id"])["admission_id"], "adm")
+        self.assertEqual(self._ids(), [first["message_id"]])
+
+    def test_unavailable_and_conflict_leave_the_pin(self):
+        first = self.send()
+        stored = self._clear_admission(first["message_id"])["framed_text"]
+        for outcome in ("unavailable", "conflict"):
+            with self.subTest(outcome=outcome):
+                self.owner.calls.clear()
+                with mock.patch.object(route.client, "lookup_admission",
+                                       return_value={"outcome": outcome}):
+                    second = self._raw("brand new picture")
+                self.assertEqual(second["message_id"], first["message_id"])
+                self.assertEqual(second["condition"], "owner_unreachable")
+                self.assertEqual(second["lookup"], outcome)
+                self.assertNotIn("admission_id", second)
+                self.assertEqual(self.owner.calls, [])
+                row = record.get(first["message_id"])
+                self.assertIsNone(row["admission_id"])
+                self.assertEqual(row["framed_text"], stored)
+                self.assertEqual(row["result"], "pending")
+                self.assertEqual(self._ids(), [first["message_id"]])
+
+    def test_closed_by_user_is_reused_and_not_submitted_again(self):
+        self.owner.failure = "closed-by-user"
+        first = self._raw("build state: verifying G3", unless_closed_by_user=True)
+        self.assertEqual(first["error"], "closed-by-user")
+        self.assertIs(first["ok"], False)
+        row = record.get(first["message_id"])
+        self.assertEqual((row["result"], row["detail"]), ("refused", "closed-by-user"))
+        self.assertIsNone(row["wake_instance"])
+        self.owner.calls.clear()
+        self.owner.failure = None
+        with mock.patch.object(route.client, "lookup_admission",
+                               side_effect=AssertionError("closed row is not read again")):
+            second = self._raw("brand new picture", unless_closed_by_user=True)
+        self.assertEqual(second["message_id"], first["message_id"])
+        self.assertEqual(second["error"], "closed-by-user")
+        self.assertEqual(self.owner.calls, [])
+        self.assertEqual(self._ids(), [first["message_id"]])
+
+    def test_delivery_unknown_keeps_the_marker_and_the_id(self):
+        self.owner.failure = "delivery-unknown"
+        first = self._raw("build state: verifying G3", unless_closed_by_user=True)
+        self.assertEqual(first["receipt"], "held")
+        self.assertEqual(first["condition"], "owner_unreachable")
+        row = record.get(first["message_id"])
+        self.assertEqual(row["result"], "pending")
+        self.assertEqual(row["wake_instance"], "inst-1")
+        self.assertTrue(row["framed_text"])
+        self.owner.failure = None
+        self.owner.calls.clear()
+        with mock.patch.object(route.client, "lookup_admission",
+                               return_value={"outcome": "unavailable"}):
+            second = self._raw("brand new picture")
+        self.assertEqual(second["message_id"], first["message_id"])
+        self.assertEqual(self.owner.calls, [])
+        self.assertEqual(record.get(first["message_id"])["wake_instance"], "inst-1")
+
+    def test_two_overlapping_callers_keep_one_unsent_row(self):
+        first = self.send("build state: verifying G3")
+        stored = self._clear_admission(first["message_id"])["framed_text"]
+        self.owner.calls.clear()
+        out = {}
+
+        def go(slot):
+            out[slot] = self._raw(f"picture {slot}", unless_closed_by_user=True)
+
+        with mock.patch.object(route.client, "lookup_admission",
+                               return_value={"outcome": "proven_not_found"}):
+            threads = [threading.Thread(target=go, args=(slot,)) for slot in (1, 2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(30)
+        self.assertEqual(out[1]["message_id"], first["message_id"])
+        self.assertEqual(out[2]["message_id"], first["message_id"])
+        self.assertEqual(self._ids(), [first["message_id"]])
+        self.assertGreaterEqual(len(self.owner.wakes()), 1)
+        for call in self.owner.wakes():
+            self.assertEqual(call["text"], stored)
+            self.assertNotIn("picture", call["text"])
+            self.assertIs(call["unless_closed_by_user"], True)
+
+    def test_message_lookup_does_not_write_or_submit(self):
+        first = self.send()
+        framed = self._clear_admission(first["message_id"])["framed_text"]
+        self.owner.calls.clear()
+        found = {"outcome": "found", "admission_id": "adm-x", "target_session_id": "local-target"}
+        with mock.patch.object(route.client, "lookup_admission", return_value=found) as lookup:
+            answer = record.lookup_message_admission(first["message_id"])
+        self.assertEqual(answer["outcome"], "found")
+        self.assertEqual(answer["admission_id"], "adm-x")
+        self.assertIsNone(record.get(first["message_id"])["admission_id"])
+        self.assertEqual(lookup.call_args.kwargs["payload_digest"],
+                         digest.frame_digest("local-target", framed))
+        self.assertEqual(self.owner.calls, [])
+        self.set_row(first["message_id"], admission_id="adm-stored")
+        with mock.patch.object(route.client, "lookup_admission",
+                               side_effect=AssertionError("stored id is not re-read")):
+            stored = record.lookup_message_admission(first["message_id"])
+        self.assertEqual(stored["admission_id"], "adm-stored")
+        self.assertEqual(stored["target_session_id"], "local-target")
+        self.assertEqual(record.lookup_message_admission("missing-id"), {"outcome": "unavailable"})
+        self.set_row(first["message_id"], admission_id=None, framed_text=None)
+        with mock.patch.object(route.client, "lookup_admission",
+                               return_value={"outcome": "proven_not_found"}) as lookup:
+            record.lookup_message_admission(first["message_id"])
+        self.assertIsNone(lookup.call_args.kwargs["payload_digest"])
+
+    def test_closed_by_user_receipt_keeps_owner_data(self):
+        detail = "logical_owner=local-owner physical=tip-1 runtime_revision=4"
+        self.owner.failure = "closed-by-user"
+        self.owner.refusal_data = {
+            "reason": "closed-by-user", "field": "session", "detail": detail,
+        }
+        receipt = self._raw("build state: verifying G3", unless_closed_by_user=True)
+        self.assertEqual(receipt["error"], "closed-by-user")
+        self.assertEqual(receipt["data"]["detail"], detail)
+        self.assertIn("runtime_revision=4", receipt["data"]["detail"])
+        self.assertNotIn("runtime_revision=9", receipt["data"]["detail"])
+
+
+class FrameDigestTests(unittest.TestCase):
+    def test_frame_digest_matches_the_admission_fingerprint(self):
+        from persistence.authority.vocabulary import admission_fingerprint
+
+        target, text = "local-owner", "pinned frame"
+        self.assertEqual(
+            digest.frame_digest(target, text),
+            admission_fingerprint(
+                canonical_target=target,
+                payload={"input": {"text": text}, "intent": "queue"},
+            ),
+        )
 
 
 class MigrationTests(KeyedQueueTestBase):

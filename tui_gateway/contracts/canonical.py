@@ -60,6 +60,25 @@ canonical_method("prompt.receipt", params=PromptReceiptParams, result=PromptRece
                  doc="Current receipt of one admission the caller submitted (or controls).")
 
 
+class PromptLookupAdmissionParams(Params):
+    session_id: str
+    request_id: str
+    payload_digest: str | None = None
+
+
+class PromptLookupAdmissionResult(Result):
+    outcome: Literal["found", "proven_not_found", "unavailable", "conflict"]
+    admission_id: str | None = None
+    target_session_id: str | None = None
+    payload_digest: str | None = None
+    canonical_session_id: str | None = None
+
+
+canonical_method(
+    "prompt.lookup_admission", params=PromptLookupAdmissionParams, result=PromptLookupAdmissionResult,
+    doc="Read whether this caller's request id already has an admission. Does not submit or write it back.")
+
+
 class PromptCancelParams(Params):
     session_id: str
     admission_id: str

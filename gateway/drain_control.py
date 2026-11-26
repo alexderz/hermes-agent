@@ -80,7 +80,8 @@ def restart_wait_socket_ticket(runner, method, path, query) -> bool:
 # ``runtime_draining`` exactly like the REST writes above.
 RESTART_WAIT_WS_METHODS = frozenset({
     "ping", "runtime.describe", "session.resume", "session.detach", "session.events.since",
-    "session.info", "session.list", "prompt.submit", "prompt.receipt", "session.interrupt",
+    "session.info", "session.list", "prompt.submit", "prompt.receipt", "prompt.lookup_admission",
+    "session.interrupt",
     "approval.pending", "approval.received", "approval.respond", "clarify.respond", "clarify.lock",
 })
 

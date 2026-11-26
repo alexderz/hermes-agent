@@ -264,6 +264,9 @@ class CanonicalSubmitParams(CanonicalSessionParams):
     # The submitter answers the clarify tool's whole batch in one ``clarify`` server request (main's
     # batch panel); without it the turn's viewers get one ``clarify.request`` card per question.
     clarify_batch: bool = False
+    # When set, a new admit is refused if the physical row is closed by the user. Absent, the
+    # stored target stays the caller's session id. Exact replay of the same admission is not re-judged.
+    unless_closed_by_user: bool = False
 
 
 class CanonicalVoiceStopped(Result):

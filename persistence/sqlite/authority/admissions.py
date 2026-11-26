@@ -16,7 +16,9 @@ from persistence.authority.admissions import (
     ApiTargetClaim,
     CapturedResult,
     AdmissionGate,
+    AdmissionLookup,
     ClaimedAdmission,
+    CloseAwareAdmit,
     QueuedFold,
     QueuedReplacement,
     TranscriptRewrite,
@@ -26,6 +28,7 @@ from persistence.authority.admissions import (
 from persistence.core.errors import PermanentStoreError
 
 from .._backend import SQLiteStore, register_repository
+from . import _admission_lookup as lookup
 from . import _admission_media as media
 from . import _admission_owner as owner
 from . import _admission_store as store
@@ -62,12 +65,14 @@ class SQLiteAdmissionRepository:
               intent: Literal["queue", "steer", "redirect"] = "queue", gate: AdmissionGate = None,
               replaces: QueuedReplacement | None = None, supersedes: str | None = None,
               api_target: ApiTargetClaim | None = None, rewrite: TranscriptRewrite | None = None,
-              hosted: HostedMemberGuard | None = None, fold: QueuedFold | None = None) -> tuple[AdmissionRecord, bool]:
+              hosted: HostedMemberGuard | None = None, fold: QueuedFold | None = None,
+              close_aware: CloseAwareAdmit | None = None) -> tuple[AdmissionRecord, bool]:
         with refused():
             row, created = store.admit_session_input(
                 self._store.holder(), epoch=epoch, principal_id=principal_id, session_id=session_id,
                 request_id=request_id, payload=payload, intent=intent, gate=gate, replaces=replaces,
-                supersedes=supersedes, api_target=api_target, rewrite=rewrite, hosted=hosted, fold=fold)
+                supersedes=supersedes, api_target=api_target, rewrite=rewrite, hosted=hosted, fold=fold,
+                close_aware=close_aware)
         return _record(row), created
 
     def claim(self, *, epoch: int, session_id: str, gate: AdmissionGate = None,
@@ -164,6 +169,13 @@ class SQLiteAdmissionRepository:
         with refused():
             return _record(store.find_session_admission(self._store.holder(), principal_id=principal_id,
                                                         session_id=session_id, request_id=request_id))
+
+    def lookup_admission_by_request(self, *, principal_id: str, request_id: str, target_ids: Sequence[str],
+                                    payload_digest: str | None = None) -> AdmissionLookup:
+        with refused():
+            return lookup.lookup_admission_by_request(
+                self._store.holder(), principal_id=principal_id, request_id=request_id,
+                target_ids=target_ids, payload_digest=payload_digest)
 
     def match(self, *, request_id: str | None = None, admission_id: str | None = None, principal_id: str | None = None,
               session_id: str | None = None, include_retired: bool = False) -> list[AdmissionRecord]:

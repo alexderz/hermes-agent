@@ -4869,6 +4869,18 @@ export interface CanonicalSessionRef {
   profile_id: string
   session_id: string
 }
+export interface PromptLookupAdmissionParams {
+  session_id: string
+  request_id: string
+  payload_digest?: string | null
+}
+export interface PromptLookupAdmissionResult {
+  outcome: 'found' | 'proven_not_found' | 'unavailable' | 'conflict'
+  admission_id?: string | null
+  target_session_id?: string | null
+  payload_digest?: string | null
+  canonical_session_id?: string | null
+}
 export interface PromptCancelParams {
   session_id: string
   admission_id: string
@@ -5495,6 +5507,7 @@ export interface CanonicalSubmitParams {
   api_text?: string | null
   model_override?: CanonicalModelOverride | null
   clarify_batch?: boolean
+  unless_closed_by_user?: boolean
 }
 export interface CanonicalAttachment {
   path: string
@@ -7256,6 +7269,8 @@ export interface CanonicalRpcMethods {
   'profiles.list': { params: CanonicalProfilesParams; result: CanonicalProfilesResult }
   /** Retire a queued admission; a started one is interrupted in the same call. */
   'prompt.cancel': { params: PromptCancelParams; result: AdmissionStatus }
+  /** Read whether this caller's request id already has an admission. Does not submit or write it back. */
+  'prompt.lookup_admission': { params: PromptLookupAdmissionParams; result: PromptLookupAdmissionResult }
   /** Current receipt of one admission the caller submitted (or controls). */
   'prompt.receipt': { params: PromptReceiptParams; result: PromptReceiptResult }
   /** Cancel a still-queued admission and admit the edited prompt as a new admission at the back of the FIFO, in one write bound to the replaced admission. Refusals: admission_started, admission_conflict (the submission_id replaced another admission), queue_full, unsupported_control, not_found. */
@@ -7332,6 +7347,7 @@ export const CANONICAL_RPC_METHODS = [
   'kanban.run',
   'profiles.list',
   'prompt.cancel',
+  'prompt.lookup_admission',
   'prompt.receipt',
   'prompt.replace_queued',
   'prompt.resolve_unknown',

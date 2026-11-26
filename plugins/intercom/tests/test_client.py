@@ -582,6 +582,64 @@ class ClientTests(unittest.TestCase):
                 self.assertEqual(self.owner.calls, [("prompt.receipt", {"session_id": "s1", "admission_id": "adm-9"})])
                 self.assert_clean(result)
 
+    def test_unless_closed_by_user_is_sent_only_when_set(self):
+        self.script(session_resume=[handle(False)], prompt_submit=[submitted("adm-flag")])
+        plain = self.client.deliver_sync("s1", "📡 hello", "queue", "intercom-m1")
+        self.assertEqual(plain["admission_id"], "adm-flag")
+        self.assertNotIn("unless_closed_by_user", self.owner.calls[1][1])
+        self.owner.calls.clear()
+        self.script(session_resume=[handle(True)], prompt_submit=[submitted("adm-flag")])
+        flagged = self.client.deliver_sync(
+            "s1", "📡 hello", "queue", "intercom-m1", unless_closed_by_user=True)
+        self.assertEqual(flagged["applied"], "queue")
+        self.assertEqual(self.owner.calls[1], ("prompt.submit", {
+            "session_id": "s1", "text": "📡 hello", "submission_id": "intercom-m1",
+            "queued": True, "unless_closed_by_user": True}))
+
+    def test_lookup_admission_is_read_only(self):
+        found = {"outcome": "found", "admission_id": "adm-9", "target_session_id": "s1",
+                 "payload_digest": "abc"}
+        self.owner.script = {"prompt.lookup_admission": [found]}
+        result = self.client.lookup_admission("s1", "intercom-m1", payload_digest="abc")
+        self.assertEqual(result["outcome"], "found")
+        self.assertEqual(result["admission_id"], "adm-9")
+        self.assertEqual(result["target_session_id"], "s1")
+        self.assertEqual(self.owner.calls, [("prompt.lookup_admission", {
+            "session_id": "s1", "request_id": "intercom-m1", "payload_digest": "abc"})])
+        self.owner.calls.clear()
+        self.owner.script = {"prompt.lookup_admission": [{"outcome": "proven_not_found"}]}
+        missed = self.client.lookup_admission("s1", "intercom-m1")
+        self.assertEqual(missed, {"outcome": "proven_not_found"})
+        self.assertNotIn("payload_digest", self.owner.calls[0][1])
+        self.owner.calls.clear()
+        self.owner.script = {"prompt.lookup_admission": [{"outcome": "conflict"}]}
+        self.assertEqual(self.client.lookup_admission("s1", "intercom-m1")["outcome"], "conflict")
+        self.owner.script = {"prompt.lookup_admission": [GatewayRPCError("permission_denied")]}
+        lost = self.client.lookup_admission("s1", "intercom-m1")
+        self.assertEqual(lost, {"outcome": "unavailable"})
+        self.assert_clean(lost)
+        self.assertEqual(self.owner.methods().count("session.resume"), 0)
+        self.assertNotIn("prompt.submit", self.owner.methods())
+        self.owner.calls.clear()
+        self.owner.script = {"prompt.lookup_admission": [{
+            "outcome": "proven_not_found", "canonical_session_id": "local-owner",
+        }]}
+        named = self.client.lookup_admission("tip-1", "intercom-m1")
+        self.assertEqual(named["outcome"], "proven_not_found")
+        self.assertEqual(named["canonical_session_id"], "local-owner")
+
+    def test_refusal_keeps_structured_owner_data(self):
+        detail = "logical_owner=local-owner physical=tip-1 runtime_revision=4"
+        refused = GatewayRPCError("closed-by-user", data={
+            "reason": "closed-by-user", "field": "session", "detail": detail,
+        })
+        self.owner = FakeOwner(session_resume=[handle(True)], prompt_submit=[refused])
+        result = self.deliver("queue")
+        self.assertEqual(result["code"], "closed-by-user")
+        self.assertEqual(result["error"], "refused-by-owner")
+        self.assertEqual(result["data"]["detail"], detail)
+        self.assertNotIn(detail, result["message"])
+
     def test_reads_never_resume_or_write(self):
         self.script(session_list=[{"sessions": []}], prompt_receipt=[submitted()])
         self.client.list_sessions()

@@ -86,9 +86,10 @@ class FakeOwner:
         self.calls = []
         self.answer = {"ok": True, "applied": "steer", "applied_detail": None, "admission_id": None}
 
-    def __call__(self, target, text, delivery, submission_id):
+    def __call__(self, target, text, delivery, submission_id, unless_closed_by_user=False):
         self.calls.append({"target": target, "text": text, "delivery": delivery,
-                           "submission_id": submission_id})
+                           "submission_id": submission_id,
+                           "unless_closed_by_user": unless_closed_by_user})
         return dict(self.answer)
 
 
@@ -561,6 +562,18 @@ class SendTests(CliTestBase):
     def setUp(self):
         super().setUp()
         self.sessions()
+
+    def test_unless_closed_by_user_reaches_delivery_only_when_set(self):
+        code, _out, err = self.invoke([
+            "send", "--to", "local-target", "--message", "hello",
+            "--delivery", "queue", "--unless-closed-by-user",
+        ])
+        self.assertEqual(code, 0, err)
+        self.assertIs(self.owner.calls[0]["unless_closed_by_user"], True)
+        self.owner.calls.clear()
+        code, _out, err = self.invoke(["send", "--to", "local-target", "--message", "hello"])
+        self.assertEqual(code, 0, err)
+        self.assertIs(self.owner.calls[0]["unless_closed_by_user"], False)
 
     def test_reply_defaults_to_none_and_frames_a_script(self):
         code, out, err = self.invoke(["send", "--to", "local-target", "--message", "hello there"])

@@ -24,6 +24,7 @@ __all__ = [
     "AdmissionGate",
     "AdmissionId",
     "AdmissionIntent",
+    "AdmissionLookup",
     "AdmissionOutcome",
     "AdmissionRecord",
     "AdmissionRepository",
@@ -34,6 +35,7 @@ __all__ = [
     "CapturedResult",
     "CarrierRewind",
     "ClaimedAdmission",
+    "CloseAwareAdmit",
     "GateRefusal",
     "QueuedFold",
     "QueuedReplacement",
@@ -171,6 +173,32 @@ class CapturedResult:
 
 
 @dataclass(frozen=True, slots=True)
+class AdmissionLookup:
+    """One owner read of a request id across an already expanded target set.
+
+    ``found`` carries the stored admission id, the row's target, and its payload digest.
+    The other outcomes carry none of those. The read does not write.
+    """
+
+    outcome: Literal["found", "proven_not_found", "unavailable", "conflict"]
+    admission_id: str | None = None
+    target_session_id: str | None = None
+    payload_digest: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CloseAwareAdmit:
+    """Refuse a new admit when the physical row of ``logical_owner`` is closed by the user.
+
+    Checked inside the admit write, after an exact replay returns and before INSERT.
+    ``logical_owner`` is the canonical target the caller already chose. Absent, the
+    write does not consult the close predicate.
+    """
+
+    logical_owner: str
+
+
+@dataclass(frozen=True, slots=True)
 class QueuedReplacement:
     """``admit`` replaces the still-queued ``admission_id``."""
 
@@ -248,12 +276,12 @@ class AdmissionRepository(Protocol):
 
     # Writes
 
-    def admit(self, *, epoch: int, principal_id: str, session_id: str, request_id: str, payload: Mapping[str, Any], intent: Literal['queue', 'steer', 'redirect'] = 'queue', gate: AdmissionGate = None, replaces: QueuedReplacement | None = None, supersedes: str | None = None, api_target: ApiTargetClaim | None = None, rewrite: TranscriptRewrite | None = None, hosted: HostedMemberGuard | None = None, fold: QueuedFold | None = None) -> tuple[AdmissionRecord, bool]:
+    def admit(self, *, epoch: int, principal_id: str, session_id: str, request_id: str, payload: Mapping[str, Any], intent: Literal['queue', 'steer', 'redirect'] = 'queue', gate: AdmissionGate = None, replaces: QueuedReplacement | None = None, supersedes: str | None = None, api_target: ApiTargetClaim | None = None, rewrite: TranscriptRewrite | None = None, hosted: HostedMemberGuard | None = None, fold: QueuedFold | None = None, close_aware: CloseAwareAdmit | None = None) -> tuple[AdmissionRecord, bool]:
         """Admit one input; the bool is ``created``.
 
         The digest covers the target, the payload without the owner's ``surface_v1.client`` stamp (``vocabulary.retry_input``) and the intent; the stored payload keeps the stamp.
 
-        Order: identity texts, intent and payload encoding (``invalid_params``); the tombstone read on a retired target (epoch fence; an exact retry replays its tombstone with ``created`` False, an unseen identity is ``not_found``, another digest ``admission_conflict`` with :data:`ADMITTED_REQUEST_CONFLICT`); then one write: epoch, session (``not_found``), the (principal, target, request) row (another digest ``admission_conflict`` with :data:`ADMITTED_REQUEST_CONFLICT`; an exact live replay runs only the ``replaces`` check and returns ``created`` False), the queue cap (``queue_full`` at :data:`ADMISSION_QUEUE_MAX` queued rows), ``gate`` (its refusal is raised when given; a callable is answered here, on every attempt), then the typed extras: ``replaces`` (the replaced row must still be queued, else ``admission_started``; it is cancelled and bound to this identity), ``supersedes`` (that queued row on this target is cancelled, else ``stale_generation``), ``api_target`` (another target holds this API request id, live or, for a client key, tombstoned: ``admission_conflict``; the settings are stored), ``rewrite`` (the ``/retry`` rewrite; a failure other than a refusal is ``RetryRewriteRefused``), ``hosted`` (the hosted member check, ``permission_denied``), ``fold`` (the folded row must still be queued on this target with no later queued row outside ``skip_ids``, else ``stale_generation``; it is cancelled and its payload becomes ``session_rules.automation.folded_payload`` of it); then the queued insert.
+        Order: identity texts, intent and payload encoding (``invalid_params``); the tombstone read on a retired target (epoch fence; an exact retry replays its tombstone with ``created`` False, an unseen identity is ``not_found``, another digest ``admission_conflict`` with :data:`ADMITTED_REQUEST_CONFLICT`); then one write: epoch, session (``not_found``), the (principal, target, request) row (another digest ``admission_conflict`` with :data:`ADMITTED_REQUEST_CONFLICT`; an exact live replay runs only the ``replaces`` check and returns ``created`` False), the queue cap (``queue_full`` at :data:`ADMISSION_QUEUE_MAX` queued rows), ``gate`` (its refusal is raised when given; a callable is answered here, on every attempt), ``close_aware`` (a new admit whose physical row is closed by the user refuses ``closed-by-user``; an exact replay has already returned), then the typed extras: ``replaces`` (the replaced row must still be queued, else ``admission_started``; it is cancelled and bound to this identity), ``supersedes`` (that queued row on this target is cancelled, else ``stale_generation``), ``api_target`` (another target holds this API request id, live or, for a client key, tombstoned: ``admission_conflict``; the settings are stored), ``rewrite`` (the ``/retry`` rewrite; a failure other than a refusal is ``RetryRewriteRefused``), ``hosted`` (the hosted member check, ``permission_denied``), ``fold`` (the folded row must still be queued on this target with no later queued row outside ``skip_ids``, else ``stale_generation``; it is cancelled and its payload becomes ``session_rules.automation.folded_payload`` of it); then the queued insert.
         """
         ...
 
@@ -333,6 +361,13 @@ class AdmissionRepository(Protocol):
 
     def find(self, *, principal_id: str, session_id: str, request_id: str) -> AdmissionRecord | None:
         """The live row at its exact (principal, target, request) identity."""
+        ...
+
+    def lookup_admission_by_request(self, *, principal_id: str, request_id: str, target_ids: Sequence[str], payload_digest: str | None = None) -> AdmissionLookup:
+        """Read every live row for this principal and request id whose target is in *target_ids*.
+
+        The caller expands lineage and the canonical target. An empty *target_ids* is ``unavailable``. Exactly one row is ``found`` (a passed digest that differs is ``conflict``, not absence). More than one row is ``conflict``. Terminal rows still in the ledger count. Tombstones are not consulted. Nothing is written.
+        """
         ...
 
     def match(self, *, request_id: str | None = None, admission_id: str | None = None, principal_id: str | None = None, session_id: str | None = None, include_retired: bool = False) -> list[AdmissionRecord]:
