@@ -97,6 +97,7 @@ def _partial_exit(agent, messages, conversation_history, api_call_count, final_r
 def validate_tool_calls(
     agent: Any, assistant_message: Any, finish_reason: str, *, messages: list[dict[str, Any]],
     conversation_history: Any, api_call_count: int, effective_task_id: Any,
+    api_kwargs: Any = None,
 ) -> ToolValidationVerdict:
     """Validate ``assistant_message.tool_calls`` in place (ids uniquified, names
     repaired, dict/empty args normalized to JSON strings). Strikes for invalid names
@@ -226,7 +227,10 @@ def validate_tool_calls(
             agent._truncated_arg_retries = retries
             if retries <= 4:
                 from agent.turn_truncation import boosted_output_cap
-                agent._ephemeral_max_output_tokens = boosted_output_cap(agent, None, retries)
+                _cap_fn = getattr(agent, "_requested_output_cap_from_api_kwargs", None)
+                _raw_cap = _cap_fn(api_kwargs) if callable(_cap_fn) else None
+                _requested_cap = _raw_cap if isinstance(_raw_cap, int) and not isinstance(_raw_cap, bool) else None
+                agent._ephemeral_max_output_tokens = boosted_output_cap(agent, _requested_cap, retries)
                 agent._vprint(
                     f"{agent.log_prefix}⚠️  Truncated tool call arguments detected "
                     f"(finish_reason={finish_reason!r}) — retrying ({retries}/4), not executing.",
