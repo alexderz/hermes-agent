@@ -16,7 +16,7 @@ def _agent():
         _truncated_arg_retries=0,
         max_tokens=4096,
         api_mode="chat_completions",
-        model="gemini-4-neon",
+        model="gpt-4o",
         _ephemeral_max_output_tokens=None,
     )
     agent._vprint = lambda *a, **k: None
@@ -129,3 +129,53 @@ def test_valid_json_and_turn_reset_clear_truncated_arg_retries():
     assert verdict.action == "ok"
     assert agent._truncated_arg_retries == 0
     assert ("_truncated_arg_retries", 0) in _PER_TURN_RESET_STATE
+    assert ("_ephemeral_max_output_tokens", None) in _PER_TURN_RESET_STATE
+
+
+def test_mixed_batch_with_truncated_call_retries_whole_batch():
+    agent = _agent()
+    mixed_msg = SimpleNamespace(
+        content="",
+        tool_calls=[
+            SimpleNamespace(
+                id="call_good", type="function",
+                function=SimpleNamespace(name="terminal", arguments='{"command": "echo ok"}'),
+            ),
+            SimpleNamespace(
+                id="call_cut", type="function",
+                function=SimpleNamespace(name="terminal", arguments='{"command": "echo cut'),
+            ),
+        ],
+    )
+    verdict = validate_tool_calls(
+        agent, mixed_msg, "tool_calls",
+        messages=[], conversation_history=[], api_call_count=1, effective_task_id="t",
+    )
+    assert verdict.action == "continue"
+    assert agent._truncated_arg_retries == 1
+
+
+def test_retries_escalate_cap_and_clamp_at_anthropic_model_limit():
+    from run_agent import AIAgent
+
+    agent = _agent()
+    agent.api_mode = "anthropic_messages"
+    agent.model = "claude-sonnet-4"
+    agent.max_tokens = 16384
+    agent._requested_output_cap_from_api_kwargs = AIAgent._requested_output_cap_from_api_kwargs
+
+    caps = []
+    api_kwargs = {"max_tokens": 16384}
+    for attempt in range(1, 5):
+        verdict = validate_tool_calls(
+            agent, _cut_message(), "tool_calls",
+            messages=[], conversation_history=[], api_call_count=attempt, effective_task_id="t",
+            api_kwargs=api_kwargs,
+        )
+        assert verdict.action == "continue"
+        caps.append(agent._ephemeral_max_output_tokens)
+        api_kwargs = {"max_tokens": agent._ephemeral_max_output_tokens}
+
+    assert caps[0] > 16384
+    assert all(caps[i] >= caps[i - 1] for i in range(1, len(caps)))
+    assert caps[-1] <= 64000

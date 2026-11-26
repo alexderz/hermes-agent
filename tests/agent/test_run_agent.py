@@ -4608,20 +4608,56 @@ class TestRunConversation:
         bad_resp = _mock_response(
             content="", finish_reason="tool_calls", tool_calls=[bad_tc],
         )
-        agent.client.chat.completions.create.side_effect = [good_resp, bad_resp]
+        agent.client.chat.completions.create.side_effect = [good_resp, *([bad_resp] * 5)]
 
         with (
-            patch("model_tools.handle_function_call", return_value='{"success":true}'),
+            patch("model_tools.handle_function_call", return_value='{"success":true}') as mock_hfc,
             patch.object(agent, "_persist_session"),
             patch.object(agent, "_save_trajectory"),
             patch.object(agent, "_cleanup_task_resources"),
         ):
             result = agent.run_conversation("write then truncate")
 
+        mock_hfc.assert_called_once()
         assert result.get("partial") is True
         msgs = result.get("messages") or []
         assert msgs[-1].get("role") == "assistant"
         assert any(isinstance(m, dict) and m.get("role") == "tool" for m in msgs)
+
+    def test_truncated_tool_json_retries_and_executes_once(self, agent):
+        """finish_reason=tool_calls + truncated args retries silently and executes once when valid."""
+        self._setup_agent(agent)
+        agent.valid_tool_names.add("write_file")
+        bad_tc = _mock_tool_call(
+            name="write_file",
+            arguments='{"path":"report.md","content":"partial',
+            call_id="c_bad",
+        )
+        bad_resp = _mock_response(
+            content="", finish_reason="tool_calls", tool_calls=[bad_tc],
+        )
+        good_tc = _mock_tool_call(
+            name="write_file",
+            arguments='{"path":"report.md","content":"full"}',
+            call_id="c_ok",
+        )
+        good_resp = _mock_response(
+            content="", finish_reason="tool_calls", tool_calls=[good_tc],
+        )
+        final_resp = _mock_response(content="Done!", finish_reason="stop")
+        agent.client.chat.completions.create.side_effect = [bad_resp, good_resp, final_resp]
+
+        with (
+            patch("model_tools.handle_function_call", return_value='{"success":true}') as mock_hfc,
+            patch.object(agent, "_persist_session"),
+            patch.object(agent, "_save_trajectory"),
+            patch.object(agent, "_cleanup_task_resources"),
+        ):
+            result = agent.run_conversation("write the report")
+
+        mock_hfc.assert_called_once()
+        assert result.get("partial") is not True
+        assert result["final_response"] == "Done!"
 
 
     def test_kanban_block_called_on_iteration_exhaustion(self, agent, monkeypatch):
