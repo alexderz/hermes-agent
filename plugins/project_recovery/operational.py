@@ -198,7 +198,9 @@ def _home():
 def _project_root(project_root) -> Path:
     if project_root is not None:
         return Path(project_root)
-    return Path(__file__).resolve().parents[2]
+    from hermes_cli._startup_fast import project_root_str
+
+    return Path(project_root_str())
 
 
 def _runtime_path(project_root, runtime_resolver):
@@ -209,7 +211,7 @@ def _runtime_path(project_root, runtime_resolver):
         return None
     try:
         found = runtime_resolver(project_root)
-    except Exception:
+    except Exception:  # health: allow BLE001 -- a resolver failure means no override
         return None
     if found is None:
         return None
@@ -220,7 +222,7 @@ def _interpreter_path(project_root, interpreter_resolver) -> Path:
     if interpreter_resolver is not None:
         try:
             found = interpreter_resolver(project_root)
-        except Exception:
+        except Exception:  # health: allow BLE001 -- falls back to this interpreter
             found = None
         if found:
             return Path(found)
@@ -296,7 +298,7 @@ def _discovery_ok(discover, binding) -> bool:
         return False
     try:
         result = discover([server])
-    except Exception:
+    except Exception:  # health: allow BLE001 -- a refusal is an incomplete board
         return False
     if result is True:
         return True
@@ -418,14 +420,14 @@ def _runtime_revision(owner, tip):
         from plugins.intercom.state import SessionReader
 
         reader = SessionReader()
-    except Exception:
+    except Exception:  # health: allow BLE001 -- no reader means no revision
         return None
     try:
         physical = _physical_id(reader, owner, tip)
         if type(physical) is not str or physical == "":
             return None
         row = reader.get_session(physical)
-    except Exception:
+    except Exception:  # health: allow BLE001 -- a failed read leaves it unknown
         return None
     finally:
         _close_reader(reader)
@@ -474,7 +476,7 @@ def _close_reader(reader) -> None:
         return
     try:
         close()
-    except Exception:
+    except Exception:  # health: allow BLE001 -- must not mask the result
         return
 
 
@@ -511,7 +513,7 @@ def _stored_target(delivery, admission):
         return None
     try:
         looked = record.lookup_message_admission(message)
-    except Exception:
+    except Exception:  # health: allow BLE001 -- a lookup failure skips the receipt
         return None
     if not isinstance(looked, dict) or looked.get("outcome") != "found":
         return None
