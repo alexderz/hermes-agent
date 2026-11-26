@@ -821,7 +821,7 @@ export function usePromptActions({
     // raised. Drop this session's pending clarify / approval / sudo / secret so
     // a dead panel (and the sidebar "needs input" dot) can't linger and accept
     // an answer the backend will reject.
-    clearAllPrompts(sessionId, false, secretScopeForOwner(knownOwnerForSession(sessionId)))
+    clearAllPrompts(sessionId, 'all', false, secretScopeForOwner(knownOwnerForSession(sessionId)))
     clearClarifyRequest(undefined, sessionId)
 
     try {

@@ -125,7 +125,7 @@ describe('inline secret entry', () => {
     rememberServerRequest({ id: 'r1', method: 'secret', params: {}, respond: vi.fn(), fail: vi.fn() })
     const view = render(tree(request))
     fireEvent.change(screen.getByLabelText('TEST_KEY'), { target: { value: 'dummy-value' } })
-    clearAllPrompts('s1', true, request)
+    clearAllPrompts('s1', 'turn-end', true, request)
     expect(readSecretDraft(request)).toBe('dummy-value')
     view.unmount()
   })

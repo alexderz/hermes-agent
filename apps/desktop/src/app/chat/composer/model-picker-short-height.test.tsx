@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { atom } from 'nanostores'
 import { afterEach, expect, it, vi } from 'vitest'
 
 import { DropdownMenuItem, DropdownMenuSearch } from '@/components/ui/dropdown-menu'
@@ -22,7 +23,7 @@ function KeyboardControls() {
       compactModelPill
       conversation={{
         active: false,
-        level: 0,
+        levelStore: atom(0),
         muted: false,
         status: 'idle',
         onEnd: vi.fn(),

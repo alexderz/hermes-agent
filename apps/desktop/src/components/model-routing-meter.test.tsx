@@ -289,7 +289,7 @@ it('shows every Antigravity group and bucket with its own reset and no pace', ()
     const block = details.querySelector(`[data-agy-group="${group.name}"]`)
     expect(block).not.toBeNull()
     const weekly = group.buckets.find(bucket => bucket.window === 'weekly') || group.buckets[0]
-    const metric = block.querySelector('[data-agy-metric]')
+    const metric = block!.querySelector('[data-agy-metric]')
     expect(metric?.textContent).toBe(weekly.remaining_percent > 0 && weekly.remaining_percent < 1 ? '<1%' : `${Math.round(weekly.remaining_percent)}%`)
     for (const bucket of group.buckets) {
       expect(block!.textContent).toContain(bucket.window === '5h' ? '5-hour' : 'weekly')

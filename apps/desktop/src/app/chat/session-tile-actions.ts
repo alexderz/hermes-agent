@@ -379,7 +379,7 @@ export function useSessionTileActions({ requestGateway, runtimeId, scope, stored
     resetSessionBackground(sessionId)
     setSessionDraftingTool(sessionId, '')
     const owner = sessionTileOwnerRoute(storedIdRef.current) ?? knownSessionOwner(ownerLookupSessionRows(), storedIdRef.current)
-    clearAllPrompts(sessionId, false, secretScopeForOwner(owner))
+    clearAllPrompts(sessionId, 'all', false, secretScopeForOwner(owner))
     clearClarifyRequest(undefined, sessionId)
 
     try {

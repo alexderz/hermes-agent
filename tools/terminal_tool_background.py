@@ -240,7 +240,9 @@ def spawn_background_process(
             result_data["watch_patterns"] = proc_session.watch_patterns
         # Spawn checkpointed before notify, watch, heartbeat, and chat routing
         # were set. Rewrite the file a restart actually reads.
-        process_registry._write_checkpoint()
+        write_checkpoint = getattr(process_registry, "_write_checkpoint", None)
+        if callable(write_checkpoint):
+            write_checkpoint()
         return json.dumps(result_data, ensure_ascii=False)
     except Exception as e:
         return json.dumps({
@@ -304,4 +306,6 @@ def _stamp_routing_if_gateway(process_registry, session, session_key) -> None:
             _register_completion_watcher(process_registry, session, session_key)
     else:
         session.notify_on_complete = False
-    process_registry._write_checkpoint()
+    write_checkpoint = getattr(process_registry, "_write_checkpoint", None)
+    if callable(write_checkpoint):
+        write_checkpoint()

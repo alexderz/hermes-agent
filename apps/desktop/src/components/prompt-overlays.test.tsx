@@ -2,10 +2,8 @@ import { useStore } from '@nanostores/react'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import {
-  handleServerRequest,
-  type ServerRequestContext
-} from '@/app/session/hooks/use-message-stream/gateway-event/server-requests'
+import type { ServerRequestContext } from '@/app/session/hooks/use-message-stream/gateway-event/server-request-context'
+import { handleServerRequest } from '@/app/session/hooks/use-message-stream/gateway-event/server-requests'
 import { SecretCard } from '@/components/assistant-ui/clarify/secret-card'
 import { I18nProvider } from '@/i18n'
 import { createClientSessionState } from '@/lib/chat-runtime'
