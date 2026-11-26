@@ -101,8 +101,9 @@ def validate_tool_calls(
     """Validate ``assistant_message.tool_calls`` in place (ids uniquified, names
     repaired, dict/empty args normalized to JSON strings). Strikes for invalid names
     advance only when a turn has NO valid call, so a degenerate model still halts at
-    3; args cut off mid-stream (routers rewrite ``length`` → ``tool_calls``) are refused
-    outright rather than retried."""
+    3. Args cut off mid-stream are not executed. The call is re-issued with a larger
+    output budget, up to 4 times, so an unattended session does not stop and wait
+    for a person to type continue."""
     from agent.conversation_loop import _invalid_tool_name_error_content
 
     tool_calls = assistant_message.tool_calls
@@ -218,11 +219,21 @@ def validate_tool_calls(
             for tc in tool_calls if tc.function.name in invalid_names
         )
         if _truncated:
-            agent._vprint(
-                f"{agent.log_prefix}⚠️  Truncated tool call arguments detected "
-                f"(finish_reason={finish_reason!r}) — refusing to execute.",
-                force=True, diagnostic=True,
-            )
+            # Do not run the half-written call. Re-issue the request instead of
+            # ending the turn: ending here is what left sessions idle for hours
+            # waiting for a person to type continue.
+            retries = int(getattr(agent, "_truncated_arg_retries", 0) or 0) + 1
+            agent._truncated_arg_retries = retries
+            if retries <= 4:
+                from agent.turn_truncation import boosted_output_cap
+                agent._ephemeral_max_output_tokens = boosted_output_cap(agent, None, retries)
+                agent._vprint(
+                    f"{agent.log_prefix}⚠️  Truncated tool call arguments detected "
+                    f"(finish_reason={finish_reason!r}) — retrying ({retries}/4), not executing.",
+                    force=True, diagnostic=True,
+                )
+                return _verdict("continue")
+            agent._truncated_arg_retries = 0
             agent._invalid_json_retries = 0
             agent._cleanup_task_resources(effective_task_id)
             # Blame the output cap only when the model reported one; otherwise the args
@@ -230,6 +241,11 @@ def validate_tool_calls(
             _copy = (
                 site_copy("truncated") if finish_reason == FINISH_REASON_LENGTH
                 else site_copy("truncated_unreported")
+            )
+            agent._vprint(
+                f"{agent.log_prefix}⚠️  Truncated tool call arguments still incomplete "
+                f"after 4 retries (finish_reason={finish_reason!r}) — refusing to execute.",
+                force=True, diagnostic=True,
             )
             return _verdict("return", _partial_exit(
                 agent, messages, conversation_history, api_call_count, _copy,
@@ -266,4 +282,5 @@ def validate_tool_calls(
 
     # Reset retry counter on successful JSON validation
     agent._invalid_json_retries = 0
+    agent._truncated_arg_retries = 0
     return _verdict("ok")
