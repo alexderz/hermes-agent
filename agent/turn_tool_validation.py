@@ -231,6 +231,12 @@ def validate_tool_calls(
                 _raw_cap = _cap_fn(api_kwargs) if callable(_cap_fn) else None
                 _requested_cap = _raw_cap if isinstance(_raw_cap, int) and not isinstance(_raw_cap, bool) else None
                 agent._ephemeral_max_output_tokens = boosted_output_cap(agent, _requested_cap, retries)
+                # A route that cannot honour a raised cap (the Antigravity CLI takes no
+                # output flag and its client drops max_tokens) would repeat the identical
+                # request into the same ceiling. Thinking spends the same budget as the
+                # action, so from the second retry drop it: that changes what goes out.
+                if retries >= 2:
+                    agent._ephemeral_reasoning_off = True
                 agent._vprint(
                     f"{agent.log_prefix}⚠️  Truncated tool call arguments detected "
                     f"(finish_reason={finish_reason!r}) — retrying ({retries}/4), not executing.",
@@ -239,6 +245,8 @@ def validate_tool_calls(
                 return _verdict("continue")
             agent._truncated_arg_retries = 0
             agent._invalid_json_retries = 0
+            # The one-shot reasoning-off override must not leak into a later turn.
+            agent._ephemeral_reasoning_off = False
             agent._cleanup_task_resources(effective_task_id)
             # Blame the output cap only when the model reported one; otherwise the args
             # were cut by a stream break or a router rewriting finish_reason (#91717).

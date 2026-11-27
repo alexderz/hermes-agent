@@ -18,13 +18,29 @@ def _agent():
         api_mode="chat_completions",
         model="gpt-4o",
         _ephemeral_max_output_tokens=None,
+        _ephemeral_reasoning_off=False,
     )
     agent._vprint = lambda *a, **k: None
+    agent._buffer_vprint = lambda *a, **k: None
+    agent._flush_status_buffer = lambda *a, **k: None
     agent._uniquify_tool_call_ids = lambda calls, taken=None: None
     agent._repair_tool_call = lambda name: None
     agent._cleanup_task_resources = lambda task_id: None
     agent._persist_session = lambda messages, history: None
     return agent
+
+
+def _trunc_state(agent, retries=0, stub=False):
+    from run_agent import AIAgent
+
+    agent._requested_output_cap_from_api_kwargs = AIAgent._requested_output_cap_from_api_kwargs
+    st = SimpleNamespace(
+        agent=agent, truncated_tool_call_retries=retries, is_stub=stub,
+        messages=[], effective_task_id="t", response=SimpleNamespace(),
+    )
+    st.done = lambda action, result=None: action
+    st.end_turn = lambda final, error=None, **kw: "return"
+    return st
 
 
 def _cut_message():
@@ -179,3 +195,77 @@ def test_retries_escalate_cap_and_clamp_at_anthropic_model_limit():
     assert caps[0] > 16384
     assert all(caps[i] >= caps[i - 1] for i in range(1, len(caps)))
     assert caps[-1] <= 64000
+
+
+# ── A route that cannot honour a raised cap gets a different request from retry 2 ──
+#
+# The Antigravity CLI exposes no output-length flag and its client discards max_tokens,
+# so a cap-only retry re-sends a byte-identical request into the same ceiling. Thinking
+# is spent from that same budget, so the one-shot reasoning-off override is the lever
+# that actually changes what such a route sends.
+
+
+def test_truncated_tool_retry_keeps_reasoning_on_for_the_first_attempt():
+    from agent.turn_truncation import _retry_truncated_tool_call
+
+    agent = _agent()
+    st = _trunc_state(agent)
+    assert _retry_truncated_tool_call(st, {}) == "continue"
+    assert st.truncated_tool_call_retries == 1
+    assert agent._ephemeral_max_output_tokens > 4096
+    assert agent._ephemeral_reasoning_off is False
+
+
+def test_truncated_tool_retry_drops_reasoning_from_the_second_attempt():
+    from agent.turn_truncation import _retry_truncated_tool_call
+
+    agent = _agent()
+    st = _trunc_state(agent, retries=1)
+    assert _retry_truncated_tool_call(st, {}) == "continue"
+    assert st.truncated_tool_call_retries == 2
+    assert agent._ephemeral_reasoning_off is True
+
+
+def test_terminal_truncated_tool_retry_clears_the_reasoning_override():
+    from agent.turn_truncation import _retry_truncated_tool_call
+
+    agent = _agent()
+    agent._ephemeral_reasoning_off = True
+    st = _trunc_state(agent, retries=4)
+    assert _retry_truncated_tool_call(st, {}) == "return"
+    assert agent._ephemeral_reasoning_off is False
+
+
+def test_truncated_arg_retry_keeps_reasoning_on_until_the_second_attempt():
+    agent = _agent()
+    validate_tool_calls(
+        agent, _cut_message(), "tool_calls",
+        messages=[], conversation_history=[], api_call_count=1, effective_task_id="t",
+    )
+    assert agent._truncated_arg_retries == 1
+    assert agent._ephemeral_reasoning_off is False
+
+    validate_tool_calls(
+        agent, _cut_message(), "tool_calls",
+        messages=[], conversation_history=[], api_call_count=2, effective_task_id="t",
+    )
+    assert agent._truncated_arg_retries == 2
+    assert agent._ephemeral_reasoning_off is True
+
+
+def test_terminal_truncated_arg_retry_clears_the_reasoning_override():
+    agent = _agent()
+    agent._truncated_arg_retries = 4
+    agent._ephemeral_reasoning_off = True
+    verdict = validate_tool_calls(
+        agent, _cut_message(), "tool_calls",
+        messages=[], conversation_history=[], api_call_count=2, effective_task_id="t",
+    )
+    assert verdict.action == "return"
+    assert agent._ephemeral_reasoning_off is False
+
+
+def test_reasoning_override_is_reset_with_the_other_per_turn_state():
+    from agent.turn_context import _PER_TURN_RESET_STATE
+
+    assert ("_ephemeral_reasoning_off", False) in _PER_TURN_RESET_STATE

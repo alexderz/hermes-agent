@@ -408,7 +408,15 @@ def boosted_output_cap(agent: Any, requested_cap: Optional[int], n: int, base: O
 def _retry_truncated_tool_call(st: _Trunc, api_kwargs: Any) -> TruncationVerdict:
     """Truncated tool call: re-run the same call (up to 4×) with a boosted max_tokens —
     a real output-cap truncation needs it, harmless for a network stall — else refuse to
-    execute incomplete arguments."""
+    execute incomplete arguments.
+
+    A boosted cap only helps a route that honours one. The Antigravity CLI exposes no
+    output-length flag and its client discards ``max_tokens``, so retries 2-4 would
+    otherwise re-send a byte-identical request into the same ceiling and burn minutes
+    before refusing. From the second retry the one-shot reasoning-off override goes out
+    too: thinking is spent from the same budget as the action, so dropping it is the one
+    lever that actually changes what such a route sends.
+    """
     agent = st.agent
     if st.truncated_tool_call_retries < 4:
         st.truncated_tool_call_retries += 1
@@ -420,8 +428,12 @@ def _retry_truncated_tool_call(st: _Trunc, api_kwargs: Any) -> TruncationVerdict
         agent._ephemeral_max_output_tokens = boosted_output_cap(
             agent, agent._requested_output_cap_from_api_kwargs(api_kwargs), n
         )
+        if n >= 2:
+            agent._ephemeral_reasoning_off = True
         return st.done("continue")  # don't append the broken response
     agent._flush_status_buffer()
+    # The one-shot reasoning-off override must not leak into a later turn.
+    agent._ephemeral_reasoning_off = False
     _failure = FailoverReason.timeout.value if st.is_stub else "truncated"
     if st.is_stub and getattr(st.response, "_clean_eof", False):
         # #102766: no transport error — the server (or a proxy) closed the stream cleanly
