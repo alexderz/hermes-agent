@@ -269,3 +269,33 @@ def test_reasoning_override_is_reset_with_the_other_per_turn_state():
     from agent.turn_context import _PER_TURN_RESET_STATE
 
     assert ("_ephemeral_reasoning_off", False) in _PER_TURN_RESET_STATE
+
+
+def test_validate_tool_calls_detects_mid_string_cut_ending_in_brace_even_after_invalid_escape():
+    for raw in (r'{"a": "\s", "b": "cut }', '{"a": "x\ny", "b": "cut }'):
+        agent = _agent()
+        tc = SimpleNamespace(id="c1", type="function", function=SimpleNamespace(name="terminal", arguments=raw))
+        msg = SimpleNamespace(content="", tool_calls=[tc])
+        verdict = validate_tool_calls(
+            agent, msg, "tool_calls",
+            messages=[], conversation_history=[], api_call_count=1, effective_task_id="t",
+        )
+        assert verdict.action == "continue"
+        assert agent._truncated_arg_retries == 1
+
+
+def test_validate_tool_calls_does_not_treat_complete_unescaped_quote_as_truncation():
+    agent = _agent()
+    tc = SimpleNamespace(
+        id="c1", type="function",
+        function=SimpleNamespace(name="terminal", arguments='{"command": "echo "hi""}'),
+    )
+    msg = SimpleNamespace(content="", tool_calls=[tc])
+    messages = []
+    verdict = validate_tool_calls(
+        agent, msg, "tool_calls",
+        messages=messages, conversation_history=[], api_call_count=1, effective_task_id="t",
+    )
+    assert verdict.action == "continue"
+    assert agent._truncated_arg_retries == 0
+    assert agent._invalid_json_retries == 1

@@ -21,11 +21,15 @@ TOOL_CALL_BLOCK_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DO
 TOOL_CALL_JSON_RE = re.compile(
     r"\{\s*\"id\"\s*:\s*\"[^\"]+\"\s*,\s*\"type\"\s*:\s*\"function\"\s*,\s*\"function\"\s*:\s*\{.*?\}\s*\}", re.DOTALL
 )
+_TOOL_CALL_JSON_START_RE = re.compile(
+    r"\{\s*\"id\"\s*:\s*\"[^\"]+\"\s*,\s*\"type\"\s*:\s*\"function\"\s*,\s*\"function\"\s*:\s*\{", re.DOTALL
+)
 
 TOOL_CALL_CONTRACT = (
     "Available tools (OpenAI function schema). "
     "When using a tool, emit ONLY <tool_call>{...}</tool_call> with one JSON object "
-    "containing id/type/function{name,arguments}. arguments must be a JSON string."
+    "containing id/type/function{name,arguments}. arguments should be a JSON object "
+    "(a JSON string is also accepted)."
 )
 
 __all__ = [
@@ -120,19 +124,70 @@ def render_tool_bridge_sections(
     return sections
 
 
+def _normalize_tool_arguments(fn_args: Any) -> str:
+    """Return a JSON string for tool arguments, repairing invalid backslash escapes
+    or literal control chars inside string-encoded JSON when possible."""
+    if not isinstance(fn_args, str):
+        return json.dumps(fn_args, ensure_ascii=False)
+    if not fn_args.strip():
+        return fn_args
+    try:
+        json.loads(fn_args)
+        return fn_args
+    except Exception:
+        pass
+    try:
+        from agent.message_sanitization import _escape_invalid_backslashes_in_json_strings
+
+        repaired = json.loads(_escape_invalid_backslashes_in_json_strings(fn_args), strict=False)
+        return json.dumps(repaired, ensure_ascii=False)
+    except Exception:
+        return fn_args
+
+
+def _find_balanced_json_object_end(text: str, start: int) -> int:
+    """Return end index (exclusive) of the JSON object starting at ``start``, or -1
+    if unbalanced. String-aware so braces inside string values do not confuse depth."""
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+    return -1
+
+
 def _parse_tool_call(raw_json: str, ordinal: int) -> ChatCompletionMessageToolCall | None:
     """One ``<tool_call>`` JSON body → tool call, or None when malformed. Missing id → ``acp_call_<ordinal>``."""
     try:
         obj = json.loads(raw_json)
     except Exception:
-        return None
+        try:
+            from agent.message_sanitization import _escape_invalid_backslashes_in_json_strings
+
+            obj = json.loads(_escape_invalid_backslashes_in_json_strings(raw_json), strict=False)
+        except Exception:
+            return None
     named = _named_function(obj)
     if named is None:
         return None
     fn, fn_name = named
-    fn_args = fn.get("arguments", "{}")
-    if not isinstance(fn_args, str):
-        fn_args = json.dumps(fn_args, ensure_ascii=False)
+    fn_args = _normalize_tool_arguments(fn.get("arguments", "{}"))
     call_id = obj.get("id")
     if not isinstance(call_id, str) or not call_id.strip():
         call_id = f"acp_call_{ordinal}"
@@ -146,14 +201,28 @@ def extract_tool_calls_from_text(text: str) -> tuple[list[ChatCompletionMessageT
         return [], ""
     extracted: list[ChatCompletionMessageToolCall] = []
     consumed_spans: list[tuple[int, int]] = []
-    for pattern, group in ((TOOL_CALL_BLOCK_RE, 1), (TOOL_CALL_JSON_RE, 0)):
-        for m in pattern.finditer(text):
-            call = _parse_tool_call(m.group(group), len(extracted) + 1)
+    for m in TOOL_CALL_BLOCK_RE.finditer(text):
+        call = _parse_tool_call(m.group(1), len(extracted) + 1)
+        if call is not None:
+            extracted.append(call)
+        consumed_spans.append((m.start(), m.end()))
+    if not extracted:
+        cursor = 0
+        while True:
+            m = _TOOL_CALL_JSON_START_RE.search(text, cursor)
+            if m is None:
+                break
+            end = _find_balanced_json_object_end(text, m.start())
+            if end == -1:
+                cursor = m.end()
+                continue
+            call = _parse_tool_call(text[m.start():end], len(extracted) + 1)
             if call is not None:
                 extracted.append(call)
-            consumed_spans.append((m.start(), m.end()))
-        if extracted:
-            break
+                consumed_spans.append((m.start(), end))
+                cursor = end
+            else:
+                cursor = m.start() + 1
     if not consumed_spans:
         return extracted, text.strip()
 

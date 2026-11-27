@@ -41,6 +41,49 @@ def test_streamed_mid_string_cut_stays_unrepairable():
     assert calls[0].function.arguments == '{"q": "unterminated string'
 
 
+def test_streamed_invalid_backslash_escape_is_repaired_not_flagged_truncated():
+    raw = r'{"pattern": "profiles\.list|\s+", "limit": 50}'
+    calls, truncated = _StreamingCall._assemble_tool_calls(_accumulated(raw), "tool_calls")
+    assert truncated is False
+    assert calls is not None
+    assert json.loads(calls[0].function.arguments) == {"pattern": r"profiles\.list|\s+", "limit": 50}
+
+
+def test_streamed_complete_malformed_json_does_not_flag_truncation():
+    # Unescaped inner quote in a complete-looking object on a non-length finish_reason
+    # is a JSON syntax error, not output truncation: leave finish_reason intact so
+    # validate_tool_calls can send the JSONDecodeError back to the model.
+    raw = '{"command": "echo "hi""}'
+    calls, truncated = _StreamingCall._assemble_tool_calls(_accumulated(raw), "tool_calls")
+    assert truncated is False
+    assert calls is not None
+    assert calls[0].function.arguments == raw
+
+
+def test_streamed_length_finish_reason_still_flags_truncation():
+    raw = '{"command": "echo "hi""}'
+    calls, truncated = _StreamingCall._assemble_tool_calls(_accumulated(raw), "length")
+    assert truncated is True
+    assert calls is not None
+    assert calls[0].function.arguments == raw
+
+
+def test_streamed_unterminated_string_ending_with_brace_still_flags_truncation():
+    raw = '{"command": "echo }'
+    calls, truncated = _StreamingCall._assemble_tool_calls(_accumulated(raw), "tool_calls")
+    assert truncated is True
+    assert calls is not None
+    assert calls[0].function.arguments == raw
+
+
+def test_streamed_mid_string_cut_after_invalid_backslash_or_newline_still_flags_truncation():
+    for raw in (r'{"a": "\s", "b": "cut }', '{"a": "x\ny", "b": "cut }'):
+        calls, truncated = _StreamingCall._assemble_tool_calls(_accumulated(raw), "tool_calls")
+        assert truncated is True, f"expected truncation for {raw!r}"
+        assert calls is not None
+        assert calls[0].function.arguments == raw
+
+
 class TestStreamingAssemblyRepair:
     """Verify that _repair_tool_call_arguments is applied to streaming tool
     call arguments before they're assembled into mock_tool_calls.

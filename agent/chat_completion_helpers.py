@@ -44,7 +44,7 @@ from agent.process_transport import waits_like_local
 from session_rules.turns import flatten_message_text
 from agent.message_metadata import PERSISTENCE_ONLY_MESSAGE_FIELDS, append_message, data_use_requirement, stamp_message_timestamp
 from agent.message_sanitization import (
-    _sanitize_messages_surrogates, _sanitize_surrogates, _repair_tool_call_arguments,
+    _is_truncated_json_arguments, _sanitize_messages_surrogates, _sanitize_surrogates, _repair_tool_call_arguments,
     normalize_finish_reason as _normalize_finish_reason, sanitize_outbound_kwargs, strip_images_for_rejecting_model,
 )
 from agent.reasoning_summaries import (append_streamed_reasoning_detail, redact_reasoning_fields,
@@ -3204,7 +3204,16 @@ class _StreamingCall(StreamingWaitMonitor):
                         repaired = _repair_tool_call_arguments(arguments, tc["function"]["name"] or "?")
                         if repaired != "{}":
                             arguments = repaired
-                        else:
+                        elif (
+                            finish_reason == FINISH_REASON_LENGTH
+                            or _is_truncated_json_arguments(arguments)
+                        ):
+                            # Only flag truncation when the payload was actually cut off
+                            # (or the provider reported length). Complete-looking JSON
+                            # with a syntax error (e.g. an unescaped inner quote) stays
+                            # on the original finish_reason so validate_tool_calls sends
+                            # the exact JSONDecodeError back to the model instead of
+                            # burning blind length-truncation retries.
                             has_truncated_tool_args = True
                 # Parseable JSON does not prove that a dropped stream completed its
                 # action. Treat degenerate argument loops as partial calls too.

@@ -229,9 +229,73 @@ def _rebalance_json_closers(raw: str) -> str | None:
     return "".join(out) + "".join(_JSON_CLOSERS[ch] for ch in reversed(stack))
 
 
+_JSON_VALID_ESCAPES = frozenset('"\\/bfnrt')
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+
+
+def _escape_invalid_backslashes_in_json_strings(raw: str) -> str:
+    """Double invalid ``\\X`` escape sequences inside JSON string values (e.g. regex
+    ``\\s``, ``\\S``, ``\\.``, ``\\'``) while leaving valid JSON escapes intact."""
+    out: list[str] = []
+    in_string = False
+    i, n = 0, len(raw)
+    while i < n:
+        ch = raw[i]
+        if not in_string:
+            if ch == '"':
+                in_string = True
+            out.append(ch)
+            i += 1
+            continue
+        if ch == '"':
+            in_string = False
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "\\":
+            if i + 1 < n:
+                nxt = raw[i + 1]
+                if nxt in _JSON_VALID_ESCAPES:
+                    out.append(raw[i:i + 2])
+                    i += 2
+                    continue
+                if nxt == "u" and i + 5 < n and all(c in _HEX_DIGITS for c in raw[i + 2:i + 6]):
+                    out.append(raw[i:i + 6])
+                    i += 6
+                    continue
+            out.append("\\\\")
+            i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _is_truncated_json_arguments(raw: str) -> bool:
+    """True when invalid JSON *raw* appears cut off mid-payload rather than a
+    complete syntax error (such as an unescaped inner quote).
+
+    Normalizes invalid backslash escapes and allows literal control characters
+    before checking for an unterminated string or unexpected EOF, so an earlier
+    ``\\s`` or literal newline cannot mask a mid-string cut that happens to end
+    in ``}`` or ``]``."""
+    stripped = raw.rstrip() if isinstance(raw, str) else ""
+    if not stripped or not stripped.endswith(("}", "]")):
+        return True
+    normalized = _escape_invalid_backslashes_in_json_strings(stripped)
+    try:
+        json.loads(normalized, strict=False)
+    except json.JSONDecodeError as exc:
+        return "Unterminated string" in exc.msg or exc.pos >= len(normalized)
+    except (TypeError, ValueError):
+        return False
+    return False
+
+
 def _repair_tool_call_arguments(raw_args: str, tool_name: str = "?") -> str:
     """Repair malformed tool_call argument JSON (truncation, trailing commas, Python ``None``,
-    control chars); ``"{}"`` if unrepairable so the request succeeds. Repairs log at WARNING."""
+    control chars, invalid backslash escapes); ``"{}"`` if unrepairable so the request succeeds.
+    Repairs log at WARNING."""
     raw_stripped = raw_args.strip() if isinstance(raw_args, str) else ""
 
     if not raw_stripped:
@@ -252,12 +316,23 @@ def _repair_tool_call_arguments(raw_args: str, tool_name: str = "?") -> str:
     except (json.JSONDecodeError, TypeError, ValueError):
         pass
 
+    # Pass 1: double invalid backslash escapes inside strings (e.g. regex \s, \S, \., \')
+    # emitted when models under-escape nested JSON strings.
+    escaped_bs = _escape_invalid_backslashes_in_json_strings(raw_stripped)
+    if escaped_bs != raw_stripped:
+        try:
+            reserialised = json.dumps(json.loads(escaped_bs, strict=False), separators=(",", ":"))
+            logger.warning("Repaired invalid backslash escapes in tool_call arguments for %s", tool_name)
+            return reserialised
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
+
     # Passes 2-4: strip trailing commas, close unclosed structures, trim excess closers
     # (bounded). Bracket counting is string-aware: delimiters inside string values
     # ({"code": "}"}) are not structure, and the closers land in stack order — a truncated
     # {"items": [{"n": 1}, {"n": 2 needs "}]}" appended, and a misnested
     # {"a": [{"b": 1}, {"c": 2}} needs "]" inserted before the misplaced "}".
-    fixed = re.sub(r",\s*([}\]])", r"\1", raw_stripped)
+    fixed = re.sub(r",\s*([}\]])", r"\1", escaped_bs)
     fixed = _rebalance_json_closers(fixed) or fixed
     for _ in range(50):
         if _loads_ok(fixed) or not (
@@ -510,7 +585,9 @@ def strip_internal_markup(text: str | None) -> str | None:
 
 __all__ = [
     "_SURROGATE_RE",
+    "_escape_invalid_backslashes_in_json_strings",
     "_escape_invalid_chars_in_json_strings",
+    "_is_truncated_json_arguments",
     "_messages_carry_images",
     "_repair_tool_call_arguments",
     "_sanitize_messages_non_ascii",

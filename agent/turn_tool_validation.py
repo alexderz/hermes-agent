@@ -213,10 +213,12 @@ def validate_tool_calls(
     if invalid_json_args:
         invalid_names = {n for n, _ in invalid_json_args}
         # Routers may rewrite finish_reason "length" → "tool_calls", hiding
-        # truncation; args not ending in } or ] (stripped) were cut off
-        # mid-stream.
+        # truncation; detect both missing closers and mid-string cuts (even
+        # when the cut string happens to end in } or ]).
+        from agent.message_sanitization import _is_truncated_json_arguments
+
         _truncated = any(
-            not (tc.function.arguments or "").rstrip().endswith(("}", "]"))
+            _is_truncated_json_arguments(tc.function.arguments or "")
             for tc in tool_calls if tc.function.name in invalid_names
         )
         if _truncated:

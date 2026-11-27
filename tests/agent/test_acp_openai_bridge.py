@@ -201,3 +201,40 @@ def test_copilot_prompt_still_carries_the_contract_and_the_tools():
     assert '"name": "memory"' in prompt
     assert '"name": "read_file"' in prompt  # copilot forwards everything
     assert "hi" in prompt
+
+
+def test_extract_tool_calls_recovers_invalid_backslash_escapes():
+    text = r'<tool_call>{"id":"c1","type":"function","function":{"name":"search_files","arguments":{"pattern":"foo\s+bar\.py"}}}</tool_call>'
+    calls, cleaned = extract_tool_calls_from_text(text)
+    assert len(calls) == 1
+    assert calls[0].function.name == "search_files"
+    assert json.loads(calls[0].function.arguments) == {"pattern": r"foo\s+bar\.py"}
+    assert cleaned == ""
+
+
+def test_extract_tool_calls_repairs_string_encoded_arguments_with_invalid_backslashes():
+    text = (
+        r'<tool_call>{"id":"c1","type":"function","function":'
+        r'{"name":"search_files","arguments":"{\"pattern\": \"foo\s+bar\"}"}}</tool_call>'
+    )
+    calls, cleaned = extract_tool_calls_from_text(text)
+    assert len(calls) == 1
+    assert json.loads(calls[0].function.arguments) == {"pattern": r"foo\s+bar"}
+    assert cleaned == ""
+
+
+def test_bare_json_fallback_handles_object_and_nested_arguments_without_stray_braces():
+    bare = '{"id":"c1","type":"function","function":{"name":"search_files","arguments":{"pattern":"foo","nested":{"brace":"}"}}}}'
+    calls, cleaned = extract_tool_calls_from_text(f"lead {bare} trail")
+    assert len(calls) == 1
+    assert calls[0].id == "c1"
+    assert calls[0].function.name == "search_files"
+    assert json.loads(calls[0].function.arguments) == {"pattern": "foo", "nested": {"brace": "}"}}
+    assert cleaned == "lead\ntrail"
+
+
+def test_bare_json_fallback_leaves_unparseable_text_untouched():
+    raw = '{"id":"c1","type":"function","function":{"name":"search_files","arguments":{not valid}}'
+    calls, cleaned = extract_tool_calls_from_text(raw)
+    assert calls == []
+    assert cleaned == raw

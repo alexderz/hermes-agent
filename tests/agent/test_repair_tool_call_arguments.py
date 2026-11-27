@@ -93,4 +93,21 @@ class TestRepairToolCallArguments:
 
     # -- Stage 4: control-char escape fallback --
 
+    # -- Invalid backslash escapes inside JSON strings (e.g. regex \s, \., \') --
+
+    def test_invalid_backslash_escapes_in_regex_are_repaired(self):
+        raw = r'{"pattern": "foo\s+bar\.py|\'baz\'", "path": "/tmp"}'
+        result = _repair_tool_call_arguments(raw, "search_files")
+        assert json.loads(result) == {"pattern": r"foo\s+bar\.py|\'baz\'", "path": "/tmp"}
+
+    def test_valid_json_escapes_preserved_alongside_invalid_ones(self):
+        raw = r'{"cmd": "echo \"hi\"\n	\u0041 \s \u12zz"}'
+        result = _repair_tool_call_arguments(raw, "terminal")
+        assert json.loads(result) == {"cmd": 'echo "hi"\n	A \\s \\u12zz'}
+
+    def test_unescaped_inner_quote_remains_unrepairable(self):
+        raw = '{"command": "echo "hi""}'
+        assert _repair_tool_call_arguments(raw, "terminal") == "{}"
+
+
 
