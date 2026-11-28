@@ -381,8 +381,10 @@ def render_text(state: dict[str, Any], now: Optional[datetime] = None) -> str:
     if ci.get("status") == "ok":
         spend = ci.get("spend") or {}
         if spend:
+            balance = spend.get("balance")
+            tail = f"; available ${balance:.2f}" if isinstance(balance, (int, float)) else ""
             lines.append(f"  Cheaper Inference (pay per use): ${spend.get('today') or 0:.2f} today, "
-                         f"${spend.get('week') or 0:.2f} this week, ${spend.get('month') or 0:.2f} this month")
+                         f"${spend.get('week') or 0:.2f} this week, ${spend.get('month') or 0:.2f} this month{tail}")
         elif ci.get("spend_error"):
             lines.append(f"  Cheaper Inference (pay per use): spend unavailable ({ci['spend_error']})")
         if ci.get("models"):
