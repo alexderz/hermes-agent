@@ -222,7 +222,9 @@ function PaygSection({ data }) {
         jsx('div', { style: { fontWeight: 700, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }, children:
           spend ? `W ${money(spend.week)}  D ${money(spend.today)}` : '–' }),
         jsx('div', { style: { color: 'var(--ui-text-tertiary)', fontSize: 10.5 }, children: 'UTC spend' }),
-        jsx('div', { style: { color: 'var(--ui-text-tertiary)', fontSize: 10.5, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }, children:
+        jsx('div', {
+          title: Number.isFinite(spend?.balance) ? 'Available wallet balance, after holds for unsettled requests' : undefined,
+          style: { color: 'var(--ui-text-tertiary)', fontSize: 10.5, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }, children:
           spend ? `M ${money(spend.month)}${Number.isFinite(spend.balance) ? ` · bal ${money(spend.balance)}` : ''}`
             : (ci.spend_error || ci.error || 'spend unavailable') })
       ]

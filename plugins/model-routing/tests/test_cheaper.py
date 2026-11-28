@@ -180,6 +180,7 @@ class ReaderTests(unittest.TestCase):
     def test_balance_parses_common_shapes(self):
         for payload, want in (
             ({"balance_usd": "12.5"}, 12.5),
+            ({"balance_usd": "12.5", "available_usd": "9.0", "reserved_usd": "3.5"}, 9.0),
             ({"wallet": {"available_usd": "3.25"}}, 3.25),
             ({"data": [{"balance": "0"}]}, 0.0),
         ):

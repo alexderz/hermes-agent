@@ -468,7 +468,8 @@ def _cheaper_get(url: str, token: str, timeout: float) -> Any:
     return json.loads(raw.decode("utf-8"))
 
 
-_BALANCE_KEYS = ("balance_usd", "available_usd", "wallet_balance_usd", "credits_usd", "balance")
+# available_usd is what can still be spent; balance_usd includes money held for unsettled requests.
+_BALANCE_KEYS = ("available_usd", "balance_usd", "wallet_balance_usd", "credits_usd", "balance")
 
 
 def _find_balance(payload: Any, depth: int = 0) -> Optional[float]:
